@@ -186,6 +186,109 @@ app.delete('/api/games/:id', (req, res) => {
   res.json({ deleted: true });
 });
 
+app.patch('/api/games/:id', (req, res) => {
+  const game = db.prepare('SELECT * FROM games WHERE id = ?').get(req.params.id);
+  if (!game) return res.status(404).json({ error: 'Game not found' });
+
+  let home_score = game.home_score;
+  let away_score = game.away_score;
+  const ea_match_id = req.body.ea_match_id !== undefined ? req.body.ea_match_id : game.ea_match_id;
+
+  if (req.body.home_score !== undefined) {
+    home_score = parseInt(req.body.home_score, 10);
+    if (isNaN(home_score) || home_score < 0 || home_score > 99) {
+      return res.status(400).json({ error: 'home_score must be a non-negative integer (0–99)' });
+    }
+  }
+  if (req.body.away_score !== undefined) {
+    away_score = parseInt(req.body.away_score, 10);
+    if (isNaN(away_score) || away_score < 0 || away_score > 99) {
+      return res.status(400).json({ error: 'away_score must be a non-negative integer (0–99)' });
+    }
+  }
+
+  db.prepare('UPDATE games SET home_score = ?, away_score = ?, ea_match_id = ? WHERE id = ?')
+    .run(home_score, away_score, ea_match_id, req.params.id);
+  res.json({ updated: true });
+});
+
+// ── EA Matches for a specific scheduled game ───────────────────────────────
+
+app.get('/api/games/:id/ea-matches', async (req, res) => {
+  const game = db.prepare(`
+    SELECT g.*,
+      ht.name AS home_team_name, ht.ea_club_id AS home_ea_club_id,
+      at.name AS away_team_name, at.ea_club_id AS away_ea_club_id
+    FROM games g
+    JOIN teams ht ON g.home_team_id = ht.id
+    JOIN teams at ON g.away_team_id = at.id
+    WHERE g.id = ?
+  `).get(req.params.id);
+  if (!game) return res.status(404).json({ error: 'Game not found' });
+  if (!game.home_ea_club_id) return res.status(400).json({ error: 'Home team has no EA club ID configured' });
+
+  try {
+    const eaUrl = `https://proclubs.ea.com/api/nhl/clubs/matches?matchType=club_private&platform=common-gen5&clubIds=${game.home_ea_club_id}`;
+    const raw = await fetchEA(eaUrl);
+    const matchArray = Array.isArray(raw) ? raw : (raw.raw || []);
+
+    const matches = matchArray.map(m => {
+      const myClub = m.clubs && m.clubs[String(game.home_ea_club_id)];
+      if (!myClub) return null;
+      const opponentClubId = String(myClub.opponentClubId);
+      const opponentClub = m.clubs && m.clubs[opponentClubId];
+      const opponentClubName = (opponentClub && opponentClub.details && opponentClub.details.name) || `Club ${opponentClubId}`;
+      const isScheduledOpponent = !!game.away_ea_club_id && String(game.away_ea_club_id) === opponentClubId;
+
+      const rawPlayers = (m.players && m.players[String(game.home_ea_club_id)]) || {};
+      const players = Object.values(rawPlayers).map(p => ({
+        name: p.playername || p.name || 'Unknown',
+        position: EA_POSITIONS[String(p.position)] || String(p.position || ''),
+        goals: Number(p.skgoals) || 0,
+        assists: Number(p.skassists) || 0,
+        points: (Number(p.skgoals) || 0) + (Number(p.skassists) || 0),
+        shots: Number(p.skshots) || 0,
+        hits: Number(p.skhits) || 0,
+        plusMinus: Number(p.skplusmin) || 0,
+        pim: Number(p.skpim) || 0,
+        blockedShots: Number(p.skbs) || 0,
+        saves: Number(p.glsaves) || 0,
+        savesPct: p.glsavePct ? parseFloat(p.glsavePct) : null,
+        goalsAgainst: Number(p.glga) || 0,
+        toi: Number(p.toiseconds || p.skToi) || 0,
+      }));
+
+      return {
+        matchId: m.matchId,
+        timestamp: m.timestamp || 0,
+        date: m.timestamp ? new Date(m.timestamp * 1000).toISOString().split('T')[0] : null,
+        result: mapResult(myClub.result),
+        homeScore: Number(myClub.score) || 0,
+        awayScore: Number(myClub.opponentScore) || 0,
+        opponentClubId,
+        opponentClubName,
+        isScheduledOpponent,
+        players,
+      };
+    }).filter(Boolean);
+
+    res.json({
+      game: {
+        id: game.id,
+        date: game.date,
+        home_team: { id: game.home_team_id, name: game.home_team_name, ea_club_id: game.home_ea_club_id },
+        away_team: { id: game.away_team_id, name: game.away_team_name, ea_club_id: game.away_ea_club_id },
+        home_score: game.home_score,
+        away_score: game.away_score,
+        ea_match_id: game.ea_match_id || null,
+      },
+      matches,
+    });
+  } catch (err) {
+    res.status(502).json({ error: 'Failed to fetch EA data', details: err.message });
+  }
+});
+
 // ── Standings ──────────────────────────────────────────────────────────────
 
 app.get('/api/standings', (req, res) => {

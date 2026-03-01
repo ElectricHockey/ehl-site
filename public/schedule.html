@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Schedule – EHL</title>
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    .game-row { cursor: pointer; }
+    .game-row:hover td { background: #21262d; }
+    .game-row.selected td { background: #1c2a3a; }
+
+    .ea-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      font-size: 0.8rem;
+      padding: 0.15rem 0.55rem;
+      border-radius: 12px;
+    }
+    .ea-badge-linked   { background: #1f4b2f; color: #3fb950; }
+    .ea-badge-unlinked { background: #2d2d2d; color: #8b949e; }
+
+    /* ── EA Picker panel ──────────────────────────────────── */
+    #ea-picker {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      margin-top: 1.5rem;
+      overflow: hidden;
+    }
+    #ea-picker.hidden { display: none; }
+
+    .picker-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.8rem 1rem;
+      border-bottom: 1px solid #30363d;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+    .picker-header h3 { margin: 0; font-size: 1rem; color: #e6edf3; }
+    .picker-subtitle  { font-size: 0.85rem; color: #8b949e; }
+
+    .btn-close {
+      background: none;
+      border: none;
+      color: #8b949e;
+      font-size: 1.2rem;
+      cursor: pointer;
+      padding: 0 0.4rem;
+      line-height: 1;
+    }
+    .btn-close:hover { color: #e6edf3; opacity: 1; }
+
+    .ea-match-list { padding: 0.5rem 0; }
+
+    .ea-match-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 1rem;
+      padding: 0.7rem 1rem;
+      border-bottom: 1px solid #21262d;
+      flex-wrap: wrap;
+    }
+    .ea-match-item:last-child { border-bottom: none; }
+    .ea-match-item.highlight { background: #1a2d20; }
+    .ea-match-item.assigned  { background: #1c2a3a; }
+
+    .ea-match-info { flex: 1; min-width: 180px; }
+    .ea-match-score { font-size: 1.1rem; font-weight: 700; color: #e6edf3; }
+    .ea-match-meta  { font-size: 0.82rem; color: #8b949e; margin-top: 0.15rem; }
+    .ea-match-opponent { color: #c9d1d9; font-size: 0.9rem; margin-top: 0.1rem; }
+    .scheduled-tag {
+      display: inline-block;
+      background: #1f4b2f;
+      color: #3fb950;
+      font-size: 0.72rem;
+      padding: 0.1rem 0.4rem;
+      border-radius: 10px;
+      margin-left: 0.3rem;
+      font-weight: 600;
+    }
+
+    .ea-match-actions { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+    .btn-assign {
+      background: #238636;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      padding: 0.35rem 0.8rem;
+      font-size: 0.85rem;
+      cursor: pointer;
+      font-weight: 500;
+    }
+    .btn-assign:hover { opacity: 0.85; }
+    .btn-assign:disabled { opacity: 0.4; cursor: default; }
+    .btn-clear {
+      background: #21262d;
+      color: #c9d1d9;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      padding: 0.35rem 0.8rem;
+      font-size: 0.85rem;
+      cursor: pointer;
+    }
+    .btn-clear:hover { opacity: 0.85; }
+
+    /* Player stats inside EA match */
+    .ea-match-stats-toggle {
+      background: none;
+      border: none;
+      color: #58a6ff;
+      font-size: 0.82rem;
+      cursor: pointer;
+      padding: 0;
+      text-decoration: underline;
+    }
+    .ea-match-stats-toggle:hover { opacity: 0.8; }
+    .ea-player-stats { margin-top: 0.5rem; width: 100%; }
+    .ea-player-stats table { font-size: 0.8rem; }
+    .ea-player-stats.hidden { display: none; }
+
+    .picker-empty { padding: 1rem; color: #8b949e; }
+    .picker-loading { padding: 1rem; color: #8b949e; }
+    .picker-error { padding: 1rem; color: #f85149; }
+  </style>
+</head>
+<body>
+  <nav>
+    <span class="brand">⚡ EHL</span>
+    <a href="index.html">Home</a>
+    <a href="schedule.html" class="active">Schedule</a>
+    <a href="standings.html">Standings</a>
+    <a href="ea.html">EA Matches</a>
+    <a href="admin.html">Admin</a>
+  </nav>
+
+  <div class="container">
+    <h1>Schedule</h1>
+    <p style="color:#8b949e;margin-bottom:1rem;">
+      Click a game to load recent EA matches for that matchup, then assign the correct one.
+    </p>
+
+    <div id="schedule-root"><p class="loading">Loading schedule…</p></div>
+
+    <!-- EA Match Picker (shown when a game row is clicked) -->
+    <div id="ea-picker" class="hidden">
+      <div class="picker-header">
+        <div>
+          <h3 id="picker-title">EA Matches</h3>
+          <div class="picker-subtitle" id="picker-subtitle"></div>
+        </div>
+        <button class="btn-close" onclick="closePicker()" title="Close">✕</button>
+      </div>
+      <div id="picker-body"><p class="picker-loading">Loading…</p></div>
+    </div>
+  </div>
+
+  <script src="schedule.js"></script>
+</body>
+</html>

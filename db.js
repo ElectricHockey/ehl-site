@@ -34,4 +34,7 @@ db.exec(`
 // Migration: add ea_club_id to teams if not present
 try { db.exec('ALTER TABLE teams ADD COLUMN ea_club_id INTEGER'); } catch (_) {}
 
+// Migration: add ea_match_id to games if not present
+try { db.exec('ALTER TABLE games ADD COLUMN ea_match_id TEXT'); } catch (_) {}
+
 module.exports = db;
