@@ -359,9 +359,10 @@ async function loadRegPlayers() {
 
   const tbody = document.querySelector('#reg-players-table tbody');
   tbody.innerHTML = users.length === 0
-    ? '<tr><td colspan="5" style="color:#8b949e">No registered players yet.</td></tr>'
+    ? '<tr><td colspan="7" style="color:#8b949e">No registered players yet.</td></tr>'
     : users.map(u => `<tr>
         <td><strong>${u.username}</strong></td>
+        <td>${u.position || '—'}</td>
         <td>${u.platform === 'psn' ? 'PlayStation' : 'Xbox'}</td>
         <td>${u.team_name || '—'}</td>
         <td>${u.is_rostered ? '<span style="color:#3fb950;">✓ Rostered</span>' : '<span style="color:#8b949e;">Free Agent</span>'}</td>
@@ -369,13 +370,21 @@ async function loadRegPlayers() {
           <select id="owner-team-${u.id}" style="font-size:0.8rem;padding:0.2rem 0.4rem;background:#21262d;border:1px solid #30363d;color:#c9d1d9;border-radius:4px;">${teamOpts}</select>
           <button class="btn-secondary" style="margin-left:0.3rem;font-size:0.78rem;padding:0.2rem 0.4rem;" onclick="assignOwner(${u.id})">Set Owner</button>
         </td>
+        <td>
+          <button class="btn-secondary" style="font-size:0.78rem;padding:0.2rem 0.4rem;"
+            data-action="edit-player"
+            data-uid="${u.id}"
+            data-username="${u.username.replace(/"/g,'&quot;')}"
+            data-platform="${u.platform}"
+            data-position="${u.position||''}"
+            data-email="${(u.email||'').replace(/"/g,'&quot;')}">Edit</button>
+        </td>
       </tr>`).join('');
 
   // Populate owner cells in teams table
   for (const t of teams) {
     const cell = document.getElementById(`owner-cell-${t.id}`);
     if (!cell) continue;
-    // fetch team staff
     const sr = await fetch(`${API}/teams/${t.id}/stats`).catch(() => null);
     if (!sr || !sr.ok) continue;
     const sd = await sr.json().catch(() => null);
@@ -395,6 +404,60 @@ async function assignOwner(userId) {
   if (!res.ok) { const e = await res.json(); alert(e.error || 'Failed'); return; }
   await loadRegPlayers();
 }
+
+// Delegated handler for edit-player buttons in the registered players table
+document.addEventListener('click', e => {
+  const btn = e.target.closest('[data-action="edit-player"]');
+  if (!btn) return;
+  const { uid, username, platform, position, email } = btn.dataset;
+  openEditModal(Number(uid), username, platform, position, email);
+});
+
+// ── Edit player modal ─────────────────────────────────────────────────────
+
+function openEditModal(id, username, platform, position, email) {
+  document.getElementById('ep-id').value = id;
+  document.getElementById('ep-username').value = username;
+  document.getElementById('ep-platform').value = platform;
+  document.getElementById('ep-position').value = position;
+  document.getElementById('ep-email').value = email;
+  document.getElementById('ep-error').style.display = 'none';
+  const overlay = document.getElementById('edit-player-overlay');
+  overlay.style.display = 'flex';
+}
+
+function closeEditModal() {
+  document.getElementById('edit-player-overlay').style.display = 'none';
+}
+
+async function savePlayerEdit() {
+  const id       = document.getElementById('ep-id').value;
+  const username = document.getElementById('ep-username').value.trim();
+  const platform = document.getElementById('ep-platform').value;
+  const position = document.getElementById('ep-position').value;
+  const email    = document.getElementById('ep-email').value.trim();
+  const errEl    = document.getElementById('ep-error');
+  errEl.style.display = 'none';
+  if (!username) { errEl.textContent = 'Gamertag cannot be empty'; errEl.style.display = ''; return; }
+  const res = await fetch(`${API}/users/${id}`, {
+    method: 'PATCH', headers: adminJsonHeaders(),
+    body: JSON.stringify({ username, platform, position: position || null, email: email || null }),
+  });
+  if (!res.ok) {
+    const e = await res.json();
+    errEl.textContent = e.error || 'Failed to save';
+    errEl.style.display = '';
+    return;
+  }
+  closeEditModal();
+  await loadRegPlayers();
+  await loadPlayers(); // refresh the legacy players table too
+}
+
+// Close modal on overlay click
+document.getElementById('edit-player-overlay').addEventListener('click', e => {
+  if (e.target === document.getElementById('edit-player-overlay')) closeEditModal();
+});
 
 // ── Init ──────────────────────────────────────────────────────────────────
 

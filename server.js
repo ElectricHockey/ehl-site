@@ -113,21 +113,22 @@ app.get('/api/auth/status', (req, res) => {
 // ── Player registration & login ────────────────────────────────────────────
 
 app.post('/api/players/register', async (req, res) => {
-  const { username, platform, password, email } = req.body;
+  const { username, platform, password, email, position } = req.body;
   if (!username || !username.trim()) return res.status(400).json({ error: 'Username (gamertag) is required' });
   if (!password || password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
   const plat = (platform === 'psn' ? 'psn' : 'xbox');
+  const pos = position ? position.trim() : null;
   const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(username.trim());
   if (existing) return res.status(409).json({ error: 'That gamertag is already registered' });
   const hash = await hashPassword(password);
-  const r = db.prepare('INSERT INTO users (username, platform, password_hash, email) VALUES (?, ?, ?, ?)')
-    .run(username.trim(), plat, hash, email ? email.trim() : null);
+  const r = db.prepare('INSERT INTO users (username, platform, password_hash, email, position) VALUES (?, ?, ?, ?, ?)')
+    .run(username.trim(), plat, hash, email ? email.trim() : null, pos);
   // Also create a player record linked to this user
-  const pr = db.prepare('INSERT INTO players (name, user_id, is_rostered) VALUES (?, ?, 0)')
-    .run(username.trim(), r.lastInsertRowid);
+  const pr = db.prepare('INSERT INTO players (name, user_id, is_rostered, position) VALUES (?, ?, 0, ?)')
+    .run(username.trim(), r.lastInsertRowid, pos);
   const token = crypto.randomBytes(24).toString('hex');
   playerSessions.set(token, r.lastInsertRowid);
-  res.status(201).json({ token, id: r.lastInsertRowid, username: username.trim(), platform: plat, player_id: pr.lastInsertRowid });
+  res.status(201).json({ token, id: r.lastInsertRowid, username: username.trim(), platform: plat, position: pos, player_id: pr.lastInsertRowid });
 });
 
 app.post('/api/players/login', async (req, res) => {
@@ -139,7 +140,7 @@ app.post('/api/players/login', async (req, res) => {
   if (!ok) return res.status(401).json({ error: 'Invalid username or password' });
   const token = crypto.randomBytes(24).toString('hex');
   playerSessions.set(token, user.id);
-  res.json({ token, id: user.id, username: user.username, platform: user.platform });
+  res.json({ token, id: user.id, username: user.username, platform: user.platform, position: user.position });
 });
 
 app.post('/api/players/logout', (req, res) => {
@@ -148,7 +149,7 @@ app.post('/api/players/logout', (req, res) => {
 });
 
 app.get('/api/players/me', requirePlayer, (req, res) => {
-  const user = db.prepare('SELECT id, username, platform, email, created_at FROM users WHERE id = ?').get(req.userId);
+  const user = db.prepare('SELECT id, username, platform, email, position, created_at FROM users WHERE id = ?').get(req.userId);
   if (!user) return res.status(404).json({ error: 'User not found' });
   const player = db.prepare('SELECT * FROM players WHERE user_id = ?').get(req.userId);
   const staff = db.prepare(`
@@ -156,6 +157,28 @@ app.get('/api/players/me', requirePlayer, (req, res) => {
     FROM team_staff ts JOIN teams t ON ts.team_id = t.id WHERE ts.user_id = ?
   `).all(req.userId);
   res.json({ user, player, staff });
+});
+
+// Admin edits a registered user's profile
+app.patch('/api/users/:id', requireAdmin, (req, res) => {
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  const username = req.body.username !== undefined ? req.body.username.trim() : user.username;
+  const platform = req.body.platform !== undefined ? (req.body.platform === 'psn' ? 'psn' : 'xbox') : user.platform;
+  const email    = req.body.email    !== undefined ? (req.body.email ? req.body.email.trim() : null) : user.email;
+  const position = req.body.position !== undefined ? (req.body.position ? req.body.position.trim() : null) : user.position;
+  if (username !== user.username) {
+    const clash = db.prepare('SELECT id FROM users WHERE username = ? AND id != ?').get(username, user.id);
+    if (clash) return res.status(409).json({ error: 'That gamertag is already taken' });
+  }
+  db.prepare('UPDATE users SET username = ?, platform = ?, email = ?, position = ? WHERE id = ?')
+    .run(username, platform, email, position, user.id);
+  // Keep the active player record in sync (one record per user by design)
+  const activePlayer = db.prepare('SELECT id FROM players WHERE user_id = ? ORDER BY id LIMIT 1').get(user.id);
+  if (activePlayer) {
+    db.prepare('UPDATE players SET name = ?, position = ? WHERE id = ?').run(username, position, activePlayer.id);
+  }
+  res.json({ ok: true });
 });
 
 // ── Seasons ────────────────────────────────────────────────────────────────
@@ -311,26 +334,72 @@ function rosterMaxForTeam(teamId) {
   return 999; // no limit for untyped teams
 }
 
-// GM or owner signs a registered user onto the roster
-app.post('/api/teams/:id/roster/sign', requireTeamRole(['owner', 'gm']), (req, res) => {
+// GM or owner sends a signing offer (player must accept)
+app.post('/api/teams/:id/roster/offer', requireTeamRole(['owner', 'gm']), (req, res) => {
   const { user_id } = req.body;
   if (!user_id) return res.status(400).json({ error: 'user_id is required' });
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(user_id);
   if (!user) return res.status(404).json({ error: 'User not found' });
-  // Check player not already on a team
-  const existing = db.prepare('SELECT * FROM players WHERE user_id = ? AND team_id IS NOT NULL AND is_rostered = 1').get(user_id);
-  if (existing) return res.status(409).json({ error: 'Player is already on a roster' });
-  // Check roster limit
+  // Already on a roster?
+  const onRoster = db.prepare('SELECT * FROM players WHERE user_id = ? AND team_id IS NOT NULL AND is_rostered = 1').get(user_id);
+  if (onRoster) return res.status(409).json({ error: 'Player is already on a roster' });
+  // Already a pending offer from this team?
+  const dupOffer = db.prepare("SELECT id FROM signing_offers WHERE team_id = ? AND user_id = ? AND status = 'pending'").get(req.params.id, user_id);
+  if (dupOffer) return res.status(409).json({ error: 'A pending offer already exists for this player' });
+  // Roster limit check (based on current + pending)
   const count = db.prepare('SELECT COUNT(*) AS cnt FROM players WHERE team_id = ? AND is_rostered = 1').get(req.params.id).cnt;
   const max = rosterMaxForTeam(req.params.id);
   if (count >= max) return res.status(400).json({ error: `Roster is full (max ${max})` });
-  // Update or create the player record
-  let player = db.prepare('SELECT * FROM players WHERE user_id = ?').get(user_id);
-  if (player) {
-    db.prepare('UPDATE players SET team_id = ?, is_rostered = 1 WHERE id = ?').run(req.params.id, player.id);
-  } else {
-    db.prepare('INSERT INTO players (name, user_id, team_id, is_rostered) VALUES (?, ?, ?, 1)').run(user.username, user_id, req.params.id);
+  db.prepare("INSERT INTO signing_offers (team_id, user_id, offered_by, status) VALUES (?, ?, ?, 'pending')")
+    .run(req.params.id, user_id, req.userId);
+  res.status(201).json({ ok: true });
+});
+
+// Player fetches their pending offers
+app.get('/api/players/offers', requirePlayer, (req, res) => {
+  const offers = db.prepare(`
+    SELECT so.id, so.status, so.created_at,
+      t.id AS team_id, t.name AS team_name, t.logo_url AS team_logo,
+      t.league_type, u.username AS offered_by_name
+    FROM signing_offers so
+    JOIN teams t ON so.team_id = t.id
+    JOIN users u ON so.offered_by = u.id
+    WHERE so.user_id = ? AND so.status = 'pending'
+    ORDER BY so.created_at DESC
+  `).all(req.userId);
+  res.json(offers);
+});
+
+// Player accepts a signing offer
+app.post('/api/players/offers/:id/accept', requirePlayer, (req, res) => {
+  const offer = db.prepare("SELECT * FROM signing_offers WHERE id = ? AND user_id = ? AND status = 'pending'").get(req.params.id, req.userId);
+  if (!offer) return res.status(404).json({ error: 'Offer not found' });
+  // Re-check roster limit
+  const count = db.prepare('SELECT COUNT(*) AS cnt FROM players WHERE team_id = ? AND is_rostered = 1').get(offer.team_id).cnt;
+  const max = rosterMaxForTeam(offer.team_id);
+  if (count >= max) {
+    db.prepare("UPDATE signing_offers SET status = 'declined' WHERE id = ?").run(offer.id);
+    return res.status(400).json({ error: 'Roster is now full; offer cancelled' });
   }
+  db.prepare("UPDATE signing_offers SET status = 'accepted' WHERE id = ?").run(offer.id);
+  // Decline all other pending offers for this player
+  db.prepare("UPDATE signing_offers SET status = 'declined' WHERE user_id = ? AND status = 'pending' AND id != ?").run(req.userId, offer.id);
+  // Sign the player
+  let player = db.prepare('SELECT * FROM players WHERE user_id = ?').get(req.userId);
+  if (player) {
+    db.prepare('UPDATE players SET team_id = ?, is_rostered = 1 WHERE id = ?').run(offer.team_id, player.id);
+  } else {
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.userId);
+    db.prepare('INSERT INTO players (name, user_id, team_id, is_rostered, position) VALUES (?, ?, ?, 1, ?)').run(user.username, req.userId, offer.team_id, user.position);
+  }
+  res.json({ ok: true });
+});
+
+// Player declines a signing offer
+app.post('/api/players/offers/:id/decline', requirePlayer, (req, res) => {
+  const offer = db.prepare("SELECT * FROM signing_offers WHERE id = ? AND user_id = ? AND status = 'pending'").get(req.params.id, req.userId);
+  if (!offer) return res.status(404).json({ error: 'Offer not found' });
+  db.prepare("UPDATE signing_offers SET status = 'declined' WHERE id = ?").run(offer.id);
   res.json({ ok: true });
 });
 
@@ -545,7 +614,7 @@ app.get('/api/players', (_req, res) => {
 // List all registered users (for admin to pick an owner / for GMs to sign players)
 app.get('/api/users', requireAdmin, (_req, res) => {
   const users = db.prepare(`
-    SELECT u.id, u.username, u.platform, u.email, u.created_at,
+    SELECT u.id, u.username, u.platform, u.email, u.position, u.created_at,
       p.team_id, t.name AS team_name, p.is_rostered
     FROM users u LEFT JOIN players p ON p.user_id = u.id LEFT JOIN teams t ON p.team_id = t.id
     ORDER BY u.username
@@ -556,7 +625,7 @@ app.get('/api/users', requireAdmin, (_req, res) => {
 // Players endpoint for GM use (free agents = no current roster)
 app.get('/api/users/free-agents', requirePlayer, (_req, res) => {
   const fa = db.prepare(`
-    SELECT u.id, u.username, u.platform
+    SELECT u.id, u.username, u.platform, u.position
     FROM users u
     LEFT JOIN players p ON p.user_id = u.id AND p.is_rostered = 1
     WHERE p.id IS NULL

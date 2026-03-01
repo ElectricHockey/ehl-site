@@ -22,7 +22,20 @@ db.exec(`
     platform TEXT NOT NULL DEFAULT 'xbox',
     password_hash TEXT NOT NULL,
     email TEXT,
+    position TEXT,
     created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS signing_offers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    team_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    offered_by INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (team_id) REFERENCES teams(id),
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (offered_by) REFERENCES users(id)
   );
 
   CREATE TABLE IF NOT EXISTS team_staff (
@@ -139,5 +152,6 @@ try { db.exec('ALTER TABLE game_player_stats ADD COLUMN penalty_shot_attempts IN
 try { db.exec('ALTER TABLE game_player_stats ADD COLUMN penalty_shot_ga INTEGER DEFAULT 0'); } catch (_) {}
 try { db.exec('ALTER TABLE game_player_stats ADD COLUMN breakaway_shots INTEGER DEFAULT 0'); } catch (_) {}
 try { db.exec('ALTER TABLE game_player_stats ADD COLUMN breakaway_saves INTEGER DEFAULT 0'); } catch (_) {}
+try { db.exec('ALTER TABLE users ADD COLUMN position TEXT'); } catch (_) {}
 
 module.exports = db;

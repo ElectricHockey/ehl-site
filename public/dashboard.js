@@ -43,6 +43,7 @@ async function loadDashboard() {
         <h2>👤 Profile</h2>
         <p><strong>Gamertag:</strong> ${user.username}</p>
         <p><strong>Platform:</strong> ${user.platform === 'psn' ? 'PlayStation Network' : 'Xbox'}</p>
+        <p><strong>Position:</strong> ${user.position || '—'}</p>
         ${user.email ? `<p><strong>Email:</strong> ${user.email}</p>` : ''}
         <p><strong>Registered:</strong> ${new Date(user.created_at).toLocaleDateString()}</p>
         ${player
@@ -101,7 +102,8 @@ async function loadDashboard() {
       const roster = teamData ? teamData.roster : [];
       html += `<div id="ds-Sign/Release" class="dash-section">
         <div class="dash-card">
-          <h2>✍️ Sign a Player</h2>
+          <h2>✍️ Offer Contract</h2>
+          <p style="color:#8b949e;font-size:0.83rem;margin-top:-0.3rem;">The player will receive a notification to accept or decline.</p>
           <input type="text" class="search-input" id="sign-search" placeholder="Search free agents by gamertag…" oninput="searchFreeAgents('sign-results','sign-search',${teamId})" />
           <div id="sign-results"></div>
         </div>
@@ -150,10 +152,10 @@ async function searchFreeAgents(resultsId, inputId, teamId) {
     ? '<p style="color:#8b949e;font-size:0.83rem;padding:0.3rem 0;">No free agents found.</p>'
     : `<div class="user-list">${filtered.map(u => `
       <div class="user-item">
-        <span>${u.username} <small style="color:#8b949e;">${u.platform}</small></span>
+        <span>${u.username}${u.position ? ` <small style="color:#58a6ff;">${u.position}</small>` : ''} <small style="color:#8b949e;">${u.platform}</small></span>
         <button class="btn-secondary" style="font-size:0.8rem;padding:0.2rem 0.5rem;"
-          data-action="sign" data-team="${teamId}" data-user="${u.id}"
-          data-name="${u.username.replace(/"/g,'&quot;')}">Sign</button>
+          data-action="offer" data-team="${teamId}" data-user="${u.id}"
+          data-name="${u.username.replace(/"/g,'&quot;')}">Offer</button>
       </div>`).join('')}</div>`;
 }
 
@@ -167,7 +169,7 @@ async function searchUsers(resultsId, inputId, teamId, action) {
     ? '<p style="color:#8b949e;font-size:0.83rem;padding:0.3rem 0;">No users found.</p>'
     : `<div class="user-list">${filtered.map(u => `
       <div class="user-item">
-        <span>${u.username} <small style="color:#8b949e;">${u.platform}</small></span>
+        <span>${u.username}${u.position ? ` <small style="color:#58a6ff;">${u.position}</small>` : ''} <small style="color:#8b949e;">${u.platform}</small></span>
         <button class="btn-secondary" style="font-size:0.8rem;padding:0.2rem 0.5rem;"
           data-action="addgm" data-team="${teamId}" data-user="${u.id}"
           data-name="${u.username.replace(/"/g,'&quot;')}">Add as GM</button>
@@ -180,19 +182,19 @@ document.addEventListener('click', e => {
   if (!btn) return;
   const { action, team, player, user, name } = btn.dataset;
   if (action === 'release') releasePlayer(Number(team), Number(player), name);
-  if (action === 'sign')    signPlayer(Number(team), Number(user), name);
+  if (action === 'offer')   offerPlayer(Number(team), Number(user), name);
   if (action === 'addgm')  addGM(Number(team), Number(user), name);
 });
 
-async function signPlayer(teamId, userId, username) {
-  if (!confirm(`Sign ${username} to the roster?`)) return;
+async function offerPlayer(teamId, userId, username) {
+  if (!confirm(`Send a signing offer to ${username}?`)) return;
   _faCache = null;
-  const res = await fetch(`${API}/teams/${teamId}/roster/sign`, {
+  const res = await fetch(`${API}/teams/${teamId}/roster/offer`, {
     method: 'POST', headers: playerHeaders(), body: JSON.stringify({ user_id: userId }),
   });
   const data = await res.json();
-  if (!res.ok) { alert(data.error || 'Failed to sign player'); return; }
-  alert(`${username} has been signed!`);
+  if (!res.ok) { alert(data.error || 'Failed to send offer'); return; }
+  alert(`Offer sent to ${username}! They will see a notification to accept or decline.`);
   loadDashboard();
 }
 
