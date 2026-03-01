@@ -124,16 +124,17 @@ app.get('/api/auth/status', (req, res) => {
 // ── Player registration & login ────────────────────────────────────────────
 
 app.post('/api/players/register', async (req, res) => {
-  const { username, platform, password, email, position } = req.body;
+  const { username, platform, password, email, position, discord } = req.body;
   if (!username || !username.trim()) return res.status(400).json({ error: 'Username (gamertag) is required' });
   if (!password || password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+  if (!discord || !discord.trim()) return res.status(400).json({ error: 'Discord username is required' });
   const plat = (platform === 'psn' ? 'psn' : 'xbox');
   const pos = position ? position.trim() : null;
   const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(username.trim());
   if (existing) return res.status(409).json({ error: 'That gamertag is already registered' });
   const hash = await hashPassword(password);
-  const r = db.prepare('INSERT INTO users (username, platform, password_hash, email, position) VALUES (?, ?, ?, ?, ?)')
-    .run(username.trim(), plat, hash, email ? email.trim() : null, pos);
+  const r = db.prepare('INSERT INTO users (username, platform, password_hash, email, position, discord) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(username.trim(), plat, hash, email ? email.trim() : null, pos, discord.trim());
   // Also create a player record linked to this user
   const pr = db.prepare('INSERT INTO players (name, user_id, is_rostered, position) VALUES (?, ?, 0, ?)')
     .run(username.trim(), r.lastInsertRowid, pos);
@@ -160,7 +161,7 @@ app.post('/api/players/logout', (req, res) => {
 });
 
 app.get('/api/players/me', requirePlayer, (req, res) => {
-  const user = db.prepare('SELECT id, username, platform, email, position, created_at FROM users WHERE id = ?').get(req.userId);
+  const user = db.prepare('SELECT id, username, platform, email, position, discord, created_at FROM users WHERE id = ?').get(req.userId);
   if (!user) return res.status(404).json({ error: 'User not found' });
   const player = db.prepare('SELECT * FROM players WHERE user_id = ?').get(req.userId);
   const staff = db.prepare(`
@@ -178,12 +179,13 @@ app.patch('/api/users/:id', requireAdmin, (req, res) => {
   const platform = req.body.platform !== undefined ? (req.body.platform === 'psn' ? 'psn' : 'xbox') : user.platform;
   const email    = req.body.email    !== undefined ? (req.body.email ? req.body.email.trim() : null) : user.email;
   const position = req.body.position !== undefined ? (req.body.position ? req.body.position.trim() : null) : user.position;
+  const discord  = req.body.discord  !== undefined ? (req.body.discord ? req.body.discord.trim() : null) : user.discord;
   if (username !== user.username) {
     const clash = db.prepare('SELECT id FROM users WHERE username = ? AND id != ?').get(username, user.id);
     if (clash) return res.status(409).json({ error: 'That gamertag is already taken' });
   }
-  db.prepare('UPDATE users SET username = ?, platform = ?, email = ?, position = ? WHERE id = ?')
-    .run(username, platform, email, position, user.id);
+  db.prepare('UPDATE users SET username = ?, platform = ?, email = ?, position = ?, discord = ? WHERE id = ?')
+    .run(username, platform, email, position, discord, user.id);
   // Keep the active player record in sync (one record per user by design)
   const activePlayer = db.prepare('SELECT id FROM players WHERE user_id = ? ORDER BY id LIMIT 1').get(user.id);
   if (activePlayer) {
@@ -634,7 +636,7 @@ app.get('/api/players/profile/:name', (req, res) => {
   const player = db.prepare(`
     SELECT p.id, p.name, p.position AS player_position, p.is_rostered, p.number,
       t.id AS team_id, t.name AS team_name, t.logo_url AS team_logo, t.color1, t.color2,
-      u.platform, u.position AS user_position
+      u.platform, u.position AS user_position, u.discord
     FROM players p
     LEFT JOIN teams t ON p.team_id = t.id
     LEFT JOIN users u ON p.user_id = u.id
@@ -699,7 +701,7 @@ app.get('/api/players/profile/:name', (req, res) => {
 // List all registered users (for admin to pick an owner / for GMs to sign players)
 app.get('/api/users', requireAdmin, (_req, res) => {
   const users = db.prepare(`
-    SELECT u.id, u.username, u.platform, u.email, u.position, u.created_at,
+    SELECT u.id, u.username, u.platform, u.email, u.position, u.discord, u.created_at,
       p.team_id, t.name AS team_name, p.is_rostered
     FROM users u LEFT JOIN players p ON p.user_id = u.id LEFT JOIN teams t ON p.team_id = t.id
     ORDER BY u.username
