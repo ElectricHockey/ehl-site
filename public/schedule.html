@@ -189,7 +189,9 @@
 
   <div class="container">
     <h1>Schedule</h1>
-    <p style="color:#8b949e;margin-bottom:1rem;">Click a game to view stats.</p>
+    <div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;">
+      <div id="season-selector-container"></div>
+    </div>
 
     <div id="admin-bar" style="display:none;" class="admin-bar">
       🔑 Admin mode active
@@ -229,6 +231,7 @@
     </div>
   </div>
 
+  <script src="season-selector.js"></script>
   <script src="schedule.js"></script>
 </body>
 </html>

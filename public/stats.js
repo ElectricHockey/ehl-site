@@ -70,7 +70,7 @@ function renderSkaters() {
       <tbody>
         ${sorted.map(p => `<tr>
           <td>${p.name}</td>
-          <td>${p.team_name}</td>
+          <td>${p.team_logo ? `<img src="${p.team_logo}" style="width:20px;height:20px;object-fit:contain;vertical-align:middle;margin-right:0.3rem;border-radius:3px;" />` : ''}${p.team_name}</td>
           <td>${p.position || '–'}</td>
           <td>${p.gp}</td>
           <td>${p.goals}</td>
@@ -130,7 +130,7 @@ function renderGoalies() {
             : '–';
           return `<tr>
             <td>${p.name}</td>
-            <td>${p.team_name}</td>
+            <td>${p.team_logo ? `<img src="${p.team_logo}" style="width:20px;height:20px;object-fit:contain;vertical-align:middle;margin-right:0.3rem;border-radius:3px;" />` : ''}${p.team_name}</td>
             <td>${p.gp}</td>
             <td>${p.saves}</td>
             <td>${p.goals_against}</td>
@@ -155,7 +155,9 @@ function sortGoalies(key) {
 
 async function loadStats() {
   try {
-    const res = await fetch(`${API}/stats/leaders`);
+    const sid = typeof SeasonSelector !== 'undefined' ? SeasonSelector.getSelectedSeasonId() : null;
+    const url = sid ? `${API}/stats/leaders?season_id=${sid}` : `${API}/stats/leaders`;
+    const res = await fetch(url);
     if (!res.ok) throw new Error('Server error');
     const data = await res.json();
     skatersData = data.skaters || [];
@@ -169,3 +171,11 @@ async function loadStats() {
 }
 
 loadStats();
+
+// Wire season selector after SeasonSelector is loaded
+if (typeof SeasonSelector !== 'undefined') {
+  (async () => {
+    await SeasonSelector.init('season-selector-container');
+    SeasonSelector.onSeasonChange(() => loadStats());
+  })();
+}

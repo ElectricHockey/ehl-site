@@ -1,12 +1,38 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const fs = require('fs');
 const rateLimit = require('express-rate-limit');
 const crypto = require('crypto');
+const multer = require('multer');
 const db = require('./db');
 
 const app = express();
 const PORT = 3000;
+
+// ── Uploads directory ──────────────────────────────────────────────────────
+
+const uploadsDir = path.join(__dirname, 'public', 'uploads');
+if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+
+const logoStorage = multer.diskStorage({
+  destination: uploadsDir,
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    const unique = crypto.randomBytes(8).toString('hex');
+    cb(null, `logo-${Date.now()}-${unique}${ext}`);
+  },
+});
+const logoUpload = multer({
+  storage: logoStorage,
+  limits: { fileSize: 2 * 1024 * 1024 }, // 2 MB
+  fileFilter: (_req, file, cb) => {
+    const ok = /^image\/(jpeg|png|gif|webp|svg\+xml)$/.test(file.mimetype);
+    cb(ok ? null : new Error('Only image files are allowed'), ok);
+  },
+});
+
+// ── Rate limiting ──────────────────────────────────────────────────────────
 
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -54,37 +80,113 @@ app.get('/api/auth/status', (req, res) => {
   res.json({ isAdmin: !!(token && adminSessions.has(token)) });
 });
 
-// ── Teams ──────────────────────────────────────────────────────────────────
+// ── Seasons ────────────────────────────────────────────────────────────────
 
-app.get('/api/teams', (req, res) => {
-  const teams = db.prepare('SELECT * FROM teams ORDER BY conference, division, name').all();
-  res.json(teams);
+app.get('/api/seasons', (_req, res) => {
+  const seasons = db.prepare('SELECT * FROM seasons ORDER BY id DESC').all();
+  res.json(seasons);
 });
 
-app.post('/api/teams', requireAdmin, (req, res) => {
-  const { name, conference, division, ea_club_id } = req.body;
-  if (!name || !conference || !division) {
-    return res.status(400).json({ error: 'name, conference, and division are required' });
+app.post('/api/seasons', requireAdmin, (req, res) => {
+  const { name, make_active } = req.body;
+  if (!name || !name.trim()) {
+    return res.status(400).json({ error: 'Season name is required' });
   }
-  const result = db.prepare('INSERT INTO teams (name, conference, division, ea_club_id) VALUES (?, ?, ?, ?)').run(name, conference, division, ea_club_id || null);
-  res.status(201).json({ id: result.lastInsertRowid, name, conference, division, ea_club_id: ea_club_id || null });
+  if (make_active) {
+    db.prepare('UPDATE seasons SET is_active = 0').run();
+  }
+  const result = db.prepare('INSERT INTO seasons (name, is_active) VALUES (?, ?)').run(
+    name.trim(), make_active ? 1 : 0
+  );
+  res.status(201).json({ id: result.lastInsertRowid, name: name.trim(), is_active: make_active ? 1 : 0 });
 });
 
-app.delete('/api/teams/:id', requireAdmin, (req, res) => {
-  const { id } = req.params;
-  db.prepare('DELETE FROM game_player_stats WHERE team_id = ?').run(id);
-  db.prepare('DELETE FROM players WHERE team_id = ?').run(id);
-  db.prepare('DELETE FROM games WHERE home_team_id = ? OR away_team_id = ?').run(id, id);
-  const result = db.prepare('DELETE FROM teams WHERE id = ?').run(id);
-  if (result.changes === 0) return res.status(404).json({ error: 'Team not found' });
+app.patch('/api/seasons/:id', requireAdmin, (req, res) => {
+  const season = db.prepare('SELECT * FROM seasons WHERE id = ?').get(req.params.id);
+  if (!season) return res.status(404).json({ error: 'Season not found' });
+  const name = req.body.name !== undefined ? req.body.name.trim() : season.name;
+  if (req.body.is_active) {
+    db.prepare('UPDATE seasons SET is_active = 0').run();
+  }
+  const is_active = req.body.is_active ? 1 : (req.body.is_active === false ? 0 : season.is_active);
+  db.prepare('UPDATE seasons SET name = ?, is_active = ? WHERE id = ?').run(name, is_active, req.params.id);
+  res.json({ updated: true });
+});
+
+app.delete('/api/seasons/:id', requireAdmin, (req, res) => {
+  // Games in this season are NOT deleted; they lose their season_id
+  db.prepare('UPDATE games SET season_id = NULL WHERE season_id = ?').run(req.params.id);
+  const result = db.prepare('DELETE FROM seasons WHERE id = ?').run(req.params.id);
+  if (result.changes === 0) return res.status(404).json({ error: 'Season not found' });
   res.json({ deleted: true });
 });
 
-app.patch('/api/teams/:id', requireAdmin, (req, res) => {
-  const { ea_club_id } = req.body;
-  const result = db.prepare('UPDATE teams SET ea_club_id = ? WHERE id = ?').run(ea_club_id || null, req.params.id);
-  if (result.changes === 0) return res.status(404).json({ error: 'Team not found' });
+// ── Teams ──────────────────────────────────────────────────────────────────
+
+app.get('/api/teams', (_req, res) => {
+  const teams = db.prepare('SELECT * FROM teams ORDER BY name').all();
+  res.json(teams);
+});
+
+// Create team – accepts multipart/form-data (with optional logo) OR JSON
+app.post('/api/teams', requireAdmin, logoUpload.single('logo'), (req, res) => {
+  const body = req.body;
+  const name = (body.name || '').trim();
+  if (!name) return res.status(400).json({ error: 'name is required' });
+  const conference = (body.conference || '').trim();
+  const division = (body.division || '').trim();
+  const ea_club_id = body.ea_club_id ? Number(body.ea_club_id) : null;
+  const logo_url = req.file ? `/uploads/${req.file.filename}` : (body.logo_url || null);
+
+  const result = db.prepare(
+    'INSERT INTO teams (name, conference, division, ea_club_id, logo_url) VALUES (?, ?, ?, ?, ?)'
+  ).run(name, conference, division, ea_club_id, logo_url);
+  res.status(201).json({ id: result.lastInsertRowid, name, conference, division, ea_club_id, logo_url });
+});
+
+// Update team – accepts multipart/form-data (with optional logo) OR JSON
+app.patch('/api/teams/:id', requireAdmin, logoUpload.single('logo'), (req, res) => {
+  const team = db.prepare('SELECT * FROM teams WHERE id = ?').get(req.params.id);
+  if (!team) return res.status(404).json({ error: 'Team not found' });
+
+  const body = req.body;
+  const name = body.name !== undefined ? (body.name || '').trim() : team.name;
+  const conference = body.conference !== undefined ? (body.conference || '').trim() : team.conference;
+  const division = body.division !== undefined ? (body.division || '').trim() : team.division;
+  const ea_club_id = body.ea_club_id !== undefined
+    ? (body.ea_club_id ? Number(body.ea_club_id) : null)
+    : team.ea_club_id;
+
+  let logo_url = team.logo_url;
+  if (req.file) {
+    logo_url = `/uploads/${req.file.filename}`;
+    // Delete old logo file if it exists
+    if (team.logo_url) {
+      const old = path.join(__dirname, 'public', team.logo_url);
+      fs.unlink(old, err => { if (err && err.code !== 'ENOENT') console.warn('logo unlink:', err.message); });
+    }
+  } else if (body.logo_url !== undefined) {
+    logo_url = body.logo_url || null;
+  }
+
+  db.prepare('UPDATE teams SET name=?, conference=?, division=?, ea_club_id=?, logo_url=? WHERE id=?')
+    .run(name, conference, division, ea_club_id, logo_url, req.params.id);
   res.json({ updated: true });
+});
+
+app.delete('/api/teams/:id', requireAdmin, (req, res) => {
+  const team = db.prepare('SELECT * FROM teams WHERE id = ?').get(req.params.id);
+  if (!team) return res.status(404).json({ error: 'Team not found' });
+  // Delete logo file
+  if (team.logo_url) {
+    const logoPath = path.join(__dirname, 'public', team.logo_url);
+    fs.unlink(logoPath, err => { if (err && err.code !== 'ENOENT') console.warn('logo unlink:', err.message); });
+  }
+  db.prepare('DELETE FROM game_player_stats WHERE team_id = ?').run(req.params.id);
+  db.prepare('DELETE FROM players WHERE team_id = ?').run(req.params.id);
+  db.prepare('DELETE FROM games WHERE home_team_id = ? OR away_team_id = ?').run(req.params.id, req.params.id);
+  db.prepare('DELETE FROM teams WHERE id = ?').run(req.params.id);
+  res.json({ deleted: true });
 });
 
 // ── EA Helpers ─────────────────────────────────────────────────────────────
@@ -103,9 +205,7 @@ function mapEAPlayer(p) {
   return {
     name: p.playername || p.name || 'Unknown',
     position: EA_POSITIONS[String(p.position)] || String(p.position || ''),
-    goals,
-    assists,
-    points: goals + assists,
+    goals, assists, points: goals + assists,
     shots: Number(p.skshots) || 0,
     hits: Number(p.skhits) || 0,
     plusMinus: Number(p.skplusmin) || 0,
@@ -131,65 +231,28 @@ function mapEAPlayer(p) {
 async function fetchEA(url) {
   const res = await fetch(url, {
     headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-      'Accept': 'application/json',
-      'Referer': 'https://www.ea.com/',
-      'Origin': 'https://www.ea.com',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36',
+      Accept: 'application/json',
+      Referer: 'https://www.ea.com/',
+      Origin: 'https://www.ea.com',
     },
   });
   if (!res.ok) throw new Error(`EA API responded with ${res.status}`);
   return res.json();
 }
 
-// ── EA Live Matches (team page legacy, proxied from EA API) ───────────────
-
-app.get('/api/teams/:id/ea-matches', async (req, res) => {
-  const team = db.prepare('SELECT * FROM teams WHERE id = ?').get(req.params.id);
-  if (!team) return res.status(404).json({ error: 'Team not found' });
-  if (!team.ea_club_id) return res.status(400).json({ error: 'This team has no EA club ID configured' });
-
-  const leagueTeams = db.prepare('SELECT id, name, ea_club_id FROM teams WHERE ea_club_id IS NOT NULL').all();
-  const leagueClubIds = new Set(leagueTeams.map(t => String(t.ea_club_id)));
-  const clubIdToTeam = Object.fromEntries(leagueTeams.map(t => [String(t.ea_club_id), t]));
-
-  try {
-    const eaUrl = `https://proclubs.ea.com/api/nhl/clubs/matches?matchType=club_private&platform=common-gen5&clubIds=${team.ea_club_id}`;
-    const raw = await fetchEA(eaUrl);
-    const matchArray = Array.isArray(raw) ? raw : (raw.raw || []);
-
-    const leagueMatches = matchArray.filter(m => {
-      const myClub = m.clubs && m.clubs[String(team.ea_club_id)];
-      return myClub && leagueClubIds.has(String(myClub.opponentClubId));
-    });
-
-    const matches = leagueMatches.map(m => {
-      const myClub = m.clubs[String(team.ea_club_id)];
-      const opponentId = String(myClub.opponentClubId);
-      const opponentTeam = clubIdToTeam[opponentId] || null;
-      const rawPlayers = (m.players && m.players[String(team.ea_club_id)]) || {};
-      const players = Object.values(rawPlayers).map(mapEAPlayer);
-      return {
-        matchId: m.matchId,
-        date: m.timestamp ? new Date(m.timestamp * 1000).toISOString().split('T')[0] : null,
-        result: mapResult(myClub.result),
-        score: Number(myClub.score) || 0,
-        opponentScore: Number(myClub.opponentScore) || 0,
-        opponent: opponentTeam,
-        players,
-      };
-    });
-
-    res.json({ team: { id: team.id, name: team.name, ea_club_id: team.ea_club_id }, matches });
-  } catch (err) {
-    res.status(502).json({ error: 'Failed to fetch EA data', details: err.message });
-  }
-});
-
-// ── Team season stats (DB, completed games only) ──────────────────────────
+// ── Team season stats (DB) ─────────────────────────────────────────────────
 
 app.get('/api/teams/:id/stats', (req, res) => {
   const team = db.prepare('SELECT * FROM teams WHERE id = ?').get(req.params.id);
   if (!team) return res.status(404).json({ error: 'Team not found' });
+
+  const seasonId = req.query.season_id ? Number(req.query.season_id) : null;
+  const seasonFilter = seasonId
+    ? 'AND g.season_id = ?'
+    : '';
+  const params = seasonId ? [req.params.id, seasonId] : [req.params.id];
+  const recentParams = seasonId ? [req.params.id, req.params.id, seasonId] : [req.params.id, req.params.id];
 
   const skaterStats = db.prepare(`
     SELECT gps.player_name AS name, gps.position,
@@ -203,10 +266,10 @@ app.get('/api/teams/:id/stats', (req, res) => {
       SUM(gps.sh_goals) AS sh_goals, SUM(gps.toi) AS toi
     FROM game_player_stats gps
     JOIN games g ON gps.game_id = g.id
-    WHERE gps.team_id = ? AND gps.position != 'G' AND g.status = 'complete'
+    WHERE gps.team_id = ? AND gps.position != 'G' AND g.status = 'complete' ${seasonFilter}
     GROUP BY gps.player_name
     ORDER BY points DESC, goals DESC
-  `).all(req.params.id);
+  `).all(...params);
 
   const goalieStats = db.prepare(`
     SELECT gps.player_name AS name,
@@ -218,34 +281,33 @@ app.get('/api/teams/:id/stats', (req, res) => {
         ELSE NULL END AS save_pct
     FROM game_player_stats gps
     JOIN games g ON gps.game_id = g.id
-    WHERE gps.team_id = ? AND gps.position = 'G' AND g.status = 'complete'
+    WHERE gps.team_id = ? AND gps.position = 'G' AND g.status = 'complete' ${seasonFilter}
     GROUP BY gps.player_name
     ORDER BY save_pct DESC
-  `).all(req.params.id);
+  `).all(...params);
 
+  const recentSeasonFilter = seasonId ? 'AND g.season_id = ?' : '';
   const recentGames = db.prepare(`
-    SELECT g.id, g.date, g.home_score, g.away_score, g.status,
-      ht.id AS home_team_id, ht.name AS home_team_name,
-      at.id AS away_team_id, at.name AS away_team_name
+    SELECT g.id, g.date, g.home_score, g.away_score, g.status, g.season_id,
+      ht.id AS home_team_id, ht.name AS home_team_name, ht.logo_url AS home_logo,
+      at.id AS away_team_id, at.name AS away_team_name, at.logo_url AS away_logo
     FROM games g
     JOIN teams ht ON g.home_team_id = ht.id
     JOIN teams at ON g.away_team_id = at.id
-    WHERE (g.home_team_id = ? OR g.away_team_id = ?) AND g.status = 'complete'
+    WHERE (g.home_team_id = ? OR g.away_team_id = ?) AND g.status = 'complete' ${recentSeasonFilter}
     ORDER BY g.date DESC
     LIMIT 10
-  `).all(req.params.id, req.params.id);
+  `).all(...recentParams);
 
   res.json({ team, skaterStats, goalieStats, recentGames });
 });
 
 // ── Players ────────────────────────────────────────────────────────────────
 
-app.get('/api/players', (req, res) => {
+app.get('/api/players', (_req, res) => {
   const players = db.prepare(`
-    SELECT p.*, t.name AS team_name
-    FROM players p
-    LEFT JOIN teams t ON p.team_id = t.id
-    ORDER BY t.name, p.name
+    SELECT p.*, t.name AS team_name FROM players p
+    LEFT JOIN teams t ON p.team_id = t.id ORDER BY t.name, p.name
   `).all();
   res.json(players);
 });
@@ -253,7 +315,8 @@ app.get('/api/players', (req, res) => {
 app.post('/api/players', requireAdmin, (req, res) => {
   const { name, team_id, position, number } = req.body;
   if (!name) return res.status(400).json({ error: 'name is required' });
-  const result = db.prepare('INSERT INTO players (name, team_id, position, number) VALUES (?, ?, ?, ?)').run(name, team_id || null, position || null, number || null);
+  const result = db.prepare('INSERT INTO players (name, team_id, position, number) VALUES (?, ?, ?, ?)')
+    .run(name, team_id || null, position || null, number || null);
   res.status(201).json({ id: result.lastInsertRowid, name, team_id, position, number });
 });
 
@@ -266,23 +329,34 @@ app.delete('/api/players/:id', requireAdmin, (req, res) => {
 // ── Games ──────────────────────────────────────────────────────────────────
 
 app.get('/api/games', (req, res) => {
+  const seasonId = req.query.season_id ? Number(req.query.season_id) : null;
+  const filter = seasonId ? 'WHERE g.season_id = ?' : '';
+  const params = seasonId ? [seasonId] : [];
   const games = db.prepare(`
-    SELECT g.*, ht.name AS home_team_name, at.name AS away_team_name
+    SELECT g.*, ht.name AS home_team_name, ht.logo_url AS home_logo,
+      at.name AS away_team_name, at.logo_url AS away_logo
     FROM games g
     JOIN teams ht ON g.home_team_id = ht.id
     JOIN teams at ON g.away_team_id = at.id
+    ${filter}
     ORDER BY g.date DESC
-  `).all();
+  `).all(...params);
   res.json(games);
 });
 
 app.post('/api/games', requireAdmin, (req, res) => {
-  const { home_team_id, away_team_id, home_score, away_score, date } = req.body;
+  const { home_team_id, away_team_id, home_score, away_score, date, season_id } = req.body;
   if (!home_team_id || !away_team_id || !date) {
     return res.status(400).json({ error: 'home_team_id, away_team_id, and date are required' });
   }
-  const result = db.prepare('INSERT INTO games (home_team_id, away_team_id, home_score, away_score, date, status) VALUES (?, ?, ?, ?, ?, ?)').run(home_team_id, away_team_id, home_score || 0, away_score || 0, date, 'scheduled');
-  res.status(201).json({ id: result.lastInsertRowid, home_team_id, away_team_id, home_score: home_score || 0, away_score: away_score || 0, date, status: 'scheduled' });
+  const result = db.prepare(
+    'INSERT INTO games (home_team_id, away_team_id, home_score, away_score, date, status, season_id) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).run(home_team_id, away_team_id, home_score || 0, away_score || 0, date, 'scheduled', season_id || null);
+  res.status(201).json({
+    id: result.lastInsertRowid, home_team_id, away_team_id,
+    home_score: home_score || 0, away_score: away_score || 0, date,
+    status: 'scheduled', season_id: season_id || null,
+  });
 });
 
 app.delete('/api/games/:id', requireAdmin, (req, res) => {
@@ -300,55 +374,50 @@ app.patch('/api/games/:id', requireAdmin, (req, res) => {
   let away_score = game.away_score;
   const ea_match_id = req.body.ea_match_id !== undefined ? req.body.ea_match_id : game.ea_match_id;
   const status = req.body.status !== undefined ? req.body.status : game.status;
+  const season_id = req.body.season_id !== undefined ? req.body.season_id : game.season_id;
 
   if (req.body.home_score !== undefined) {
     home_score = parseInt(req.body.home_score, 10);
-    if (isNaN(home_score) || home_score < 0 || home_score > 99) {
+    if (isNaN(home_score) || home_score < 0 || home_score > 99)
       return res.status(400).json({ error: 'home_score must be a non-negative integer (0–99)' });
-    }
   }
   if (req.body.away_score !== undefined) {
     away_score = parseInt(req.body.away_score, 10);
-    if (isNaN(away_score) || away_score < 0 || away_score > 99) {
+    if (isNaN(away_score) || away_score < 0 || away_score > 99)
       return res.status(400).json({ error: 'away_score must be a non-negative integer (0–99)' });
-    }
   }
 
-  db.prepare('UPDATE games SET home_score = ?, away_score = ?, ea_match_id = ?, status = ? WHERE id = ?')
-    .run(home_score, away_score, ea_match_id, status, req.params.id);
+  db.prepare('UPDATE games SET home_score=?, away_score=?, ea_match_id=?, status=?, season_id=? WHERE id=?')
+    .run(home_score, away_score, ea_match_id, status, season_id, req.params.id);
 
-  // Save player stats if provided (replaces existing stats for this game)
   if (req.body.player_stats) {
     const { home_players, away_players } = req.body.player_stats;
     db.prepare('DELETE FROM game_player_stats WHERE game_id = ?').run(req.params.id);
-    const insertStat = db.prepare(`
+    const ins = db.prepare(`
       INSERT INTO game_player_stats
-        (game_id, team_id, player_name, position, goals, assists, shots, hits,
-         plus_minus, pim, blocked_shots, takeaways, giveaways, possession_secs,
-         pass_attempts, pass_pct, faceoff_wins, faceoff_losses, pp_goals, sh_goals,
-         toi, saves, save_pct, goals_against, shots_against)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (game_id,team_id,player_name,position,goals,assists,shots,hits,
+         plus_minus,pim,blocked_shots,takeaways,giveaways,possession_secs,
+         pass_attempts,pass_pct,faceoff_wins,faceoff_losses,pp_goals,sh_goals,
+         toi,saves,save_pct,goals_against,shots_against)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `);
     const saveList = (players, teamId) => {
       for (const p of (players || [])) {
-        insertStat.run(
-          req.params.id, teamId, p.name, p.position,
-          p.goals || 0, p.assists || 0, p.shots || 0, p.hits || 0,
-          p.plusMinus || 0, p.pim || 0, p.blockedShots || 0,
-          p.takeaways || 0, p.giveaways || 0, p.possessionSecs || 0,
-          p.passAttempts || 0, p.passPct || null,
-          p.faceoffWins || 0, p.faceoffLosses || 0,
-          p.ppGoals || 0, p.shGoals || 0, p.toi || 0,
-          p.saves || 0, p.savesPct || null,
-          p.goalsAgainst || 0, p.shotsAgainst || 0
-        );
+        ins.run(req.params.id, teamId, p.name, p.position,
+          p.goals||0, p.assists||0, p.shots||0, p.hits||0,
+          p.plusMinus||0, p.pim||0, p.blockedShots||0,
+          p.takeaways||0, p.giveaways||0, p.possessionSecs||0,
+          p.passAttempts||0, p.passPct||null,
+          p.faceoffWins||0, p.faceoffLosses||0,
+          p.ppGoals||0, p.shGoals||0, p.toi||0,
+          p.saves||0, p.savesPct||null,
+          p.goalsAgainst||0, p.shotsAgainst||0);
       }
     };
     saveList(home_players, game.home_team_id);
     saveList(away_players, game.away_team_id);
   }
 
-  // Clear stats when EA match is explicitly un-linked
   if (req.body.ea_match_id === null && !req.body.player_stats) {
     db.prepare('DELETE FROM game_player_stats WHERE game_id = ?').run(req.params.id);
   }
@@ -360,9 +429,8 @@ app.patch('/api/games/:id', requireAdmin, (req, res) => {
 
 app.get('/api/games/:id/stats', (req, res) => {
   const game = db.prepare(`
-    SELECT g.*,
-      ht.name AS home_team_name,
-      at.name AS away_team_name
+    SELECT g.*, ht.name AS home_team_name, ht.logo_url AS home_logo,
+      at.name AS away_team_name, at.logo_url AS away_logo
     FROM games g
     JOIN teams ht ON g.home_team_id = ht.id
     JOIN teams at ON g.away_team_id = at.id
@@ -370,20 +438,19 @@ app.get('/api/games/:id/stats', (req, res) => {
   `).get(req.params.id);
   if (!game) return res.status(404).json({ error: 'Game not found' });
 
-  const stats = db.prepare('SELECT * FROM game_player_stats WHERE game_id = ? ORDER BY position, goals DESC').all(req.params.id);
-  const homePlayers = stats.filter(s => s.team_id === game.home_team_id);
-  const awayPlayers = stats.filter(s => s.team_id === game.away_team_id);
-
+  const stats = db.prepare(
+    'SELECT * FROM game_player_stats WHERE game_id = ? ORDER BY position, goals DESC'
+  ).all(req.params.id);
   res.json({
     game: {
-      id: game.id, date: game.date, status: game.status,
-      home_team: { id: game.home_team_id, name: game.home_team_name },
-      away_team: { id: game.away_team_id, name: game.away_team_name },
+      id: game.id, date: game.date, status: game.status, season_id: game.season_id,
+      home_team: { id: game.home_team_id, name: game.home_team_name, logo_url: game.home_logo },
+      away_team: { id: game.away_team_id, name: game.away_team_name, logo_url: game.away_logo },
       home_score: game.home_score, away_score: game.away_score,
       ea_match_id: game.ea_match_id,
     },
-    home_players: homePlayers,
-    away_players: awayPlayers,
+    home_players: stats.filter(s => s.team_id === game.home_team_id),
+    away_players: stats.filter(s => s.team_id === game.away_team_id),
     has_stats: stats.length > 0,
   });
 });
@@ -391,8 +458,12 @@ app.get('/api/games/:id/stats', (req, res) => {
 // ── League stats leaders ───────────────────────────────────────────────────
 
 app.get('/api/stats/leaders', (req, res) => {
+  const seasonId = req.query.season_id ? Number(req.query.season_id) : null;
+  const sf = seasonId ? 'AND g.season_id = ?' : '';
+  const p = seasonId ? [seasonId] : [];
+
   const skaters = db.prepare(`
-    SELECT gps.player_name AS name, t.name AS team_name, gps.position,
+    SELECT gps.player_name AS name, t.name AS team_name, t.logo_url AS team_logo, gps.position,
       COUNT(DISTINCT gps.game_id) AS gp,
       SUM(gps.goals) AS goals, SUM(gps.assists) AS assists,
       SUM(gps.goals + gps.assists) AS points,
@@ -404,13 +475,13 @@ app.get('/api/stats/leaders', (req, res) => {
     FROM game_player_stats gps
     JOIN teams t ON gps.team_id = t.id
     JOIN games g ON gps.game_id = g.id
-    WHERE gps.position != 'G' AND g.status = 'complete'
+    WHERE gps.position != 'G' AND g.status = 'complete' ${sf}
     GROUP BY gps.player_name, gps.team_id
     ORDER BY points DESC, goals DESC
-  `).all();
+  `).all(...p);
 
   const goalies = db.prepare(`
-    SELECT gps.player_name AS name, t.name AS team_name,
+    SELECT gps.player_name AS name, t.name AS team_name, t.logo_url AS team_logo,
       COUNT(DISTINCT gps.game_id) AS gp,
       SUM(gps.saves) AS saves, SUM(gps.goals_against) AS goals_against,
       SUM(gps.shots_against) AS shots_against,
@@ -420,20 +491,19 @@ app.get('/api/stats/leaders', (req, res) => {
     FROM game_player_stats gps
     JOIN teams t ON gps.team_id = t.id
     JOIN games g ON gps.game_id = g.id
-    WHERE gps.position = 'G' AND g.status = 'complete'
+    WHERE gps.position = 'G' AND g.status = 'complete' ${sf}
     GROUP BY gps.player_name, gps.team_id
     ORDER BY save_pct DESC
-  `).all();
+  `).all(...p);
 
   res.json({ skaters, goalies });
 });
 
-// ── EA Matches for game picker (admin only) ────────────────────────────────
+// ── EA Matches for game picker ─────────────────────────────────────────────
 
 app.get('/api/games/:id/ea-matches', async (req, res) => {
   const game = db.prepare(`
-    SELECT g.*,
-      ht.name AS home_team_name, ht.ea_club_id AS home_ea_club_id,
+    SELECT g.*, ht.name AS home_team_name, ht.ea_club_id AS home_ea_club_id,
       at.name AS away_team_name, at.ea_club_id AS away_ea_club_id
     FROM games g
     JOIN teams ht ON g.home_team_id = ht.id
@@ -444,23 +514,20 @@ app.get('/api/games/:id/ea-matches', async (req, res) => {
   if (!game.home_ea_club_id) return res.status(400).json({ error: 'Home team has no EA club ID configured' });
 
   try {
-    const eaUrl = `https://proclubs.ea.com/api/nhl/clubs/matches?matchType=club_private&platform=common-gen5&clubIds=${game.home_ea_club_id}`;
-    const raw = await fetchEA(eaUrl);
+    const raw = await fetchEA(
+      `https://proclubs.ea.com/api/nhl/clubs/matches?matchType=club_private&platform=common-gen5&clubIds=${game.home_ea_club_id}`
+    );
     const matchArray = Array.isArray(raw) ? raw : (raw.raw || []);
 
     const matches = matchArray.map(m => {
       const myClub = m.clubs && m.clubs[String(game.home_ea_club_id)];
       if (!myClub) return null;
-      const opponentClubId = String(myClub.opponentClubId);
-      const opponentClub = m.clubs && m.clubs[opponentClubId];
-      const opponentClubName = (opponentClub && opponentClub.details && opponentClub.details.name) || `Club ${opponentClubId}`;
-      const isScheduledOpponent = !!game.away_ea_club_id && String(game.away_ea_club_id) === opponentClubId;
-
-      const rawHome = (m.players && m.players[String(game.home_ea_club_id)]) || {};
-      const rawAway = (m.players && m.players[opponentClubId]) || {};
-      const players = Object.values(rawHome).map(mapEAPlayer);
-      const awayPlayers = Object.values(rawAway).map(mapEAPlayer);
-
+      const oppId = String(myClub.opponentClubId);
+      const oppClub = m.clubs && m.clubs[oppId];
+      const oppName = (oppClub && oppClub.details && oppClub.details.name) || `Club ${oppId}`;
+      const isScheduledOpponent = !!game.away_ea_club_id && String(game.away_ea_club_id) === oppId;
+      const players = Object.values((m.players && m.players[String(game.home_ea_club_id)]) || {}).map(mapEAPlayer);
+      const awayPlayers = Object.values((m.players && m.players[oppId]) || {}).map(mapEAPlayer);
       return {
         matchId: m.matchId,
         timestamp: m.timestamp || 0,
@@ -468,11 +535,8 @@ app.get('/api/games/:id/ea-matches', async (req, res) => {
         result: mapResult(myClub.result),
         homeScore: Number(myClub.score) || 0,
         awayScore: Number(myClub.opponentScore) || 0,
-        opponentClubId,
-        opponentClubName,
-        isScheduledOpponent,
-        players,
-        awayPlayers,
+        opponentClubId: oppId, opponentClubName: oppName,
+        isScheduledOpponent, players, awayPlayers,
       };
     }).filter(Boolean);
 
@@ -491,30 +555,33 @@ app.get('/api/games/:id/ea-matches', async (req, res) => {
   }
 });
 
-// ── Standings (complete games only) ───────────────────────────────────────
+// ── Standings (complete games, filtered by season) ─────────────────────────
 
 app.get('/api/standings', (req, res) => {
+  const seasonId = req.query.season_id ? Number(req.query.season_id) : null;
   const teams = db.prepare('SELECT * FROM teams').all();
-  const games = db.prepare("SELECT * FROM games WHERE status = 'complete'").all();
+  const filter = seasonId
+    ? "SELECT * FROM games WHERE status = 'complete' AND season_id = ?"
+    : "SELECT * FROM games WHERE status = 'complete'";
+  const games = seasonId
+    ? db.prepare(filter).all(seasonId)
+    : db.prepare(filter).all();
 
   const stats = {};
-  for (const team of teams) {
-    stats[team.id] = { id: team.id, name: team.name, conference: team.conference, division: team.division, gp: 0, w: 0, l: 0, pts: 0, gf: 0, ga: 0 };
+  for (const t of teams) {
+    stats[t.id] = { id: t.id, name: t.name, logo_url: t.logo_url || null,
+      conference: t.conference, division: t.division, gp: 0, w: 0, l: 0, pts: 0, gf: 0, ga: 0 };
   }
-  for (const game of games) {
-    const home = stats[game.home_team_id];
-    const away = stats[game.away_team_id];
+  for (const g of games) {
+    const home = stats[g.home_team_id];
+    const away = stats[g.away_team_id];
     if (!home || !away) continue;
     home.gp++; away.gp++;
-    home.gf += game.home_score; home.ga += game.away_score;
-    away.gf += game.away_score; away.ga += game.home_score;
-    if (game.home_score > game.away_score) {
-      home.w++; home.pts += 2; away.l++;
-    } else if (game.away_score > game.home_score) {
-      away.w++; away.pts += 2; home.l++;
-    } else {
-      home.pts++; away.pts++;
-    }
+    home.gf += g.home_score; home.ga += g.away_score;
+    away.gf += g.away_score; away.ga += g.home_score;
+    if (g.home_score > g.away_score) { home.w++; home.pts += 2; away.l++; }
+    else if (g.away_score > g.home_score) { away.w++; away.pts += 2; home.l++; }
+    else { home.pts++; away.pts++; }
   }
   res.json(Object.values(stats).sort((a, b) => b.pts - a.pts || b.w - a.w));
 });
@@ -525,8 +592,6 @@ const eaMatchesMock = [
   { id: 1, club: 'EHL Falcons', opponent: 'EHL Ravens', result: 'W', score: '5-2', date: '2026-02-15', assigned: false },
   { id: 2, club: 'EHL Falcons', opponent: 'EHL Wolves', result: 'L', score: '1-3', date: '2026-02-18', assigned: false },
   { id: 3, club: 'EHL Ravens', opponent: 'EHL Wolves', result: 'W', score: '4-1', date: '2026-02-20', assigned: false },
-  { id: 4, club: 'EHL Wolves', opponent: 'EHL Falcons', result: 'W', score: '3-2', date: '2026-02-22', assigned: false },
-  { id: 5, club: 'EHL Ravens', opponent: 'EHL Falcons', result: 'L', score: '2-4', date: '2026-02-25', assigned: false },
 ];
 
 app.get('/api/ea-matches', (req, res) => {
@@ -537,15 +602,12 @@ app.get('/api/ea-matches', (req, res) => {
 
 app.post('/api/ea-matches/assign', requireAdmin, (req, res) => {
   const { ea_match_id, game_id } = req.body;
-  if (!ea_match_id || !game_id) {
-    return res.status(400).json({ error: 'ea_match_id and game_id are required' });
-  }
+  if (!ea_match_id || !game_id) return res.status(400).json({ error: 'ea_match_id and game_id are required' });
   const match = eaMatchesMock.find(m => m.id === Number(ea_match_id));
   if (!match) return res.status(404).json({ error: 'EA match not found' });
   const game = db.prepare('SELECT * FROM games WHERE id = ?').get(game_id);
   if (!game) return res.status(404).json({ error: 'Game not found' });
-  match.assigned = true;
-  match.game_id = game_id;
+  match.assigned = true; match.game_id = game_id;
   res.json({ success: true, ea_match: match, game });
 });
 

@@ -3,11 +3,17 @@ const Database = require('better-sqlite3');
 const db = new Database('league.db');
 
 db.exec(`
+  CREATE TABLE IF NOT EXISTS seasons (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    is_active INTEGER DEFAULT 0
+  );
+
   CREATE TABLE IF NOT EXISTS teams (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
-    conference TEXT NOT NULL,
-    division TEXT NOT NULL
+    conference TEXT NOT NULL DEFAULT '',
+    division TEXT NOT NULL DEFAULT ''
   );
 
   CREATE TABLE IF NOT EXISTS players (
@@ -64,7 +70,11 @@ db.exec(`
 
 // Migrations – safe to re-run
 try { db.exec('ALTER TABLE teams ADD COLUMN ea_club_id INTEGER'); } catch (_) {}
+try { db.exec('ALTER TABLE teams ADD COLUMN logo_url TEXT'); } catch (_) {}
+try { db.exec("ALTER TABLE teams ADD COLUMN conference TEXT NOT NULL DEFAULT ''"); } catch (_) {}
+try { db.exec("ALTER TABLE teams ADD COLUMN division TEXT NOT NULL DEFAULT ''"); } catch (_) {}
 try { db.exec('ALTER TABLE games ADD COLUMN ea_match_id TEXT'); } catch (_) {}
 try { db.exec("ALTER TABLE games ADD COLUMN status TEXT DEFAULT 'scheduled'"); } catch (_) {}
+try { db.exec('ALTER TABLE games ADD COLUMN season_id INTEGER'); } catch (_) {}
 
 module.exports = db;

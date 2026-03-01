@@ -1,22 +1,31 @@
 const API = '/api';
 
-// ── Auth helpers ──────────────────────────────────────────────────────────
-
-function getAdminToken() {
-  return localStorage.getItem('ehl_admin_token') || '';
-}
-
-function adminHeaders() {
-  return { 'Content-Type': 'application/json', 'X-Admin-Token': getAdminToken() };
-}
+function getAdminToken() { return localStorage.getItem('ehl_admin_token') || ''; }
+function adminHeaders() { return { 'X-Admin-Token': getAdminToken() }; }
+function adminJsonHeaders() { return { 'Content-Type': 'application/json', 'X-Admin-Token': getAdminToken() }; }
 
 function showStatus(msg, isError = false) {
   const el = document.getElementById('status-msg');
+  if (!el) return;
   el.textContent = msg;
   el.className = isError ? 'error' : 'success';
 }
 
-// ── Check auth on load ────────────────────────────────────────────────────
+function previewLogo(input, previewId) {
+  const img = document.getElementById(previewId);
+  if (!img) return;
+  if (input.files && input.files[0]) {
+    if (img._objectUrl) URL.revokeObjectURL(img._objectUrl);
+    img._objectUrl = URL.createObjectURL(input.files[0]);
+    img.src = img._objectUrl;
+    img.style.display = 'block';
+  } else {
+    if (img._objectUrl) { URL.revokeObjectURL(img._objectUrl); img._objectUrl = null; }
+    img.style.display = 'none';
+  }
+}
+
+// ── Auth ──────────────────────────────────────────────────────────────────
 
 async function checkAuth() {
   const token = getAdminToken();
@@ -24,15 +33,8 @@ async function checkAuth() {
   try {
     const res = await fetch(`${API}/auth/status`, { headers: { 'X-Admin-Token': token } });
     const data = await res.json();
-    if (data.isAdmin) {
-      showAdminPanel();
-    } else {
-      localStorage.removeItem('ehl_admin_token');
-      showLoginForm();
-    }
-  } catch {
-    showLoginForm();
-  }
+    if (data.isAdmin) { showAdminPanel(); } else { localStorage.removeItem('ehl_admin_token'); showLoginForm(); }
+  } catch { showLoginForm(); }
 }
 
 function showLoginForm() {
@@ -43,6 +45,7 @@ function showLoginForm() {
 function showAdminPanel() {
   document.getElementById('login-section').style.display = 'none';
   document.getElementById('admin-panel').style.display = '';
+  loadSeasons();
   loadTeams();
   loadPlayers();
   loadGames();
@@ -54,27 +57,67 @@ document.getElementById('login-form').addEventListener('submit', async e => {
   const errEl = document.getElementById('login-error');
   errEl.style.display = 'none';
   try {
-    const res = await fetch(`${API}/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password }),
-    });
+    const res = await fetch(`${API}/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) });
     if (!res.ok) { errEl.style.display = ''; return; }
     const data = await res.json();
     localStorage.setItem('ehl_admin_token', data.token);
     showAdminPanel();
-  } catch {
-    errEl.style.display = '';
-  }
+  } catch { errEl.style.display = ''; }
 });
 
 async function adminLogout() {
-  await fetch(`${API}/auth/logout`, {
-    method: 'POST',
-    headers: { 'X-Admin-Token': getAdminToken() },
-  }).catch(() => {});
+  await fetch(`${API}/auth/logout`, { method: 'POST', headers: adminHeaders() }).catch(() => {});
   localStorage.removeItem('ehl_admin_token');
   showLoginForm();
+}
+
+// ── Seasons ───────────────────────────────────────────────────────────────
+
+let allSeasons = [];
+
+async function loadSeasons() {
+  const res = await fetch(`${API}/seasons`);
+  allSeasons = await res.json();
+  const list = document.getElementById('seasons-list');
+
+  if (allSeasons.length === 0) {
+    list.innerHTML = '<p style="color:#8b949e;font-size:0.85rem;">No seasons yet. Create one above.</p>';
+  } else {
+    list.innerHTML = allSeasons.map(s => `
+      <div class="season-item">
+        ${s.is_active ? '<span class="season-active-badge">★ Active</span>' : ''}
+        <strong style="flex:1;">${s.name}</strong>
+        ${!s.is_active ? `<button class="btn-secondary" style="font-size:0.8rem;padding:0.25rem 0.6rem;" onclick="setActiveSeason(${s.id})">Set Active</button>` : ''}
+        <button class="btn-danger" style="font-size:0.8rem;padding:0.25rem 0.6rem;" onclick="deleteSeason(${s.id})">Delete</button>
+      </div>`).join('');
+  }
+
+  // Populate season dropdowns in game form
+  const seasonOpts = '<option value="">— No Season —</option>' +
+    allSeasons.map(s => `<option value="${s.id}"${s.is_active ? ' selected' : ''}>${s.name}</option>`).join('');
+  document.getElementById('game-season').innerHTML = seasonOpts;
+}
+
+document.getElementById('season-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const name = document.getElementById('season-name').value.trim();
+  const make_active = document.getElementById('season-active').checked;
+  const res = await fetch(`${API}/seasons`, {
+    method: 'POST', headers: adminJsonHeaders(),
+    body: JSON.stringify({ name, make_active }),
+  });
+  if (res.ok) { e.target.reset(); await loadSeasons(); await loadGames(); }
+});
+
+async function setActiveSeason(id) {
+  await fetch(`${API}/seasons/${id}`, { method: 'PATCH', headers: adminJsonHeaders(), body: JSON.stringify({ is_active: true }) });
+  await loadSeasons();
+}
+
+async function deleteSeason(id) {
+  if (!confirm('Delete this season? Games in this season will become unassigned.')) return;
+  await fetch(`${API}/seasons/${id}`, { method: 'DELETE', headers: adminHeaders() });
+  await loadSeasons(); await loadGames();
 }
 
 // ── Teams ─────────────────────────────────────────────────────────────────
@@ -87,34 +130,43 @@ async function loadTeams() {
     ? '<tr><td colspan="6" style="color:#8b949e">No teams yet.</td></tr>'
     : teams.map(t => `
       <tr>
-        <td>${t.id}</td>
+        <td>${t.logo_url ? `<img src="${t.logo_url}" class="team-logo-sm" alt="${t.name}" />` : '—'}</td>
         <td>${t.name}</td>
-        <td>${t.conference}</td>
-        <td>${t.division}</td>
+        <td>${t.conference || '—'}</td>
+        <td>${t.division || '—'}</td>
         <td>
           <span id="ea-id-${t.id}" data-value="${t.ea_club_id ?? ''}">${t.ea_club_id ?? '—'}</span>
           <button class="btn-secondary" style="margin-left:0.4rem;padding:0.2rem 0.5rem;font-size:0.8rem;" onclick="setEaId(${t.id})">Edit</button>
+          <button class="btn-secondary" style="margin-left:0.3rem;padding:0.2rem 0.5rem;font-size:0.8rem;" onclick="changeLogo(${t.id})">Logo</button>
         </td>
         <td><button class="btn-danger" onclick="deleteTeam(${t.id})">Delete</button></td>
       </tr>`).join('');
 
-  const opts = '<option value="">— No Team —</option>' + teams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
-  document.getElementById('player-team').innerHTML = opts;
-  const gameOpt = '<option value="">Select team</option>' + teams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
-  document.getElementById('game-home').innerHTML = gameOpt;
-  document.getElementById('game-away').innerHTML = gameOpt;
+  const tOpts = '<option value="">— No Team —</option>' + teams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+  document.getElementById('player-team').innerHTML = tOpts;
+  const gOpts = '<option value="">Select team</option>' + teams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+  document.getElementById('game-home').innerHTML = gOpts;
+  document.getElementById('game-away').innerHTML = gOpts;
 }
 
 document.getElementById('team-form').addEventListener('submit', async e => {
   e.preventDefault();
-  const name = document.getElementById('team-name').value.trim();
-  const conference = document.getElementById('team-conference').value.trim();
-  const division = document.getElementById('team-division').value.trim();
-  const ea_club_id = document.getElementById('team-ea-id').value ? Number(document.getElementById('team-ea-id').value) : null;
-  await fetch(`${API}/teams`, { method: 'POST', headers: adminHeaders(), body: JSON.stringify({ name, conference, division, ea_club_id }) });
-  e.target.reset();
-  await loadTeams();
-  await loadGames();
+  const fd = new FormData();
+  fd.append('name', document.getElementById('team-name').value.trim());
+  fd.append('conference', document.getElementById('team-conference').value.trim());
+  fd.append('division', document.getElementById('team-division').value.trim());
+  const eaId = document.getElementById('team-ea-id').value;
+  if (eaId) fd.append('ea_club_id', eaId);
+  const logoFile = document.getElementById('team-logo').files[0];
+  if (logoFile) fd.append('logo', logoFile);
+
+  const res = await fetch(`${API}/teams`, {
+    method: 'POST',
+    headers: adminHeaders(),  // no Content-Type – let browser set multipart boundary
+    body: fd,
+  });
+  if (res.ok) { e.target.reset(); document.getElementById('logo-preview-new').style.display = 'none'; await loadTeams(); await loadGames(); }
+  else { const err = await res.json(); alert(err.error || 'Failed to add team'); }
 });
 
 async function deleteTeam(id) {
@@ -127,11 +179,23 @@ async function setEaId(id) {
   const current = document.getElementById(`ea-id-${id}`).dataset.value || '';
   const val = prompt('Enter EA Club ID for this team (leave blank to clear):', current);
   if (val === null) return;
-  await fetch(`${API}/teams/${id}`, {
-    method: 'PATCH', headers: adminHeaders(),
-    body: JSON.stringify({ ea_club_id: val ? Number(val) : null }),
-  });
+  const fd = new FormData();
+  fd.append('ea_club_id', val);
+  await fetch(`${API}/teams/${id}`, { method: 'PATCH', headers: adminHeaders(), body: fd });
   await loadTeams();
+}
+
+async function changeLogo(id) {
+  const input = document.createElement('input');
+  input.type = 'file'; input.accept = 'image/*';
+  input.onchange = async () => {
+    if (!input.files[0]) return;
+    const fd = new FormData();
+    fd.append('logo', input.files[0]);
+    await fetch(`${API}/teams/${id}`, { method: 'PATCH', headers: adminHeaders(), body: fd });
+    await loadTeams();
+  };
+  input.click();
 }
 
 // ── Players ───────────────────────────────────────────────────────────────
@@ -142,8 +206,7 @@ async function loadPlayers() {
   const tbody = document.querySelector('#players-table tbody');
   tbody.innerHTML = players.length === 0
     ? '<tr><td colspan="6" style="color:#8b949e">No players yet.</td></tr>'
-    : players.map(p => `
-      <tr>
+    : players.map(p => `<tr>
         <td>${p.id}</td><td>${p.number ?? '–'}</td><td>${p.name}</td>
         <td>${p.position ?? '–'}</td><td>${p.team_name ?? '–'}</td>
         <td><button class="btn-danger" onclick="deletePlayer(${p.id})">Delete</button></td>
@@ -156,7 +219,7 @@ document.getElementById('player-form').addEventListener('submit', async e => {
   const team_id = document.getElementById('player-team').value || null;
   const position = document.getElementById('player-position').value.trim() || null;
   const number = document.getElementById('player-number').value || null;
-  await fetch(`${API}/players`, { method: 'POST', headers: adminHeaders(), body: JSON.stringify({ name, team_id, position, number }) });
+  await fetch(`${API}/players`, { method: 'POST', headers: adminJsonHeaders(), body: JSON.stringify({ name, team_id, position, number }) });
   e.target.reset(); await loadTeams(); await loadPlayers();
 });
 
@@ -171,15 +234,17 @@ async function deletePlayer(id) {
 async function loadGames() {
   const res = await fetch(`${API}/games`);
   const games = await res.json();
+  const seasonMap = Object.fromEntries(allSeasons.map(s => [s.id, s.name]));
   const tbody = document.querySelector('#games-table tbody');
   tbody.innerHTML = games.length === 0
-    ? '<tr><td colspan="7" style="color:#8b949e">No games yet.</td></tr>'
+    ? '<tr><td colspan="8" style="color:#8b949e">No games yet.</td></tr>'
     : games.map(g => `
       <tr>
         <td>${g.id}</td><td>${g.date}</td>
         <td>${g.home_team_name}</td>
         <td>${g.status === 'complete' ? `${g.home_score} – ${g.away_score}` : '–'}</td>
         <td>${g.away_team_name}</td>
+        <td>${g.season_id ? (seasonMap[g.season_id] || `#${g.season_id}`) : '—'}</td>
         <td>${g.status === 'complete'
           ? '<span class="badge badge-win" style="background:#1f4b2f;color:#3fb950;">Final</span>'
           : '<span class="badge badge-tie">Scheduled</span>'}</td>
@@ -194,8 +259,9 @@ document.getElementById('game-form').addEventListener('submit', async e => {
   const away_team_id = document.getElementById('game-away').value;
   const home_score = parseInt(document.getElementById('game-home-score').value) || 0;
   const away_score = parseInt(document.getElementById('game-away-score').value) || 0;
+  const season_id = document.getElementById('game-season').value || null;
   if (home_team_id === away_team_id) { alert('Home and away teams must differ.'); return; }
-  await fetch(`${API}/games`, { method: 'POST', headers: adminHeaders(), body: JSON.stringify({ date, home_team_id, away_team_id, home_score, away_score }) });
+  await fetch(`${API}/games`, { method: 'POST', headers: adminJsonHeaders(), body: JSON.stringify({ date, home_team_id, away_team_id, home_score, away_score, season_id }) });
   e.target.reset(); await loadGames();
 });
 
@@ -204,20 +270,6 @@ async function deleteGame(id) {
   await fetch(`${API}/games/${id}`, { method: 'DELETE', headers: adminHeaders() });
   await loadGames();
 }
-
-// ── EA Match Assignment ───────────────────────────────────────────────────
-
-document.getElementById('assign-form').addEventListener('submit', async e => {
-  e.preventDefault();
-  const ea_match_id = document.getElementById('assign-ea').value;
-  const game_id = document.getElementById('assign-game').value;
-  const res = await fetch(`${API}/ea-matches/assign`, {
-    method: 'POST', headers: adminHeaders(),
-    body: JSON.stringify({ ea_match_id: Number(ea_match_id), game_id: Number(game_id) }),
-  });
-  if (res.ok) { showStatus('EA match assigned successfully!'); e.target.reset(); }
-  else { const err = await res.json(); showStatus(err.error || 'Assignment failed.', true); }
-});
 
 // ── Init ──────────────────────────────────────────────────────────────────
 

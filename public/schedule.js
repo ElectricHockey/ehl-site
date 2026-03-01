@@ -153,7 +153,9 @@ function renderPickerPlayerStats(players) {
 async function loadSchedule() {
   const root = document.getElementById('schedule-root');
   try {
-    const res = await fetch(`${API}/games`);
+    const sid = SeasonSelector.getSelectedSeasonId();
+    const url = sid ? `${API}/games?season_id=${sid}` : `${API}/games`;
+    const res = await fetch(url);
     if (!res.ok) throw new Error('Server error');
     allGames = await res.json();
 
@@ -182,9 +184,9 @@ async function loadSchedule() {
             <tr class="game-row" id="game-row-${g.id}" data-game-id="${g.id}"
               onclick="toggleGameDetail(${g.id}, event)">
               <td>${g.date}</td>
-              <td>${g.home_team_name}</td>
+              <td>${g.home_logo ? `<img src="${g.home_logo}" style="width:22px;height:22px;object-fit:contain;vertical-align:middle;margin-right:0.3rem;border-radius:3px;" />` : ''}${g.home_team_name}</td>
               <td>${g.status === 'complete' ? `${g.home_score} – ${g.away_score}` : '–'}</td>
-              <td>${g.away_team_name}</td>
+              <td>${g.away_logo ? `<img src="${g.away_logo}" style="width:22px;height:22px;object-fit:contain;vertical-align:middle;margin-right:0.3rem;border-radius:3px;" />` : ''}${g.away_team_name}</td>
               <td id="status-cell-${g.id}">${statusBadge(g.status)}</td>
               ${isAdmin ? `
               <td id="ea-status-${g.id}">
@@ -515,7 +517,9 @@ async function clearAssignment(gameId) {
 
 async function refreshGame(gameId) {
   try {
-    const res = await fetch(`${API}/games`);
+    const sid = SeasonSelector.getSelectedSeasonId();
+    const url = sid ? `${API}/games?season_id=${sid}` : `${API}/games`;
+    const res = await fetch(url);
     if (!res.ok) return;
     const games = await res.json();
     allGames = games;
@@ -537,5 +541,11 @@ async function refreshGame(gameId) {
 
 (async () => {
   await checkAdmin();
+  await SeasonSelector.init('season-selector-container');
+  SeasonSelector.onSeasonChange(() => {
+    closePicker();
+    closeGameDetail();
+    loadSchedule();
+  });
   await loadSchedule();
 })();
