@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin – EHL</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <nav>
+    <span class="brand">⚡ EHL</span>
+    <a href="index.html">Home</a>
+    <a href="standings.html">Standings</a>
+    <a href="ea.html">EA Matches</a>
+    <a href="admin.html" class="active">Admin</a>
+  </nav>
+
+  <div class="container">
+    <h1>Admin Panel</h1>
+
+    <!-- ── Teams ──────────────────────────────────────────── -->
+    <h2>Teams</h2>
+
+    <div class="form-section">
+      <form id="team-form">
+        <div class="form-group">
+          <label for="team-name">Name</label>
+          <input type="text" id="team-name" placeholder="Team name" required />
+        </div>
+        <div class="form-group">
+          <label for="team-conference">Conference</label>
+          <input type="text" id="team-conference" placeholder="e.g. Eastern" required />
+        </div>
+        <div class="form-group">
+          <label for="team-division">Division</label>
+          <input type="text" id="team-division" placeholder="e.g. Atlantic" required />
+        </div>
+        <button type="submit">Add Team</button>
+      </form>
+    </div>
+
+    <table id="teams-table">
+      <thead>
+        <tr>
+          <th>ID</th><th>Name</th><th>Conference</th><th>Division</th><th>Action</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+
+    <!-- ── Players ────────────────────────────────────────── -->
+    <h2>Players</h2>
+
+    <div class="form-section">
+      <form id="player-form">
+        <div class="form-group">
+          <label for="player-name">Name</label>
+          <input type="text" id="player-name" placeholder="Player name" required />
+        </div>
+        <div class="form-group">
+          <label for="player-team">Team</label>
+          <select id="player-team">
+            <option value="">— No Team —</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="player-position">Position</label>
+          <input type="text" id="player-position" placeholder="e.g. C" />
+        </div>
+        <div class="form-group">
+          <label for="player-number">#</label>
+          <input type="number" id="player-number" placeholder="Jersey #" min="1" max="99" style="width:80px;" />
+        </div>
+        <button type="submit">Add Player</button>
+      </form>
+    </div>
+
+    <table id="players-table">
+      <thead>
+        <tr>
+          <th>ID</th><th>#</th><th>Name</th><th>Position</th><th>Team</th><th>Action</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+
+    <!-- ── Games ──────────────────────────────────────────── -->
+    <h2>Games</h2>
+
+    <div class="form-section">
+      <form id="game-form">
+        <div class="form-group">
+          <label for="game-date">Date</label>
+          <input type="date" id="game-date" required />
+        </div>
+        <div class="form-group">
+          <label for="game-home">Home Team</label>
+          <select id="game-home" required>
+            <option value="">Select team</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="game-home-score">Home Score</label>
+          <input type="number" id="game-home-score" value="0" min="0" style="width:70px;" />
+        </div>
+        <div class="form-group">
+          <label for="game-away">Away Team</label>
+          <select id="game-away" required>
+            <option value="">Select team</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="game-away-score">Away Score</label>
+          <input type="number" id="game-away-score" value="0" min="0" style="width:70px;" />
+        </div>
+        <button type="submit">Add Game</button>
+      </form>
+    </div>
+
+    <table id="games-table">
+      <thead>
+        <tr>
+          <th>ID</th><th>Date</th><th>Home</th><th>Score</th><th>Away</th><th>Action</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+
+    <!-- ── EA Match Assignment ────────────────────────────── -->
+    <h2>Assign EA Match to Game</h2>
+
+    <div class="form-section">
+      <form id="assign-form">
+        <div class="form-group">
+          <label for="assign-ea">EA Match ID</label>
+          <input type="number" id="assign-ea" placeholder="EA Match ID" min="1" required />
+        </div>
+        <div class="form-group">
+          <label for="assign-game">Game ID</label>
+          <input type="number" id="assign-game" placeholder="Game ID" min="1" required />
+        </div>
+        <button type="submit">Assign</button>
+      </form>
+      <div id="status-msg"></div>
+    </div>
+  </div>
+
+  <script src="admin.js"></script>
+</body>
+</html>

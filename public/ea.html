@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EA Matches – EHL</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <nav>
+    <span class="brand">⚡ EHL</span>
+    <a href="index.html">Home</a>
+    <a href="standings.html">Standings</a>
+    <a href="ea.html" class="active">EA Matches</a>
+    <a href="admin.html">Admin</a>
+  </nav>
+
+  <div class="container">
+    <h1>EA Matches</h1>
+    <p style="color:#8b949e;margin-bottom:1rem;">Load EA match results for a club.</p>
+
+    <div class="form-section" style="max-width:420px;">
+      <form id="ea-search-form">
+        <div class="form-group">
+          <label for="ea-club">Club Name</label>
+          <input type="text" id="ea-club" placeholder="e.g. EHL Falcons" required />
+        </div>
+        <button type="submit">Load Matches</button>
+      </form>
+    </div>
+
+    <div id="ea-results"></div>
+  </div>
+
+  <script src="ea-matches.js"></script>
+</body>
+</html>
