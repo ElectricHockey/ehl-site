@@ -10,6 +10,16 @@
     .game-row:hover td { background: #21262d; }
     .game-row.selected td { background: #1c2a3a; }
 
+    .status-badge {
+      display: inline-block;
+      padding: 0.15rem 0.55rem;
+      border-radius: 12px;
+      font-size: 0.78rem;
+      font-weight: 600;
+    }
+    .status-complete   { background: #1f4b2f; color: #3fb950; }
+    .status-scheduled  { background: #2d2d2d; color: #8b949e; }
+
     .ea-badge {
       display: inline-flex;
       align-items: center;
@@ -20,6 +30,39 @@
     }
     .ea-badge-linked   { background: #1f4b2f; color: #3fb950; }
     .ea-badge-unlinked { background: #2d2d2d; color: #8b949e; }
+
+    /* ── Game Detail panel ────────────────────────────────── */
+    #game-detail {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      margin-top: 1.5rem;
+      overflow: hidden;
+    }
+    #game-detail.hidden { display: none; }
+
+    .detail-scoreboard {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 1.5rem;
+      padding: 1rem 1rem 0.25rem;
+      flex-wrap: wrap;
+    }
+    .detail-team-name { font-size: 1.1rem; font-weight: 700; color: #e6edf3; }
+    .detail-score-num { font-size: 2rem; font-weight: 800; color: #58a6ff; min-width: 2rem; text-align: center; }
+    .detail-vs { color: #8b949e; font-size: 0.9rem; }
+
+    .team-stats-block { padding: 0 1rem 1rem; }
+    .team-stats-block h3 {
+      font-size: 1rem; color: #58a6ff;
+      margin: 1rem 0 0.4rem;
+      border-bottom: 1px solid #21262d;
+      padding-bottom: 0.3rem;
+    }
+    .stats-table { font-size: 0.82rem; }
+    .stats-table thead th { font-size: 0.72rem; }
+    .stats-table td, .stats-table th { padding: 0.4rem 0.6rem; }
 
     /* ── EA Picker panel ──────────────────────────────────── */
     #ea-picker {
@@ -55,7 +98,6 @@
     .btn-close:hover { color: #e6edf3; opacity: 1; }
 
     .ea-match-list { padding: 0.5rem 0; }
-
     .ea-match-item {
       display: flex;
       align-items: flex-start;
@@ -74,57 +116,64 @@
     .ea-match-opponent { color: #c9d1d9; font-size: 0.9rem; margin-top: 0.1rem; }
     .scheduled-tag {
       display: inline-block;
-      background: #1f4b2f;
-      color: #3fb950;
-      font-size: 0.72rem;
-      padding: 0.1rem 0.4rem;
-      border-radius: 10px;
-      margin-left: 0.3rem;
-      font-weight: 600;
+      background: #1f4b2f; color: #3fb950;
+      font-size: 0.72rem; padding: 0.1rem 0.4rem;
+      border-radius: 10px; margin-left: 0.3rem; font-weight: 600;
     }
 
     .ea-match-actions { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
     .btn-assign {
-      background: #238636;
-      color: #fff;
-      border: none;
-      border-radius: 6px;
-      padding: 0.35rem 0.8rem;
-      font-size: 0.85rem;
-      cursor: pointer;
-      font-weight: 500;
+      background: #238636; color: #fff;
+      border: none; border-radius: 6px;
+      padding: 0.35rem 0.8rem; font-size: 0.85rem;
+      cursor: pointer; font-weight: 500;
     }
     .btn-assign:hover { opacity: 0.85; }
-    .btn-assign:disabled { opacity: 0.4; cursor: default; }
     .btn-clear {
-      background: #21262d;
-      color: #c9d1d9;
-      border: 1px solid #30363d;
-      border-radius: 6px;
-      padding: 0.35rem 0.8rem;
-      font-size: 0.85rem;
-      cursor: pointer;
+      background: #21262d; color: #c9d1d9;
+      border: 1px solid #30363d; border-radius: 6px;
+      padding: 0.35rem 0.8rem; font-size: 0.85rem; cursor: pointer;
     }
     .btn-clear:hover { opacity: 0.85; }
+    .btn-complete {
+      background: #7d3fbf; color: #fff;
+      border: none; border-radius: 6px;
+      padding: 0.35rem 0.8rem; font-size: 0.85rem;
+      cursor: pointer; font-weight: 500;
+    }
+    .btn-complete:hover { opacity: 0.85; }
 
-    /* Player stats inside EA match */
     .ea-match-stats-toggle {
-      background: none;
-      border: none;
-      color: #58a6ff;
-      font-size: 0.82rem;
-      cursor: pointer;
-      padding: 0;
-      text-decoration: underline;
+      background: none; border: none;
+      color: #58a6ff; font-size: 0.82rem;
+      cursor: pointer; padding: 0; text-decoration: underline;
     }
     .ea-match-stats-toggle:hover { opacity: 0.8; }
     .ea-player-stats { margin-top: 0.5rem; width: 100%; }
     .ea-player-stats table { font-size: 0.8rem; }
     .ea-player-stats.hidden { display: none; }
 
-    .picker-empty { padding: 1rem; color: #8b949e; }
+    .picker-empty   { padding: 1rem; color: #8b949e; }
     .picker-loading { padding: 1rem; color: #8b949e; }
-    .picker-error { padding: 1rem; color: #f85149; }
+    .picker-error   { padding: 1rem; color: #f85149; }
+
+    .admin-bar {
+      background: #1c2a3a;
+      border: 1px solid #1f6feb;
+      border-radius: 6px;
+      padding: 0.4rem 0.9rem;
+      margin-bottom: 1rem;
+      font-size: 0.85rem;
+      color: #58a6ff;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+    .admin-bar button {
+      background: none; border: none; color: #8b949e;
+      font-size: 0.82rem; cursor: pointer; padding: 0; text-decoration: underline;
+    }
+    .admin-bar button:hover { color: #e6edf3; }
   </style>
 </head>
 <body>
@@ -133,19 +182,41 @@
     <a href="index.html">Home</a>
     <a href="schedule.html" class="active">Schedule</a>
     <a href="standings.html">Standings</a>
+    <a href="stats.html">Stats</a>
     <a href="ea.html">EA Matches</a>
     <a href="admin.html">Admin</a>
   </nav>
 
   <div class="container">
     <h1>Schedule</h1>
-    <p style="color:#8b949e;margin-bottom:1rem;">
-      Click a game to load recent EA matches for that matchup, then assign the correct one.
-    </p>
+    <p style="color:#8b949e;margin-bottom:1rem;">Click a game to view stats.</p>
+
+    <div id="admin-bar" style="display:none;" class="admin-bar">
+      🔑 Admin mode active
+      <button onclick="adminLogout()">Log out</button>
+    </div>
 
     <div id="schedule-root"><p class="loading">Loading schedule…</p></div>
 
-    <!-- EA Match Picker (shown when a game row is clicked) -->
+    <!-- Game Detail Panel -->
+    <div id="game-detail" class="hidden">
+      <div class="picker-header">
+        <div>
+          <h3 id="detail-title">Game Details</h3>
+          <div id="detail-subtitle" class="picker-subtitle"></div>
+        </div>
+        <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
+          <button id="detail-pick-btn" class="btn-assign" style="display:none;"
+            data-action="open-picker">🎮 Pick EA Match</button>
+          <button id="detail-complete-btn" class="btn-complete" style="display:none;"
+            data-action="mark-complete">✅ Mark Complete</button>
+          <button class="btn-close" onclick="closeGameDetail()" title="Close">✕</button>
+        </div>
+      </div>
+      <div id="detail-body"><p class="picker-loading">Loading…</p></div>
+    </div>
+
+    <!-- EA Match Picker (admin only) -->
     <div id="ea-picker" class="hidden">
       <div class="picker-header">
         <div>

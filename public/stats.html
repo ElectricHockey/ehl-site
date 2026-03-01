@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stats – EHL</title>
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    .sortable-th {
+      cursor: pointer;
+      user-select: none;
+    }
+    .sortable-th:hover { color: #58a6ff; }
+    .sortable-th.sort-asc::after  { content: ' ▲'; color: #58a6ff; }
+    .sortable-th.sort-desc::after { content: ' ▼'; color: #58a6ff; }
+    .tab-bar {
+      display: flex; gap: 0.5rem; margin-bottom: 1.5rem;
+    }
+    .tab-btn {
+      padding: 0.45rem 1.2rem; border-radius: 6px;
+      border: 1px solid #30363d; background: #161b22;
+      color: #c9d1d9; cursor: pointer; font-size: 0.9rem;
+    }
+    .tab-btn.active { background: #238636; color: #fff; border-color: #238636; }
+    .tab-btn:hover:not(.active) { background: #21262d; }
+    .tab-section { display: none; }
+    .tab-section.active { display: block; }
+  </style>
+</head>
+<body>
+  <nav>
+    <span class="brand">⚡ EHL</span>
+    <a href="index.html">Home</a>
+    <a href="schedule.html">Schedule</a>
+    <a href="standings.html">Standings</a>
+    <a href="stats.html" class="active">Stats</a>
+    <a href="ea.html">EA Matches</a>
+    <a href="admin.html">Admin</a>
+  </nav>
+
+  <div class="container">
+    <h1>League Statistics</h1>
+    <p style="color:#8b949e;margin-bottom:1.5rem;">Stats from completed games. Click a column header to sort.</p>
+
+    <div class="tab-bar">
+      <button class="tab-btn active" onclick="switchTab('skaters')">⛸️ Skaters</button>
+      <button class="tab-btn" onclick="switchTab('goalies')">🥅 Goalies</button>
+    </div>
+
+    <div id="tab-skaters" class="tab-section active">
+      <div id="skaters-root"><p class="loading">Loading…</p></div>
+    </div>
+    <div id="tab-goalies" class="tab-section">
+      <div id="goalies-root"><p class="loading">Loading…</p></div>
+    </div>
+  </div>
+
+  <script src="stats.js"></script>
+</body>
+</html>

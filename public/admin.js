@@ -1,11 +1,80 @@
 const API = '/api';
 
-// ── Utility ──────────────────────────────────────────────────────────────
+// ── Auth helpers ──────────────────────────────────────────────────────────
+
+function getAdminToken() {
+  return localStorage.getItem('ehl_admin_token') || '';
+}
+
+function adminHeaders() {
+  return { 'Content-Type': 'application/json', 'X-Admin-Token': getAdminToken() };
+}
 
 function showStatus(msg, isError = false) {
   const el = document.getElementById('status-msg');
   el.textContent = msg;
   el.className = isError ? 'error' : 'success';
+}
+
+// ── Check auth on load ────────────────────────────────────────────────────
+
+async function checkAuth() {
+  const token = getAdminToken();
+  if (!token) { showLoginForm(); return; }
+  try {
+    const res = await fetch(`${API}/auth/status`, { headers: { 'X-Admin-Token': token } });
+    const data = await res.json();
+    if (data.isAdmin) {
+      showAdminPanel();
+    } else {
+      localStorage.removeItem('ehl_admin_token');
+      showLoginForm();
+    }
+  } catch {
+    showLoginForm();
+  }
+}
+
+function showLoginForm() {
+  document.getElementById('login-section').style.display = '';
+  document.getElementById('admin-panel').style.display = 'none';
+}
+
+function showAdminPanel() {
+  document.getElementById('login-section').style.display = 'none';
+  document.getElementById('admin-panel').style.display = '';
+  loadTeams();
+  loadPlayers();
+  loadGames();
+}
+
+document.getElementById('login-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const password = document.getElementById('admin-password').value;
+  const errEl = document.getElementById('login-error');
+  errEl.style.display = 'none';
+  try {
+    const res = await fetch(`${API}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    });
+    if (!res.ok) { errEl.style.display = ''; return; }
+    const data = await res.json();
+    localStorage.setItem('ehl_admin_token', data.token);
+    showAdminPanel();
+  } catch {
+    errEl.style.display = '';
+  }
+});
+
+async function adminLogout() {
+  await fetch(`${API}/auth/logout`, {
+    method: 'POST',
+    headers: { 'X-Admin-Token': getAdminToken() },
+  }).catch(() => {});
+  localStorage.removeItem('ehl_admin_token');
+  showLoginForm();
 }
 
 // ── Teams ─────────────────────────────────────────────────────────────────
@@ -29,10 +98,8 @@ async function loadTeams() {
         <td><button class="btn-danger" onclick="deleteTeam(${t.id})">Delete</button></td>
       </tr>`).join('');
 
-  // Populate team dropdowns
   const opts = '<option value="">— No Team —</option>' + teams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
   document.getElementById('player-team').innerHTML = opts;
-
   const gameOpt = '<option value="">Select team</option>' + teams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
   document.getElementById('game-home').innerHTML = gameOpt;
   document.getElementById('game-away').innerHTML = gameOpt;
@@ -44,7 +111,7 @@ document.getElementById('team-form').addEventListener('submit', async e => {
   const conference = document.getElementById('team-conference').value.trim();
   const division = document.getElementById('team-division').value.trim();
   const ea_club_id = document.getElementById('team-ea-id').value ? Number(document.getElementById('team-ea-id').value) : null;
-  await fetch(`${API}/teams`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, conference, division, ea_club_id }) });
+  await fetch(`${API}/teams`, { method: 'POST', headers: adminHeaders(), body: JSON.stringify({ name, conference, division, ea_club_id }) });
   e.target.reset();
   await loadTeams();
   await loadGames();
@@ -52,19 +119,16 @@ document.getElementById('team-form').addEventListener('submit', async e => {
 
 async function deleteTeam(id) {
   if (!confirm('Delete this team? Related players and games will also be removed.')) return;
-  await fetch(`${API}/teams/${id}`, { method: 'DELETE' });
-  await loadTeams();
-  await loadPlayers();
-  await loadGames();
+  await fetch(`${API}/teams/${id}`, { method: 'DELETE', headers: adminHeaders() });
+  await loadTeams(); await loadPlayers(); await loadGames();
 }
 
 async function setEaId(id) {
   const current = document.getElementById(`ea-id-${id}`).dataset.value || '';
   const val = prompt('Enter EA Club ID for this team (leave blank to clear):', current);
-  if (val === null) return; // cancelled
+  if (val === null) return;
   await fetch(`${API}/teams/${id}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
+    method: 'PATCH', headers: adminHeaders(),
     body: JSON.stringify({ ea_club_id: val ? Number(val) : null }),
   });
   await loadTeams();
@@ -80,11 +144,8 @@ async function loadPlayers() {
     ? '<tr><td colspan="6" style="color:#8b949e">No players yet.</td></tr>'
     : players.map(p => `
       <tr>
-        <td>${p.id}</td>
-        <td>${p.number ?? '–'}</td>
-        <td>${p.name}</td>
-        <td>${p.position ?? '–'}</td>
-        <td>${p.team_name ?? '–'}</td>
+        <td>${p.id}</td><td>${p.number ?? '–'}</td><td>${p.name}</td>
+        <td>${p.position ?? '–'}</td><td>${p.team_name ?? '–'}</td>
         <td><button class="btn-danger" onclick="deletePlayer(${p.id})">Delete</button></td>
       </tr>`).join('');
 }
@@ -95,15 +156,13 @@ document.getElementById('player-form').addEventListener('submit', async e => {
   const team_id = document.getElementById('player-team').value || null;
   const position = document.getElementById('player-position').value.trim() || null;
   const number = document.getElementById('player-number').value || null;
-  await fetch(`${API}/players`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, team_id, position, number }) });
-  e.target.reset();
-  await loadTeams(); // refresh dropdowns
-  await loadPlayers();
+  await fetch(`${API}/players`, { method: 'POST', headers: adminHeaders(), body: JSON.stringify({ name, team_id, position, number }) });
+  e.target.reset(); await loadTeams(); await loadPlayers();
 });
 
 async function deletePlayer(id) {
   if (!confirm('Delete this player?')) return;
-  await fetch(`${API}/players/${id}`, { method: 'DELETE' });
+  await fetch(`${API}/players/${id}`, { method: 'DELETE', headers: adminHeaders() });
   await loadPlayers();
 }
 
@@ -114,14 +173,16 @@ async function loadGames() {
   const games = await res.json();
   const tbody = document.querySelector('#games-table tbody');
   tbody.innerHTML = games.length === 0
-    ? '<tr><td colspan="6" style="color:#8b949e">No games yet.</td></tr>'
+    ? '<tr><td colspan="7" style="color:#8b949e">No games yet.</td></tr>'
     : games.map(g => `
       <tr>
-        <td>${g.id}</td>
-        <td>${g.date}</td>
+        <td>${g.id}</td><td>${g.date}</td>
         <td>${g.home_team_name}</td>
-        <td>${g.home_score} – ${g.away_score}</td>
+        <td>${g.status === 'complete' ? `${g.home_score} – ${g.away_score}` : '–'}</td>
         <td>${g.away_team_name}</td>
+        <td>${g.status === 'complete'
+          ? '<span class="badge badge-win" style="background:#1f4b2f;color:#3fb950;">Final</span>'
+          : '<span class="badge badge-tie">Scheduled</span>'}</td>
         <td><button class="btn-danger" onclick="deleteGame(${g.id})">Delete</button></td>
       </tr>`).join('');
 }
@@ -134,14 +195,13 @@ document.getElementById('game-form').addEventListener('submit', async e => {
   const home_score = parseInt(document.getElementById('game-home-score').value) || 0;
   const away_score = parseInt(document.getElementById('game-away-score').value) || 0;
   if (home_team_id === away_team_id) { alert('Home and away teams must differ.'); return; }
-  await fetch(`${API}/games`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date, home_team_id, away_team_id, home_score, away_score }) });
-  e.target.reset();
-  await loadGames();
+  await fetch(`${API}/games`, { method: 'POST', headers: adminHeaders(), body: JSON.stringify({ date, home_team_id, away_team_id, home_score, away_score }) });
+  e.target.reset(); await loadGames();
 });
 
 async function deleteGame(id) {
   if (!confirm('Delete this game?')) return;
-  await fetch(`${API}/games/${id}`, { method: 'DELETE' });
+  await fetch(`${API}/games/${id}`, { method: 'DELETE', headers: adminHeaders() });
   await loadGames();
 }
 
@@ -152,23 +212,13 @@ document.getElementById('assign-form').addEventListener('submit', async e => {
   const ea_match_id = document.getElementById('assign-ea').value;
   const game_id = document.getElementById('assign-game').value;
   const res = await fetch(`${API}/ea-matches/assign`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ea_match_id: Number(ea_match_id), game_id: Number(game_id) })
+    method: 'POST', headers: adminHeaders(),
+    body: JSON.stringify({ ea_match_id: Number(ea_match_id), game_id: Number(game_id) }),
   });
-  if (res.ok) {
-    showStatus('EA match assigned successfully!');
-    e.target.reset();
-  } else {
-    const err = await res.json();
-    showStatus(err.error || 'Assignment failed.', true);
-  }
+  if (res.ok) { showStatus('EA match assigned successfully!'); e.target.reset(); }
+  else { const err = await res.json(); showStatus(err.error || 'Assignment failed.', true); }
 });
 
 // ── Init ──────────────────────────────────────────────────────────────────
 
-(async () => {
-  await loadTeams();
-  await loadPlayers();
-  await loadGames();
-})();
+checkAuth();
