@@ -625,6 +625,77 @@ app.get('/api/players', (_req, res) => {
   res.json(players);
 });
 
+// ── Player public profile (career stats by name) ───────────────────────────
+
+app.get('/api/players/profile/:name', (req, res) => {
+  const name = req.params.name;
+
+  // Current roster info + user account if linked
+  const player = db.prepare(`
+    SELECT p.id, p.name, p.position AS player_position, p.is_rostered, p.number,
+      t.id AS team_id, t.name AS team_name, t.logo_url AS team_logo, t.color1, t.color2,
+      u.platform, u.position AS user_position
+    FROM players p
+    LEFT JOIN teams t ON p.team_id = t.id
+    LEFT JOIN users u ON p.user_id = u.id
+    WHERE p.name = ? ORDER BY p.is_rostered DESC LIMIT 1
+  `).get(name);
+
+  // Detect position from stats (majority position recorded in game logs)
+  const posRow = db.prepare(`
+    SELECT position, COUNT(*) AS cnt
+    FROM game_player_stats WHERE player_name = ?
+    GROUP BY position ORDER BY cnt DESC LIMIT 1
+  `).get(name);
+  const isGoalie = posRow && posRow.position === 'G';
+
+  // Per-season per-team splits
+  const seasonTeamStats = isGoalie
+    ? db.prepare(`
+        SELECT g.season_id, COALESCE(s.name,'No Season') AS season_name,
+          ${GOALIE_SELECT}
+        FROM game_player_stats gps
+        JOIN teams t ON gps.team_id = t.id
+        JOIN games g ON gps.game_id = g.id
+        LEFT JOIN seasons s ON g.season_id = s.id
+        WHERE gps.player_name = ? AND gps.position = 'G' AND g.status = 'complete'
+        GROUP BY g.season_id, gps.team_id ORDER BY g.season_id DESC
+      `).all(name)
+    : db.prepare(`
+        SELECT g.season_id, COALESCE(s.name,'No Season') AS season_name,
+          ${SKATER_SELECT}
+        FROM game_player_stats gps
+        JOIN teams t ON gps.team_id = t.id
+        JOIN games g ON gps.game_id = g.id
+        LEFT JOIN seasons s ON g.season_id = s.id
+        WHERE gps.player_name = ? AND gps.position != 'G' AND g.status = 'complete'
+        GROUP BY g.season_id, gps.team_id ORDER BY g.season_id DESC
+      `).all(name);
+
+  // Last 5 games
+  const lastGames = db.prepare(`
+    SELECT g.id AS game_id, g.date, g.home_score, g.away_score, g.is_overtime,
+      ht.id AS home_team_id, ht.name AS home_team_name, ht.logo_url AS home_logo,
+      at.id AS away_team_id, at.name AS away_team_name, at.logo_url AS away_logo,
+      gps.team_id AS player_team_id, gps.position,
+      gps.goals, gps.assists, gps.shots, gps.hits, gps.plus_minus, gps.toi,
+      gps.saves, gps.goals_against, gps.shots_against, gps.goalie_wins, gps.goalie_losses,
+      gps.overall_rating, gps.defensive_rating, gps.team_play_rating
+    FROM game_player_stats gps
+    JOIN games g ON gps.game_id = g.id
+    JOIN teams ht ON g.home_team_id = ht.id
+    JOIN teams at ON g.away_team_id = at.id
+    WHERE gps.player_name = ? AND g.status = 'complete'
+    ORDER BY g.date DESC, g.id DESC LIMIT 5
+  `).all(name);
+
+  if (!player && seasonTeamStats.length === 0) {
+    return res.status(404).json({ error: 'Player not found' });
+  }
+
+  res.json({ player: player || null, isGoalie, seasonTeamStats, lastGames });
+});
+
 // List all registered users (for admin to pick an owner / for GMs to sign players)
 app.get('/api/users', requireAdmin, (_req, res) => {
   const users = db.prepare(`

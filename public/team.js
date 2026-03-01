@@ -53,7 +53,7 @@ function renderSkaterTable(players, teamColors) {
       const ovr = computeOvr(p);
       return `<tr${attrs}>
       <td>${p.position||'–'}</td>
-      <td>${p.name}</td>
+      <td><a href="player.html?name=${encodeURIComponent(p.name)}" class="player-link">${p.name}</a></td>
       <td style="text-align:center;${ovrStyle(ovr)}">${ovr ?? '–'}</td>
       <td style="text-align:center;${ratingStyle(p.overall_rating)}">${p.overall_rating||'–'}</td>
       <td style="text-align:center;${ratingStyle(p.defensive_rating)}">${p.defensive_rating||'–'}</td>
@@ -94,7 +94,7 @@ function renderGoalieTable(players, teamColors) {
     <tbody>${players.map(p => {
       const ovr = computeOvr(p);
       return `<tr${attrs}>
-      <td>${p.name}</td>
+      <td><a href="player.html?name=${encodeURIComponent(p.name)}" class="player-link">${p.name}</a></td>
       <td style="text-align:center;${ovrStyle(ovr)}">${ovr ?? '–'}</td>
       <td style="text-align:center;${ratingStyle(p.overall_rating)}">${p.overall_rating||'–'}</td>
       <td style="text-align:center;${ratingStyle(p.defensive_rating)}">${p.defensive_rating||'–'}</td>

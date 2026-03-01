@@ -422,3 +422,7 @@ tbody tr.team-row:hover {
 [data-tip].tip-open::after {
   opacity: 1;
 }
+
+/* Player / team links inside tables */
+.player-link { color: #58a6ff; text-decoration: none; }
+.player-link:hover { text-decoration: underline; }

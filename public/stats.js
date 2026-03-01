@@ -112,7 +112,7 @@ function renderSkaters() {
     <tbody>${sorted.map(p => {
       const ovr = p._ovr;
       return `<tr${playerRowAttrs(p)}>
-      <td>${p.name}</td>
+      <td><a href="player.html?name=${encodeURIComponent(p.name)}" class="player-link">${p.name}</a></td>
       <td>${p.team_logo ? `<img src="${p.team_logo}" style="width:18px;height:18px;object-fit:contain;vertical-align:middle;margin-right:0.25rem;border-radius:2px;" />` : ''}${p.team_name}</td>
       <td>${p.position||'–'}</td>
       <td style="text-align:center;${ovrStyle(ovr)}">${ovr ?? '–'}</td>
@@ -179,7 +179,7 @@ function renderGoalies() {
         ? (p.save_pct < 1 ? (p.save_pct * 100).toFixed(1) : Number(p.save_pct).toFixed(1)) + '%' : '–';
       const ovr = p._ovr;
       return `<tr${playerRowAttrs(p)}>
-        <td>${p.name}</td>
+        <td><a href="player.html?name=${encodeURIComponent(p.name)}" class="player-link">${p.name}</a></td>
         <td>${p.team_logo ? `<img src="${p.team_logo}" style="width:18px;height:18px;object-fit:contain;vertical-align:middle;margin-right:0.25rem;border-radius:2px;" />` : ''}${p.team_name}</td>
         <td style="text-align:center;${ovrStyle(ovr)}">${ovr ?? '–'}</td>
         <td style="text-align:center;${ratingStyle(p.overall_rating)}">${p.overall_rating||'–'}</td>
