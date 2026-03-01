@@ -76,5 +76,6 @@ try { db.exec("ALTER TABLE teams ADD COLUMN division TEXT NOT NULL DEFAULT ''");
 try { db.exec('ALTER TABLE games ADD COLUMN ea_match_id TEXT'); } catch (_) {}
 try { db.exec("ALTER TABLE games ADD COLUMN status TEXT DEFAULT 'scheduled'"); } catch (_) {}
 try { db.exec('ALTER TABLE games ADD COLUMN season_id INTEGER'); } catch (_) {}
+try { db.exec("ALTER TABLE seasons ADD COLUMN league_type TEXT DEFAULT ''"); } catch (_) {}
 
 module.exports = db;

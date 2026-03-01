@@ -82,34 +82,39 @@ app.get('/api/auth/status', (req, res) => {
 
 // ── Seasons ────────────────────────────────────────────────────────────────
 
-app.get('/api/seasons', (_req, res) => {
-  const seasons = db.prepare('SELECT * FROM seasons ORDER BY id DESC').all();
+app.get('/api/seasons', (req, res) => {
+  const { type } = req.query;
+  const seasons = type
+    ? db.prepare("SELECT * FROM seasons WHERE league_type = ? ORDER BY id DESC").all(type)
+    : db.prepare('SELECT * FROM seasons ORDER BY id DESC').all();
   res.json(seasons);
 });
 
 app.post('/api/seasons', requireAdmin, (req, res) => {
-  const { name, make_active } = req.body;
+  const { name, make_active, league_type } = req.body;
   if (!name || !name.trim()) {
     return res.status(400).json({ error: 'Season name is required' });
   }
   if (make_active) {
     db.prepare('UPDATE seasons SET is_active = 0').run();
   }
-  const result = db.prepare('INSERT INTO seasons (name, is_active) VALUES (?, ?)').run(
-    name.trim(), make_active ? 1 : 0
+  const lt = league_type || '';
+  const result = db.prepare('INSERT INTO seasons (name, is_active, league_type) VALUES (?, ?, ?)').run(
+    name.trim(), make_active ? 1 : 0, lt
   );
-  res.status(201).json({ id: result.lastInsertRowid, name: name.trim(), is_active: make_active ? 1 : 0 });
+  res.status(201).json({ id: result.lastInsertRowid, name: name.trim(), is_active: make_active ? 1 : 0, league_type: lt });
 });
 
 app.patch('/api/seasons/:id', requireAdmin, (req, res) => {
   const season = db.prepare('SELECT * FROM seasons WHERE id = ?').get(req.params.id);
   if (!season) return res.status(404).json({ error: 'Season not found' });
   const name = req.body.name !== undefined ? req.body.name.trim() : season.name;
+  const league_type = req.body.league_type !== undefined ? req.body.league_type : (season.league_type || '');
   if (req.body.is_active) {
     db.prepare('UPDATE seasons SET is_active = 0').run();
   }
   const is_active = req.body.is_active ? 1 : (req.body.is_active === false ? 0 : season.is_active);
-  db.prepare('UPDATE seasons SET name = ?, is_active = ? WHERE id = ?').run(name, is_active, req.params.id);
+  db.prepare('UPDATE seasons SET name = ?, is_active = ?, league_type = ? WHERE id = ?').run(name, is_active, league_type, req.params.id);
   res.json({ updated: true });
 });
 
@@ -559,13 +564,18 @@ app.get('/api/games/:id/ea-matches', async (req, res) => {
 
 app.get('/api/standings', (req, res) => {
   const seasonId = req.query.season_id ? Number(req.query.season_id) : null;
-  const teams = db.prepare('SELECT * FROM teams').all();
   const filter = seasonId
     ? "SELECT * FROM games WHERE status = 'complete' AND season_id = ?"
     : "SELECT * FROM games WHERE status = 'complete'";
   const games = seasonId
     ? db.prepare(filter).all(seasonId)
     : db.prepare(filter).all();
+
+  // Only include teams that appear in at least one game (no ghost 0-GP rows)
+  const teamIds = new Set();
+  for (const g of games) { teamIds.add(g.home_team_id); teamIds.add(g.away_team_id); }
+  const allTeams = db.prepare('SELECT * FROM teams').all();
+  const teams = seasonId ? allTeams.filter(t => teamIds.has(t.id)) : allTeams;
 
   const stats = {};
   for (const t of teams) {

@@ -20,6 +20,7 @@ nav {
   align-items: center;
   gap: 1.5rem;
   height: 56px;
+  flex-wrap: wrap;
 }
 
 nav .brand {
@@ -27,7 +28,14 @@ nav .brand {
   font-weight: 700;
   color: #58a6ff;
   margin-right: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  text-decoration: none;
 }
+nav .brand:hover { text-decoration: none; opacity: 0.9; }
+nav .brand-logo { height: 36px; width: auto; display: block; }
+nav .brand-text { color: #58a6ff; font-size: 1.2rem; font-weight: 700; }
 
 nav a {
   color: #c9d1d9;
@@ -42,6 +50,48 @@ nav a:hover, nav a.active {
   color: #e6edf3;
   text-decoration: none;
 }
+
+/* ── Nav dropdown ─────────────────────────────────────────── */
+.nav-dropdown {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.nav-dropdown > a {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.nav-dropdown-menu {
+  display: none;
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  min-width: 170px;
+  z-index: 200;
+  padding: 0.3rem 0;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+}
+
+.nav-dropdown:hover .nav-dropdown-menu,
+.nav-dropdown.open .nav-dropdown-menu {
+  display: block;
+}
+
+.nav-dropdown-menu a {
+  display: block;
+  padding: 0.5rem 1rem;
+  border-radius: 0;
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+.nav-dropdown-menu a:hover { background: #21262d; }
 
 /* ── Page Container ───────────────────────────────────────── */
 .container {

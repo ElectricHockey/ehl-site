@@ -8,12 +8,35 @@
 </head>
 <body>
   <nav>
-    <span class="brand">⚡ EHL</span>
+    <a href="index.html" class="brand">
+      <img src="logo.svg" alt="EHL" class="brand-logo" />
+      <span class="brand-text">EHL</span>
+    </a>
     <a href="index.html">Home</a>
     <a href="schedule.html">Schedule</a>
-    <a href="standings.html">Standings</a>
+    <div class="nav-dropdown">
+      <a href="standings.html">Standings ▾</a>
+      <div class="nav-dropdown-menu">
+        <a href="recent-scores.html">🏒 Recent Scores</a>
+      </div>
+    </div>
     <a href="stats.html">Stats</a>
-    <a href="ea.html" class="active">EA Matches</a>
+    <div class="nav-dropdown">
+      <a href="standings.html?type=threes">3's ▾</a>
+      <div class="nav-dropdown-menu">
+        <a href="standings.html?type=threes">Standings</a>
+        <a href="schedule.html?type=threes">Schedule</a>
+        <a href="stats.html?type=threes">Stats</a>
+      </div>
+    </div>
+    <div class="nav-dropdown">
+      <a href="standings.html?type=sixes">6's ▾</a>
+      <div class="nav-dropdown-menu">
+        <a href="standings.html?type=sixes">Standings</a>
+        <a href="schedule.html?type=sixes">Schedule</a>
+        <a href="stats.html?type=sixes">Stats</a>
+      </div>
+    </div>
     <a href="admin.html">Admin</a>
   </nav>
 
@@ -35,5 +58,6 @@
   </div>
 
   <script src="ea-matches.js"></script>
+  <script src="nav.js"></script>
 </body>
 </html>

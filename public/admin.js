@@ -80,6 +80,8 @@ async function loadSeasons() {
   allSeasons = await res.json();
   const list = document.getElementById('seasons-list');
 
+  const typeLabel = lt => lt === 'threes' ? "3's" : lt === 'sixes' ? "6's" : 'General';
+
   if (allSeasons.length === 0) {
     list.innerHTML = '<p style="color:#8b949e;font-size:0.85rem;">No seasons yet. Create one above.</p>';
   } else {
@@ -87,6 +89,7 @@ async function loadSeasons() {
       <div class="season-item">
         ${s.is_active ? '<span class="season-active-badge">★ Active</span>' : ''}
         <strong style="flex:1;">${s.name}</strong>
+        <span style="color:#8b949e;font-size:0.8rem;">${typeLabel(s.league_type)}</span>
         ${!s.is_active ? `<button class="btn-secondary" style="font-size:0.8rem;padding:0.25rem 0.6rem;" onclick="setActiveSeason(${s.id})">Set Active</button>` : ''}
         <button class="btn-danger" style="font-size:0.8rem;padding:0.25rem 0.6rem;" onclick="deleteSeason(${s.id})">Delete</button>
       </div>`).join('');
@@ -94,7 +97,7 @@ async function loadSeasons() {
 
   // Populate season dropdowns in game form
   const seasonOpts = '<option value="">— No Season —</option>' +
-    allSeasons.map(s => `<option value="${s.id}"${s.is_active ? ' selected' : ''}>${s.name}</option>`).join('');
+    allSeasons.map(s => `<option value="${s.id}"${s.is_active ? ' selected' : ''}>${s.name}${s.league_type ? ' (' + typeLabel(s.league_type) + ')' : ''}</option>`).join('');
   document.getElementById('game-season').innerHTML = seasonOpts;
 }
 
@@ -102,9 +105,10 @@ document.getElementById('season-form').addEventListener('submit', async e => {
   e.preventDefault();
   const name = document.getElementById('season-name').value.trim();
   const make_active = document.getElementById('season-active').checked;
+  const league_type = document.getElementById('season-type').value;
   const res = await fetch(`${API}/seasons`, {
     method: 'POST', headers: adminJsonHeaders(),
-    body: JSON.stringify({ name, make_active }),
+    body: JSON.stringify({ name, make_active, league_type }),
   });
   if (res.ok) { e.target.reset(); await loadSeasons(); await loadGames(); }
 });
