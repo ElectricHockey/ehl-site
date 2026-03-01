@@ -77,7 +77,7 @@ const playerSessions = new Map(); // token -> userId
 // ── Discord OAuth2 ─────────────────────────────────────────────────────────
 const DISCORD_CLIENT_ID     = process.env.DISCORD_CLIENT_ID     || '1379545091927965767';
 const DISCORD_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || 'hP2korc5GbEuCkbLPEfxyWLxNk8ql-Y6';
-const DISCORD_REDIRECT_URI  = process.env.DISCORD_REDIRECT_URI  || 'http://localhost:3000/api/discord/callback';
+const DISCORD_REDIRECT_URI  = process.env.DISCORD_REDIRECT_URI  || null;
 
 // Short-lived in-memory state stores (cleaned on use / TTL)
 const discordOAuthStates   = new Map(); // state  → { mode, userId, expires }
@@ -1106,13 +1106,14 @@ app.get('/api/games/:id/ea-matches', async (req, res) => {
 // (no token)             → called during registration
 app.get('/api/discord/connect', (req, res) => {
   if (!DISCORD_CLIENT_ID || !DISCORD_CLIENT_SECRET) return res.status(501).json({ error: 'Discord OAuth is not configured on this server. Set DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET environment variables.' });
+  const redirectUri = DISCORD_REDIRECT_URI || `${req.protocol}://${req.get('host')}/api/discord/callback`;
   const playerToken = req.query.token || '';
   const mode   = (playerToken && playerSessions.has(playerToken)) ? 'player' : 'register';
   const userId = mode === 'player' ? playerSessions.get(playerToken) : null;
   const state  = crypto.randomBytes(16).toString('hex');
-  discordOAuthStates.set(state, { mode, userId, expires: Date.now() + 10 * 60 * 1000 });
+  discordOAuthStates.set(state, { mode, userId, redirectUri, expires: Date.now() + 10 * 60 * 1000 });
   const params = new URLSearchParams({
-    client_id: DISCORD_CLIENT_ID, redirect_uri: DISCORD_REDIRECT_URI,
+    client_id: DISCORD_CLIENT_ID, redirect_uri: redirectUri,
     response_type: 'code', scope: 'identify', state,
   });
   res.redirect(`https://discord.com/api/oauth2/authorize?${params}`);
@@ -1132,7 +1133,7 @@ app.get('/api/discord/callback', async (req, res) => {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
         client_id: DISCORD_CLIENT_ID, client_secret: DISCORD_CLIENT_SECRET,
-        grant_type: 'authorization_code', code, redirect_uri: DISCORD_REDIRECT_URI,
+        grant_type: 'authorization_code', code, redirect_uri: stateData.redirectUri || `${req.protocol}://${req.get('host')}/api/discord/callback`,
       }),
     });
     if (!tokenRes.ok) throw new Error('token_exchange_failed');
