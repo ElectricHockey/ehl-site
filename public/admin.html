@@ -9,13 +9,20 @@
     #login-section { max-width:380px;margin:3rem auto;background:#161b22;border:1px solid #30363d;border-radius:10px;padding:2rem 2.5rem; }
     #login-section h2 { margin-bottom:1rem; }
     #login-error { color:#f85149;font-size:0.85rem;margin-top:0.5rem;display:none; }
-    .logged-in-bar { background:#1c2a3a;border:1px solid #1f6feb;border-radius:6px;padding:0.5rem 1rem;margin-bottom:1.5rem;font-size:0.85rem;color:#58a6ff;display:flex;align-items:center;gap:1rem; }
+    .logged-in-bar { background:#1c2a3a;border:1px solid #1f6feb;border-radius:6px;padding:0.5rem 1rem;margin-bottom:1.25rem;font-size:0.85rem;color:#58a6ff;display:flex;align-items:center;gap:1rem; }
     .logged-in-bar button { background:none;border:none;color:#8b949e;font-size:0.82rem;cursor:pointer;text-decoration:underline;padding:0; }
     .logo-preview { width:48px;height:48px;object-fit:contain;border-radius:6px;background:#21262d;display:none;margin-top:0.3rem; }
     .team-logo-sm { width:28px;height:28px;object-fit:contain;border-radius:4px;vertical-align:middle;margin-right:0.4rem; }
     .season-item { display:flex;align-items:center;gap:0.6rem;padding:0.5rem 0;border-bottom:1px solid #21262d; }
     .season-item:last-child { border-bottom:none; }
     .season-active-badge { background:#1f4b2f;color:#3fb950;font-size:0.75rem;padding:0.1rem 0.5rem;border-radius:10px;font-weight:600; }
+    /* Admin tabs */
+    .admin-tab-bar { display:flex;gap:0.4rem;flex-wrap:wrap;margin-bottom:1.5rem;border-bottom:1px solid #30363d;padding-bottom:0.75rem; }
+    .admin-tab-btn { padding:0.4rem 1.1rem;border-radius:20px;border:1px solid #30363d;background:#21262d;color:#8b949e;cursor:pointer;font-size:0.88rem;transition:all 0.15s;white-space:nowrap; }
+    .admin-tab-btn.active { background:#1c2a3a;border-color:#58a6ff;color:#58a6ff; }
+    .admin-tab-btn:hover:not(.active) { border-color:#8b949e;color:#c9d1d9; }
+    .admin-section { display:none; }
+    .admin-section.active { display:block; }
   </style>
 </head>
 <body>
@@ -53,93 +60,160 @@
     <div class="container">
       <div class="logged-in-bar">🔑 Logged in as Admin <button onclick="adminLogout()">Logout</button></div>
 
-      <h1>Admin Panel</h1>
+      <h1 style="margin-bottom:1rem;">Admin Panel</h1>
 
-      <!-- ── Seasons ──────────────────────────────────────── -->
-      <h2>Seasons</h2>
-      <div class="form-section">
-        <form id="season-form">
-          <div class="form-group">
-            <label for="season-name">Season Name</label>
-            <input type="text" id="season-name" placeholder="e.g. 2025-2026 Season" required />
-          </div>
-          <div class="form-group">
-            <label for="season-type">League Type</label>
-            <select id="season-type">
-              <option value="">General</option>
-              <option value="threes">3's (3v3)</option>
-              <option value="sixes">6's (6v6)</option>
-            </select>
-          </div>
-          <div class="form-group" style="flex-direction:column;">
-            <label style="display:flex;align-items:center;gap:0.4rem;cursor:pointer;">
-              <input type="checkbox" id="season-active" />
-              Set as active season
-            </label>
-          </div>
-          <button type="submit">Create Season</button>
-        </form>
+      <!-- ── Tab bar ──────────────────────────────────────── -->
+      <div class="admin-tab-bar">
+        <button class="admin-tab-btn active" onclick="showAdminTab('seasons')">🗓 Seasons</button>
+        <button class="admin-tab-btn" onclick="showAdminTab('teams')">🏒 Teams</button>
+        <button class="admin-tab-btn" onclick="showAdminTab('reg-players')">👤 Registered Players</button>
+        <button class="admin-tab-btn" onclick="showAdminTab('players')">🎮 Players</button>
+        <button class="admin-tab-btn" onclick="showAdminTab('games')">📅 Games</button>
       </div>
-      <div id="seasons-list" style="margin-top:0.75rem;"></div>
 
-      <!-- ── Teams ──────────────────────────────────────────── -->
-      <h2>Teams</h2>
-      <div class="form-section">
-        <form id="team-form" enctype="multipart/form-data">
-          <div class="form-group">
-            <label for="team-name">Name *</label>
-            <input type="text" id="team-name" placeholder="Team name" required />
-          </div>
-          <div class="form-group">
-            <label for="team-conference">Conference <span style="color:#8b949e;font-size:0.8rem;">(optional)</span></label>
-            <input type="text" id="team-conference" placeholder="e.g. Eastern" />
-          </div>
-          <div class="form-group">
-            <label for="team-division">Division <span style="color:#8b949e;font-size:0.8rem;">(optional)</span></label>
-            <input type="text" id="team-division" placeholder="e.g. Atlantic" />
-          </div>
-          <div class="form-group">
-            <label for="team-ea-id">EA Club ID</label>
-            <input type="number" id="team-ea-id" placeholder="e.g. 1055" min="1" style="width:110px;" />
-          </div>
-          <div class="form-group">
-            <label for="team-league-type">League Type</label>
-            <select id="team-league-type">
-              <option value="">— General —</option>
-              <option value="threes">3's (3v3, max 12)</option>
-              <option value="sixes">6's (6v6, max 20)</option>
-            </select>
-          </div>
-          <div class="form-group" style="flex-direction:column;">
-            <label for="team-color1">Primary Color <span style="color:#8b949e;font-size:0.8rem;">(gradient start)</span></label>
-            <input type="color" id="team-color1" value="#1e3a5f" style="width:56px;height:32px;padding:2px;border-radius:4px;border:1px solid #30363d;background:none;cursor:pointer;" />
-          </div>
-          <div class="form-group" style="flex-direction:column;">
-            <label for="team-color2">Secondary Color <span style="color:#8b949e;font-size:0.8rem;">(gradient end)</span></label>
-            <input type="color" id="team-color2" value="#0d1117" style="width:56px;height:32px;padding:2px;border-radius:4px;border:1px solid #30363d;background:none;cursor:pointer;" />
-          </div>
-          <div class="form-group" style="flex-direction:column;">
-            <label for="team-logo">Team Logo <span style="color:#8b949e;font-size:0.8rem;">(optional, max 2 MB)</span></label>
-            <input type="file" id="team-logo" accept="image/*" onchange="previewLogo(this,'logo-preview-new')" style="color:#c9d1d9;" />
-            <img id="logo-preview-new" class="logo-preview" alt="logo preview" />
-          </div>
-          <button type="submit">Add Team</button>
-        </form>
+      <div id="status-msg" style="display:none;padding:0.5rem 1rem;border-radius:6px;margin-bottom:1rem;font-size:0.88rem;"></div>
+
+      <!-- ── Seasons tab ──────────────────────────────────── -->
+      <div id="admin-tab-seasons" class="admin-section active">
+        <h2>Seasons</h2>
+        <div class="form-section">
+          <form id="season-form">
+            <div class="form-group">
+              <label for="season-name">Season Name</label>
+              <input type="text" id="season-name" placeholder="e.g. 2025-2026 Season" required />
+            </div>
+            <div class="form-group">
+              <label for="season-type">League Type</label>
+              <select id="season-type">
+                <option value="">General</option>
+                <option value="threes">3's (3v3)</option>
+                <option value="sixes">6's (6v6)</option>
+              </select>
+            </div>
+            <div class="form-group" style="flex-direction:column;">
+              <label style="display:flex;align-items:center;gap:0.4rem;cursor:pointer;">
+                <input type="checkbox" id="season-active" />
+                Set as active season
+              </label>
+            </div>
+            <button type="submit">Create Season</button>
+          </form>
+        </div>
+        <div id="seasons-list" style="margin-top:0.75rem;"></div>
       </div>
-      <table id="teams-table">
-        <thead><tr><th>Logo</th><th>Colors</th><th>Name</th><th>Type</th><th>Conference</th><th>Division</th><th>EA Club ID</th><th>Owner</th><th>Action</th></tr></thead>
-        <tbody></tbody>
-      </table>
 
-      <!-- ── Registered Players ──────────────────────────────── -->
-      <h2>Registered Players <span id="unrostered-badge" style="display:none;background:#4b1f1f;color:#f85149;font-size:0.75rem;border-radius:10px;padding:0.15rem 0.55rem;font-weight:600;margin-left:0.4rem;"></span></h2>
-      <div id="unrostered-warning" style="display:none;background:#2d1b00;border:1px solid #9e6a03;border-radius:8px;padding:0.75rem 1rem;margin-bottom:1rem;color:#e3b341;font-size:0.88rem;"></div>
-      <table id="reg-players-table">
-        <thead><tr><th>Gamertag</th><th>Position</th><th>Platform</th><th>Team</th><th>Rostered</th><th>Assign Owner</th><th>Edit</th></tr></thead>
-        <tbody></tbody>
-      </table>
+      <!-- ── Teams tab ──────────────────────────────────────── -->
+      <div id="admin-tab-teams" class="admin-section">
+        <h2>Teams</h2>
+        <div class="form-section">
+          <form id="team-form" enctype="multipart/form-data">
+            <div class="form-group">
+              <label for="team-name">Name *</label>
+              <input type="text" id="team-name" placeholder="Team name" required />
+            </div>
+            <div class="form-group">
+              <label for="team-conference">Conference <span style="color:#8b949e;font-size:0.8rem;">(optional)</span></label>
+              <input type="text" id="team-conference" placeholder="e.g. Eastern" />
+            </div>
+            <div class="form-group">
+              <label for="team-division">Division <span style="color:#8b949e;font-size:0.8rem;">(optional)</span></label>
+              <input type="text" id="team-division" placeholder="e.g. Atlantic" />
+            </div>
+            <div class="form-group">
+              <label for="team-ea-id">EA Club ID</label>
+              <input type="number" id="team-ea-id" placeholder="e.g. 1055" min="1" style="width:110px;" />
+            </div>
+            <div class="form-group">
+              <label for="team-league-type">League Type</label>
+              <select id="team-league-type">
+                <option value="">— General —</option>
+                <option value="threes">3's (3v3, max 12)</option>
+                <option value="sixes">6's (6v6, max 20)</option>
+              </select>
+            </div>
+            <div class="form-group" style="flex-direction:column;">
+              <label for="team-color1">Primary Color <span style="color:#8b949e;font-size:0.8rem;">(gradient start)</span></label>
+              <input type="color" id="team-color1" value="#1e3a5f" style="width:56px;height:32px;padding:2px;border-radius:4px;border:1px solid #30363d;background:none;cursor:pointer;" />
+            </div>
+            <div class="form-group" style="flex-direction:column;">
+              <label for="team-color2">Secondary Color <span style="color:#8b949e;font-size:0.8rem;">(gradient end)</span></label>
+              <input type="color" id="team-color2" value="#0d1117" style="width:56px;height:32px;padding:2px;border-radius:4px;border:1px solid #30363d;background:none;cursor:pointer;" />
+            </div>
+            <div class="form-group" style="flex-direction:column;">
+              <label for="team-logo">Team Logo <span style="color:#8b949e;font-size:0.8rem;">(optional, max 2 MB)</span></label>
+              <input type="file" id="team-logo" accept="image/*" onchange="previewLogo(this,'logo-preview-new')" style="color:#c9d1d9;" />
+              <img id="logo-preview-new" class="logo-preview" alt="logo preview" />
+            </div>
+            <button type="submit">Add Team</button>
+          </form>
+        </div>
+        <table id="teams-table">
+          <thead><tr><th>Logo</th><th>Colors</th><th>Name</th><th>Type</th><th>Conference</th><th>Division</th><th>EA Club ID</th><th>Owner</th><th>Action</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
 
-      <!-- ── Edit Player Modal ──────────────────────────────── -->
+      <!-- ── Registered Players tab ──────────────────────── -->
+      <div id="admin-tab-reg-players" class="admin-section">
+        <h2>Registered Players <span id="unrostered-badge" style="display:none;background:#4b1f1f;color:#f85149;font-size:0.75rem;border-radius:10px;padding:0.15rem 0.55rem;font-weight:600;margin-left:0.4rem;"></span></h2>
+        <div id="unrostered-warning" style="display:none;background:#2d1b00;border:1px solid #9e6a03;border-radius:8px;padding:0.75rem 1rem;margin-bottom:1rem;color:#e3b341;font-size:0.88rem;"></div>
+        <table id="reg-players-table">
+          <thead><tr><th>Gamertag</th><th>Position</th><th>Platform</th><th>Team</th><th>Rostered</th><th>Assign Owner</th><th>Edit</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <!-- ── Players tab ────────────────────────────────── -->
+      <div id="admin-tab-players" class="admin-section">
+        <h2>Players</h2>
+        <div class="form-section">
+          <form id="player-form">
+            <div class="form-group"><label for="player-name">Name</label><input type="text" id="player-name" placeholder="Player name" required /></div>
+            <div class="form-group"><label for="player-team">Team</label><select id="player-team"><option value="">— No Team —</option></select></div>
+            <div class="form-group"><label for="player-position">Position</label><input type="text" id="player-position" placeholder="e.g. C" /></div>
+            <div class="form-group"><label for="player-number">#</label><input type="number" id="player-number" placeholder="Jersey #" min="1" max="99" style="width:80px;" /></div>
+            <button type="submit">Add Player</button>
+          </form>
+        </div>
+        <table id="players-table">
+          <thead><tr><th>ID</th><th>#</th><th>Name</th><th>Position</th><th>Team</th><th>Action</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <!-- ── Games tab ──────────────────────────────────── -->
+      <div id="admin-tab-games" class="admin-section">
+        <h2>Games</h2>
+        <div class="form-section">
+          <form id="game-form">
+            <div class="form-group"><label for="game-season">Season</label><select id="game-season"><option value="">— No Season —</option></select></div>
+            <div class="form-group"><label for="game-date">Date</label><input type="date" id="game-date" required /></div>
+            <div class="form-group"><label for="game-home">Home Team</label><select id="game-home" required><option value="">Select team</option></select></div>
+            <div class="form-group"><label for="game-home-score">Home Score</label><input type="number" id="game-home-score" value="0" min="0" style="width:70px;" /></div>
+            <div class="form-group"><label for="game-away">Away Team</label><select id="game-away" required><option value="">Select team</option></select></div>
+            <div class="form-group"><label for="game-away-score">Away Score</label><input type="number" id="game-away-score" value="0" min="0" style="width:70px;" /></div>
+            <div class="form-group"><label for="game-status-select">Status</label>
+              <select id="game-status-select">
+                <option value="scheduled">Scheduled</option>
+                <option value="complete">Complete</option>
+              </select>
+            </div>
+            <div class="form-group" style="flex-direction:column;">
+              <label style="display:flex;align-items:center;gap:0.4rem;cursor:pointer;">
+                <input type="checkbox" id="game-overtime" />
+                Overtime game
+              </label>
+            </div>
+            <button type="submit">Add Game</button>
+          </form>
+        </div>
+        <table id="games-table">
+          <thead><tr><th>ID</th><th>Date</th><th>Home</th><th>Score</th><th>Away</th><th>Season</th><th>Status</th><th>Action</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <!-- ── Edit Player Modal (shared, not inside any tab) ─── -->
       <div id="edit-player-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:9998;align-items:center;justify-content:center;">
         <div style="background:#161b22;border:1px solid #30363d;border-radius:10px;padding:1.5rem 2rem;min-width:320px;max-width:440px;width:90%;">
           <h3 style="margin:0 0 1rem;">Edit Player Profile</h3>
@@ -179,54 +253,10 @@
         </div>
       </div>
 
-      <!-- ── Players ────────────────────────────────────────── -->
-      <h2>Players</h2>
-      <div class="form-section">
-        <form id="player-form">
-          <div class="form-group"><label for="player-name">Name</label><input type="text" id="player-name" placeholder="Player name" required /></div>
-          <div class="form-group"><label for="player-team">Team</label><select id="player-team"><option value="">— No Team —</option></select></div>
-          <div class="form-group"><label for="player-position">Position</label><input type="text" id="player-position" placeholder="e.g. C" /></div>
-          <div class="form-group"><label for="player-number">#</label><input type="number" id="player-number" placeholder="Jersey #" min="1" max="99" style="width:80px;" /></div>
-          <button type="submit">Add Player</button>
-        </form>
-      </div>
-      <table id="players-table">
-        <thead><tr><th>ID</th><th>#</th><th>Name</th><th>Position</th><th>Team</th><th>Action</th></tr></thead>
-        <tbody></tbody>
-      </table>
-
-      <!-- ── Games ──────────────────────────────────────────── -->
-      <h2>Games</h2>
-      <div class="form-section">
-        <form id="game-form">
-          <div class="form-group"><label for="game-season">Season</label><select id="game-season"><option value="">— No Season —</option></select></div>
-          <div class="form-group"><label for="game-date">Date</label><input type="date" id="game-date" required /></div>
-          <div class="form-group"><label for="game-home">Home Team</label><select id="game-home" required><option value="">Select team</option></select></div>
-          <div class="form-group"><label for="game-home-score">Home Score</label><input type="number" id="game-home-score" value="0" min="0" style="width:70px;" /></div>
-          <div class="form-group"><label for="game-away">Away Team</label><select id="game-away" required><option value="">Select team</option></select></div>
-          <div class="form-group"><label for="game-away-score">Away Score</label><input type="number" id="game-away-score" value="0" min="0" style="width:70px;" /></div>
-          <div class="form-group"><label for="game-status-select">Status</label>
-            <select id="game-status-select">
-              <option value="scheduled">Scheduled</option>
-              <option value="complete">Complete</option>
-            </select>
-          </div>
-          <div class="form-group" style="flex-direction:column;">
-            <label style="display:flex;align-items:center;gap:0.4rem;cursor:pointer;">
-              <input type="checkbox" id="game-overtime" />
-              Overtime game
-            </label>
-          </div>
-          <button type="submit">Add Game</button>
-        </form>
-      </div>
-      <table id="games-table">
-        <thead><tr><th>ID</th><th>Date</th><th>Home</th><th>Score</th><th>Away</th><th>Season</th><th>Status</th><th>Action</th></tr></thead>
-        <tbody></tbody>
-      </table>
     </div>
   </div>
 
+  <script src="notifications.js"></script>
   <script src="admin.js"></script>
   <script src="nav.js"></script>
 </body>
