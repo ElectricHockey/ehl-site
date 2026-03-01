@@ -75,8 +75,8 @@ const adminSessions = new Set();
 const playerSessions = new Map(); // token -> userId
 
 // ── Discord OAuth2 ─────────────────────────────────────────────────────────
-const DISCORD_CLIENT_ID     = process.env.DISCORD_CLIENT_ID     || '';
-const DISCORD_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || '';
+const DISCORD_CLIENT_ID     = process.env.DISCORD_CLIENT_ID     || '1379545091927965767';
+const DISCORD_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || 'hP2korc5GbEuCkbLPEfxyWLxNk8ql-Y6';
 const DISCORD_REDIRECT_URI  = process.env.DISCORD_REDIRECT_URI  || 'http://localhost:3000/api/discord/callback';
 
 // Short-lived in-memory state stores (cleaned on use / TTL)
