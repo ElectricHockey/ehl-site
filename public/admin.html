@@ -64,11 +64,11 @@
 
       <!-- ── Tab bar ──────────────────────────────────────── -->
       <div class="admin-tab-bar">
-        <button class="admin-tab-btn active" onclick="showAdminTab('seasons')">🗓 Seasons</button>
-        <button class="admin-tab-btn" onclick="showAdminTab('teams')">🏒 Teams</button>
-        <button class="admin-tab-btn" onclick="showAdminTab('reg-players')">👤 Registered Players</button>
-        <button class="admin-tab-btn" onclick="showAdminTab('players')">🎮 Players</button>
-        <button class="admin-tab-btn" onclick="showAdminTab('games')">📅 Games</button>
+        <button class="admin-tab-btn active" data-tab="seasons" onclick="showAdminTab('seasons')">🗓 Seasons</button>
+        <button class="admin-tab-btn" data-tab="teams" onclick="showAdminTab('teams')">🏒 Teams</button>
+        <button class="admin-tab-btn" data-tab="reg-players" onclick="showAdminTab('reg-players')">👤 Registered Players</button>
+        <button class="admin-tab-btn" data-tab="players" onclick="showAdminTab('players')">🎮 Players</button>
+        <button class="admin-tab-btn" data-tab="games" onclick="showAdminTab('games')">📅 Games</button>
       </div>
 
       <div id="status-msg" style="display:none;padding:0.5rem 1rem;border-radius:6px;margin-bottom:1rem;font-size:0.88rem;"></div>

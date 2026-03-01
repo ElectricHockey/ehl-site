@@ -558,7 +558,10 @@ const GOALIE_SELECT = `
   SUM(gps.goalie_wins) AS goalie_wins,
   SUM(gps.goalie_losses) AS goalie_losses,
   SUM(gps.goalie_otw) AS goalie_otw,
-  SUM(gps.goalie_otl) AS goalie_otl`;
+  SUM(gps.goalie_otl) AS goalie_otl,
+  ROUND(AVG(NULLIF(gps.overall_rating,0)),0)   AS overall_rating,
+  ROUND(AVG(NULLIF(gps.defensive_rating,0)),0) AS defensive_rating,
+  ROUND(AVG(NULLIF(gps.team_play_rating,0)),0) AS team_play_rating`;
 
 // ── Team season stats ──────────────────────────────────────────────────────
 

@@ -56,7 +56,7 @@ function showAdminPanel() {
 function showAdminTab(name) {
   document.querySelectorAll('.admin-section').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.admin-tab-btn').forEach(btn =>
-    btn.classList.toggle('active', btn.getAttribute('onclick') === `showAdminTab('${name}')`)
+    btn.classList.toggle('active', btn.dataset.tab === name)
   );
   const sec = document.getElementById(`admin-tab-${name}`);
   if (sec) sec.classList.add('active');

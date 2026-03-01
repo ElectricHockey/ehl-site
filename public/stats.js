@@ -4,6 +4,31 @@ let skatersData = [], goaliesData = [];
 let skaterSort = { key: 'points', dir: 'desc' };
 let goalieSort  = { key: 'save_pct', dir: 'desc' };
 
+// ── Rating helpers ─────────────────────────────────────────────────────────
+
+// Compute a single OVR from the three EA sub-ratings (ignores zeros/nulls)
+function computeOvr(p) {
+  const vals = [p.overall_rating, p.defensive_rating, p.team_play_rating]
+    .map(Number).filter(v => v > 0);
+  return vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null;
+}
+
+// Returns an inline style string that colour-codes a rating value 0-100
+function ratingStyle(v) {
+  if (!v || v <= 0) return 'color:#484f58;';
+  if (v >= 90) return 'background:rgba(255,215,0,0.22);color:#ffd700;font-weight:700;';
+  if (v >= 80) return 'background:rgba(35,134,54,0.28);color:#3fb950;font-weight:700;';
+  if (v >= 70) return 'background:rgba(46,160,67,0.18);color:#56d364;font-weight:600;';
+  if (v >= 60) return 'background:rgba(158,106,3,0.22);color:#e3b341;font-weight:600;';
+  if (v >= 50) return 'background:rgba(188,76,0,0.22);color:#f0883e;';
+  return 'background:rgba(248,81,73,0.18);color:#f85149;';
+}
+// OVR gets a slightly thicker border to stand out
+function ovrStyle(v) {
+  const base = ratingStyle(v);
+  return base + 'outline:1px solid currentColor;border-radius:3px;';
+}
+
 function formatToi(s) {
   if (!s) return '0:00';
   const m = Math.floor(s / 60), sec = s % 60;
@@ -46,11 +71,17 @@ function fmt1(v) { return v !== null && v !== undefined ? Number(v).toFixed(1) :
 function renderSkaters() {
   const root = document.getElementById('skaters-root');
   if (skatersData.length === 0) { root.innerHTML = '<p style="color:#8b949e">No skater stats yet.</p>'; return; }
+  // precompute ovr so it can be sorted
+  skatersData.forEach(p => { p._ovr = computeOvr(p); });
   const sorted = sortData(skatersData, skaterSort.key, skaterSort.dir);
   const s = k => thClass(k, skaterSort);
   root.innerHTML = `<div style="overflow-x:auto;"><table id="skaters-table">
     <thead><tr>
       <th>Player</th><th>Team</th><th>Pos</th>
+      <th data-tip="Overall Rating (avg. of OR + DR + TPR)" class="${s('_ovr')}" onclick="sortSkaters('_ovr')">OVR</th>
+      <th data-tip="Offense Rating" class="${s('overall_rating')}" onclick="sortSkaters('overall_rating')">OR</th>
+      <th data-tip="Defense Rating" class="${s('defensive_rating')}" onclick="sortSkaters('defensive_rating')">DR</th>
+      <th data-tip="Team Play Rating" class="${s('team_play_rating')}" onclick="sortSkaters('team_play_rating')">TPR</th>
       <th data-tip="Games Played" class="${s('gp')}" onclick="sortSkaters('gp')">GP</th>
       <th data-tip="Goals" class="${s('goals')}" onclick="sortSkaters('goals')">G</th>
       <th data-tip="Assists" class="${s('assists')}" onclick="sortSkaters('assists')">A</th>
@@ -77,14 +108,17 @@ function renderSkaters() {
       <th data-tip="Hat Tricks" class="${s('hat_tricks')}" onclick="sortSkaters('hat_tricks')">HT</th>
       <th data-tip="Avg. Puck Possession (sec/game)" class="${s('apt')}" onclick="sortSkaters('apt')">APT</th>
       <th data-tip="Time on Ice" class="${s('toi')}" onclick="sortSkaters('toi')">TOI</th>
-      <th data-tip="Overall Rating" class="${s('overall_rating')}" onclick="sortSkaters('overall_rating')">OR</th>
-      <th data-tip="Defensive Rating" class="${s('defensive_rating')}" onclick="sortSkaters('defensive_rating')">DR</th>
-      <th data-tip="Team Play Rating" class="${s('team_play_rating')}" onclick="sortSkaters('team_play_rating')">TPR</th>
     </tr></thead>
-    <tbody>${sorted.map(p => `<tr${playerRowAttrs(p)}>
+    <tbody>${sorted.map(p => {
+      const ovr = p._ovr;
+      return `<tr${playerRowAttrs(p)}>
       <td>${p.name}</td>
       <td>${p.team_logo ? `<img src="${p.team_logo}" style="width:18px;height:18px;object-fit:contain;vertical-align:middle;margin-right:0.25rem;border-radius:2px;" />` : ''}${p.team_name}</td>
       <td>${p.position||'–'}</td>
+      <td style="text-align:center;${ovrStyle(ovr)}">${ovr ?? '–'}</td>
+      <td style="text-align:center;${ratingStyle(p.overall_rating)}">${p.overall_rating||'–'}</td>
+      <td style="text-align:center;${ratingStyle(p.defensive_rating)}">${p.defensive_rating||'–'}</td>
+      <td style="text-align:center;${ratingStyle(p.team_play_rating)}">${p.team_play_rating||'–'}</td>
       <td>${p.gp}</td><td>${p.goals}</td><td>${p.assists}</td>
       <td><strong>${p.points}</strong></td>
       <td>${p.plus_minus >= 0 ? '+' : ''}${p.plus_minus}</td>
@@ -99,8 +133,8 @@ function renderSkaters() {
       <td>${p.pass_pct_calc !== null && p.pass_pct_calc !== undefined ? fmt1(p.pass_pct_calc)+'%' : '–'}</td>
       <td>${p.hat_tricks||0}</td>
       <td>${formatToi(p.apt)}</td><td>${formatToi(p.toi)}</td>
-      <td>${p.overall_rating||'–'}</td><td>${p.defensive_rating||'–'}</td><td>${p.team_play_rating||'–'}</td>
-    </tr>`).join('')}</tbody>
+    </tr>`;
+    }).join('')}</tbody>
   </table></div>`;
 }
 
@@ -112,11 +146,16 @@ function sortSkaters(key) {
 function renderGoalies() {
   const root = document.getElementById('goalies-root');
   if (goaliesData.length === 0) { root.innerHTML = '<p style="color:#8b949e">No goalie stats yet.</p>'; return; }
+  goaliesData.forEach(p => { p._ovr = computeOvr(p); });
   const sorted = sortData(goaliesData, goalieSort.key, goalieSort.dir);
   const s = k => thClass(k, goalieSort);
   root.innerHTML = `<div style="overflow-x:auto;"><table id="goalies-table">
     <thead><tr>
       <th>Player</th><th>Team</th>
+      <th data-tip="Overall Rating (avg. of OR + DR + TPR)" class="${s('_ovr')}" onclick="sortGoalies('_ovr')">OVR</th>
+      <th data-tip="Offense Rating" class="${s('overall_rating')}" onclick="sortGoalies('overall_rating')">OR</th>
+      <th data-tip="Defense Rating" class="${s('defensive_rating')}" onclick="sortGoalies('defensive_rating')">DR</th>
+      <th data-tip="Team Play Rating" class="${s('team_play_rating')}" onclick="sortGoalies('team_play_rating')">TPR</th>
       <th data-tip="Games Played" class="${s('gp')}" onclick="sortGoalies('gp')">GP</th>
       <th data-tip="Goals" class="${s('goals')}" onclick="sortGoalies('goals')">G</th>
       <th data-tip="Assists" class="${s('assists')}" onclick="sortGoalies('assists')">A</th>
@@ -138,9 +177,14 @@ function renderGoalies() {
     <tbody>${sorted.map(p => {
       const svp = p.save_pct !== null && p.save_pct !== undefined
         ? (p.save_pct < 1 ? (p.save_pct * 100).toFixed(1) : Number(p.save_pct).toFixed(1)) + '%' : '–';
+      const ovr = p._ovr;
       return `<tr${playerRowAttrs(p)}>
         <td>${p.name}</td>
         <td>${p.team_logo ? `<img src="${p.team_logo}" style="width:18px;height:18px;object-fit:contain;vertical-align:middle;margin-right:0.25rem;border-radius:2px;" />` : ''}${p.team_name}</td>
+        <td style="text-align:center;${ovrStyle(ovr)}">${ovr ?? '–'}</td>
+        <td style="text-align:center;${ratingStyle(p.overall_rating)}">${p.overall_rating||'–'}</td>
+        <td style="text-align:center;${ratingStyle(p.defensive_rating)}">${p.defensive_rating||'–'}</td>
+        <td style="text-align:center;${ratingStyle(p.team_play_rating)}">${p.team_play_rating||'–'}</td>
         <td>${p.gp}</td><td>${p.goals||0}</td><td>${p.assists||0}</td>
         <td>${p.shots_against}</td><td>${p.goals_against}</td>
         <td><strong>${svp}</strong></td>
