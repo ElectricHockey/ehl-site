@@ -1,4 +1,4 @@
-const API = 'http://localhost:3000/api';
+const API = '/api';
 
 function resultBadge(result) {
   if (result === 'W') return '<span class="badge badge-win">W</span>';

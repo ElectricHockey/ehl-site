@@ -35,6 +35,10 @@
           <label for="team-division">Division</label>
           <input type="text" id="team-division" placeholder="e.g. Atlantic" required />
         </div>
+        <div class="form-group">
+          <label for="team-ea-id">EA Club ID</label>
+          <input type="number" id="team-ea-id" placeholder="e.g. 1055" min="1" style="width:110px;" />
+        </div>
         <button type="submit">Add Team</button>
       </form>
     </div>
@@ -42,7 +46,7 @@
     <table id="teams-table">
       <thead>
         <tr>
-          <th>ID</th><th>Name</th><th>Conference</th><th>Division</th><th>Action</th>
+          <th>ID</th><th>Name</th><th>Conference</th><th>Division</th><th>EA Club ID</th><th>Action</th>
         </tr>
       </thead>
       <tbody></tbody>

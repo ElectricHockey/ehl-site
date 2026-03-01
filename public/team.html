@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Team – EHL</title>
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    .match-card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      margin-top: 1.25rem;
+      overflow: hidden;
+    }
+    .match-header {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid #21262d;
+      flex-wrap: wrap;
+    }
+    .match-score {
+      font-size: 1.2rem;
+      font-weight: 700;
+      color: #e6edf3;
+    }
+    .match-date { color: #8b949e; font-size: 0.9rem; }
+    .match-opponent { color: #c9d1d9; }
+    .no-ea-id {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 1.5rem;
+      margin-top: 1rem;
+      color: #8b949e;
+    }
+    .player-stats { margin: 0; }
+    .player-stats thead th { font-size: 0.72rem; }
+    .player-stats td { font-size: 0.85rem; }
+  </style>
+</head>
+<body>
+  <nav>
+    <span class="brand">⚡ EHL</span>
+    <a href="index.html">Home</a>
+    <a href="standings.html" class="active">Standings</a>
+    <a href="ea.html">EA Matches</a>
+    <a href="admin.html">Admin</a>
+  </nav>
+
+  <div class="container">
+    <div id="team-root"><p class="loading">Loading…</p></div>
+  </div>
+
+  <script src="team.js"></script>
+</body>
+</html>

@@ -1,4 +1,4 @@
-const API = 'http://localhost:3000/api';
+const API = '/api';
 
 async function loadStandings() {
   const root = document.getElementById('standings-root');
@@ -33,7 +33,7 @@ async function loadStandings() {
         for (const t of conferences[conf][div].sort((a, b) => b.pts - a.pts || b.w - a.w)) {
           const diff = t.gf - t.ga;
           html += `<tr>
-            <td>${t.name}</td>
+            <td><a href="team.html?id=${t.id}">${t.name}</a></td>
             <td>${t.gp}</td>
             <td>${t.w}</td>
             <td>${t.l}</td>

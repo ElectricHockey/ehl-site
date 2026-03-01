@@ -27,12 +27,12 @@ app.get('/api/teams', (req, res) => {
 });
 
 app.post('/api/teams', (req, res) => {
-  const { name, conference, division } = req.body;
+  const { name, conference, division, ea_club_id } = req.body;
   if (!name || !conference || !division) {
     return res.status(400).json({ error: 'name, conference, and division are required' });
   }
-  const result = db.prepare('INSERT INTO teams (name, conference, division) VALUES (?, ?, ?)').run(name, conference, division);
-  res.status(201).json({ id: result.lastInsertRowid, name, conference, division });
+  const result = db.prepare('INSERT INTO teams (name, conference, division, ea_club_id) VALUES (?, ?, ?, ?)').run(name, conference, division, ea_club_id || null);
+  res.status(201).json({ id: result.lastInsertRowid, name, conference, division, ea_club_id: ea_club_id || null });
 });
 
 app.delete('/api/teams/:id', (req, res) => {
@@ -42,6 +42,95 @@ app.delete('/api/teams/:id', (req, res) => {
   const result = db.prepare('DELETE FROM teams WHERE id = ?').run(id);
   if (result.changes === 0) return res.status(404).json({ error: 'Team not found' });
   res.json({ deleted: true });
+});
+
+app.patch('/api/teams/:id', (req, res) => {
+  const { ea_club_id } = req.body;
+  const result = db.prepare('UPDATE teams SET ea_club_id = ? WHERE id = ?').run(ea_club_id || null, req.params.id);
+  if (result.changes === 0) return res.status(404).json({ error: 'Team not found' });
+  res.json({ updated: true });
+});
+
+// ── EA Live Matches (proxied from EA Pro Clubs API) ────────────────────────
+
+const EA_POSITIONS = { '0': 'G', '1': 'C', '2': 'LW', '3': 'RW', '4': 'LD', '5': 'RD' };
+
+function mapResult(r) {
+  if (r === '1' || r === 1) return 'W';
+  if (r === '2' || r === 2) return 'L';
+  return '?';
+}
+
+async function fetchEA(url) {
+  const res = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      'Accept': 'application/json',
+      'Referer': 'https://www.ea.com/',
+      'Origin': 'https://www.ea.com',
+    },
+  });
+  if (!res.ok) throw new Error(`EA API responded with ${res.status}`);
+  return res.json();
+}
+
+app.get('/api/teams/:id/ea-matches', async (req, res) => {
+  const team = db.prepare('SELECT * FROM teams WHERE id = ?').get(req.params.id);
+  if (!team) return res.status(404).json({ error: 'Team not found' });
+  if (!team.ea_club_id) return res.status(400).json({ error: 'This team has no EA club ID configured' });
+
+  const leagueTeams = db.prepare('SELECT id, name, ea_club_id FROM teams WHERE ea_club_id IS NOT NULL').all();
+  const leagueClubIds = new Set(leagueTeams.map(t => String(t.ea_club_id)));
+  const clubIdToTeam = Object.fromEntries(leagueTeams.map(t => [String(t.ea_club_id), t]));
+
+  try {
+    const eaUrl = `https://proclubs.ea.com/api/nhl/clubs/matches?matchType=club_private&platform=common-gen5&clubIds=${team.ea_club_id}`;
+    const raw = await fetchEA(eaUrl);
+    const matchArray = Array.isArray(raw) ? raw : (raw.raw || []);
+
+    const leagueMatches = matchArray.filter(m => {
+      const myClub = m.clubs && m.clubs[String(team.ea_club_id)];
+      return myClub && leagueClubIds.has(String(myClub.opponentClubId));
+    });
+
+    const matches = leagueMatches.map(m => {
+      const myClub = m.clubs[String(team.ea_club_id)];
+      const opponentId = String(myClub.opponentClubId);
+      const opponentTeam = clubIdToTeam[opponentId] || null;
+
+      const rawPlayers = (m.players && m.players[String(team.ea_club_id)]) || {};
+      const players = Object.values(rawPlayers).map(p => ({
+        name: p.playername || p.name || 'Unknown',
+        position: EA_POSITIONS[String(p.position)] || String(p.position || ''),
+        goals: Number(p.skgoals) || 0,
+        assists: Number(p.skassists) || 0,
+        points: (Number(p.skgoals) || 0) + (Number(p.skassists) || 0),
+        shots: Number(p.skshots) || 0,
+        hits: Number(p.skhits) || 0,
+        plusMinus: Number(p.skplusmin) || 0,
+        pim: Number(p.skpim) || 0,
+        blockedShots: Number(p.skbs) || 0,
+        saves: Number(p.glsaves) || 0,
+        savesPct: p.glsavePct ? parseFloat(p.glsavePct) : null,
+        goalsAgainst: Number(p.glga) || 0,
+        toi: Number(p.toiseconds || p.skToi) || 0,
+      }));
+
+      return {
+        matchId: m.matchId,
+        date: m.timestamp ? new Date(m.timestamp * 1000).toISOString().split('T')[0] : null,
+        result: mapResult(myClub.result),
+        score: Number(myClub.score) || 0,
+        opponentScore: Number(myClub.opponentScore) || 0,
+        opponent: opponentTeam,
+        players,
+      };
+    });
+
+    res.json({ team: { id: team.id, name: team.name, ea_club_id: team.ea_club_id }, matches });
+  } catch (err) {
+    res.status(502).json({ error: 'Failed to fetch EA data', details: err.message });
+  }
 });
 
 // ── Players ────────────────────────────────────────────────────────────────

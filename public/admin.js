@@ -1,4 +1,4 @@
-const API = 'http://localhost:3000/api';
+const API = '/api';
 
 // ── Utility ──────────────────────────────────────────────────────────────
 
@@ -15,13 +15,17 @@ async function loadTeams() {
   const teams = await res.json();
   const tbody = document.querySelector('#teams-table tbody');
   tbody.innerHTML = teams.length === 0
-    ? '<tr><td colspan="5" style="color:#8b949e">No teams yet.</td></tr>'
+    ? '<tr><td colspan="6" style="color:#8b949e">No teams yet.</td></tr>'
     : teams.map(t => `
       <tr>
         <td>${t.id}</td>
         <td>${t.name}</td>
         <td>${t.conference}</td>
         <td>${t.division}</td>
+        <td>
+          <span id="ea-id-${t.id}" data-value="${t.ea_club_id ?? ''}">${t.ea_club_id ?? '—'}</span>
+          <button class="btn-secondary" style="margin-left:0.4rem;padding:0.2rem 0.5rem;font-size:0.8rem;" onclick="setEaId(${t.id})">Edit</button>
+        </td>
         <td><button class="btn-danger" onclick="deleteTeam(${t.id})">Delete</button></td>
       </tr>`).join('');
 
@@ -39,7 +43,8 @@ document.getElementById('team-form').addEventListener('submit', async e => {
   const name = document.getElementById('team-name').value.trim();
   const conference = document.getElementById('team-conference').value.trim();
   const division = document.getElementById('team-division').value.trim();
-  await fetch(`${API}/teams`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, conference, division }) });
+  const ea_club_id = document.getElementById('team-ea-id').value ? Number(document.getElementById('team-ea-id').value) : null;
+  await fetch(`${API}/teams`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, conference, division, ea_club_id }) });
   e.target.reset();
   await loadTeams();
   await loadGames();
@@ -51,6 +56,18 @@ async function deleteTeam(id) {
   await loadTeams();
   await loadPlayers();
   await loadGames();
+}
+
+async function setEaId(id) {
+  const current = document.getElementById(`ea-id-${id}`).dataset.value || '';
+  const val = prompt('Enter EA Club ID for this team (leave blank to clear):', current);
+  if (val === null) return; // cancelled
+  await fetch(`${API}/teams/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ea_club_id: val ? Number(val) : null }),
+  });
+  await loadTeams();
 }
 
 // ── Players ───────────────────────────────────────────────────────────────

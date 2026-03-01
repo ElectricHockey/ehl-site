@@ -31,4 +31,7 @@ db.exec(`
   );
 `);
 
+// Migration: add ea_club_id to teams if not present
+try { db.exec('ALTER TABLE teams ADD COLUMN ea_club_id INTEGER'); } catch (_) {}
+
 module.exports = db;
