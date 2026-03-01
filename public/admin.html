@@ -33,22 +33,6 @@
       </div>
     </div>
     <a href="stats.html">Stats</a>
-    <div class="nav-dropdown">
-      <a href="standings.html?type=threes">3's ▾</a>
-      <div class="nav-dropdown-menu">
-        <a href="standings.html?type=threes">Standings</a>
-        <a href="schedule.html?type=threes">Schedule</a>
-        <a href="stats.html?type=threes">Stats</a>
-      </div>
-    </div>
-    <div class="nav-dropdown">
-      <a href="standings.html?type=sixes">6's ▾</a>
-      <div class="nav-dropdown-menu">
-        <a href="standings.html?type=sixes">Standings</a>
-        <a href="schedule.html?type=sixes">Schedule</a>
-        <a href="stats.html?type=sixes">Stats</a>
-      </div>
-    </div>
     <a href="admin.html" class="active">Admin</a>
   </nav>
 
@@ -119,6 +103,14 @@
             <input type="number" id="team-ea-id" placeholder="e.g. 1055" min="1" style="width:110px;" />
           </div>
           <div class="form-group" style="flex-direction:column;">
+            <label for="team-color1">Primary Color <span style="color:#8b949e;font-size:0.8rem;">(gradient start)</span></label>
+            <input type="color" id="team-color1" value="#1e3a5f" style="width:56px;height:32px;padding:2px;border-radius:4px;border:1px solid #30363d;background:none;cursor:pointer;" />
+          </div>
+          <div class="form-group" style="flex-direction:column;">
+            <label for="team-color2">Secondary Color <span style="color:#8b949e;font-size:0.8rem;">(gradient end)</span></label>
+            <input type="color" id="team-color2" value="#0d1117" style="width:56px;height:32px;padding:2px;border-radius:4px;border:1px solid #30363d;background:none;cursor:pointer;" />
+          </div>
+          <div class="form-group" style="flex-direction:column;">
             <label for="team-logo">Team Logo <span style="color:#8b949e;font-size:0.8rem;">(optional, max 2 MB)</span></label>
             <input type="file" id="team-logo" accept="image/*" onchange="previewLogo(this,'logo-preview-new')" style="color:#c9d1d9;" />
             <img id="logo-preview-new" class="logo-preview" alt="logo preview" />
@@ -127,7 +119,7 @@
         </form>
       </div>
       <table id="teams-table">
-        <thead><tr><th>Logo</th><th>Name</th><th>Conference</th><th>Division</th><th>EA Club ID</th><th>Action</th></tr></thead>
+        <thead><tr><th>Logo</th><th>Colors</th><th>Name</th><th>Conference</th><th>Division</th><th>EA Club ID</th><th>Action</th></tr></thead>
         <tbody></tbody>
       </table>
 
@@ -157,6 +149,18 @@
           <div class="form-group"><label for="game-home-score">Home Score</label><input type="number" id="game-home-score" value="0" min="0" style="width:70px;" /></div>
           <div class="form-group"><label for="game-away">Away Team</label><select id="game-away" required><option value="">Select team</option></select></div>
           <div class="form-group"><label for="game-away-score">Away Score</label><input type="number" id="game-away-score" value="0" min="0" style="width:70px;" /></div>
+          <div class="form-group"><label for="game-status-select">Status</label>
+            <select id="game-status-select">
+              <option value="scheduled">Scheduled</option>
+              <option value="complete">Complete</option>
+            </select>
+          </div>
+          <div class="form-group" style="flex-direction:column;">
+            <label style="display:flex;align-items:center;gap:0.4rem;cursor:pointer;">
+              <input type="checkbox" id="game-overtime" />
+              Overtime game
+            </label>
+          </div>
           <button type="submit">Add Game</button>
         </form>
       </div>

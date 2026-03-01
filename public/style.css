@@ -255,3 +255,22 @@ button:hover, .btn:hover { opacity: 0.85; }
 
 #status-msg.success { background: #1f4b2f; color: #3fb950; display: block; }
 #status-msg.error   { background: #4b1f1f; color: #f85149; display: block; }
+
+/* ── Team colour gradient rows ────────────────────────────── */
+/* CSS custom properties --c1 and --c2 are set as inline style on <tr> */
+tbody tr.team-row {
+  background: linear-gradient(
+    90deg,
+    rgba(var(--c1, 45,45,45), 0.25) 0%,
+    rgba(var(--c2, 45,45,45), 0.10) 50%,
+    transparent 100%
+  );
+}
+tbody tr.team-row:hover {
+  background: linear-gradient(
+    90deg,
+    rgba(var(--c1, 45,45,45), 0.40) 0%,
+    rgba(var(--c2, 45,45,45), 0.18) 55%,
+    #21262d 100%
+  );
+}

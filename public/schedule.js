@@ -322,11 +322,12 @@ document.getElementById('game-detail').addEventListener('click', e => {
 
 async function markComplete(gameId) {
   if (!confirm('Mark this game as complete? It will count in standings and stats.')) return;
+  const isOT = confirm('Was this game decided in overtime?');
   try {
     const res = await fetch(`${API}/games/${gameId}`, {
       method: 'PATCH',
       headers: adminHeaders(),
-      body: JSON.stringify({ status: 'complete' }),
+      body: JSON.stringify({ status: 'complete', is_overtime: isOT ? 1 : 0 }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));

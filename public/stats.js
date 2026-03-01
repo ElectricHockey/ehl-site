@@ -12,6 +12,22 @@ function formatToi(seconds) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
+// Convert hex to "r,g,b" string for CSS rgba() with a custom property
+function hexToRgbStr(hex) {
+  if (!hex || hex.length < 4) return null;
+  let h = hex.replace('#', '');
+  if (h.length === 3) h = h.split('').map(c => c + c).join('');
+  h = h.padEnd(6, '0');
+  return `${parseInt(h.slice(0,2),16)},${parseInt(h.slice(2,4),16)},${parseInt(h.slice(4,6),16)}`;
+}
+
+function playerRowAttrs(p) {
+  const c1 = hexToRgbStr(p.team_color1);
+  if (!c1) return '';
+  const c2 = hexToRgbStr(p.team_color2) || c1;
+  return ` class="team-row" style="--c1:${c1};--c2:${c2};"`;
+}
+
 function switchTab(tab) {
   document.querySelectorAll('.tab-section').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
@@ -68,7 +84,7 @@ function renderSkaters() {
         <th class="${s('toi')}" onclick="sortSkaters('toi')">TOI</th>
       </tr></thead>
       <tbody>
-        ${sorted.map(p => `<tr>
+        ${sorted.map(p => `<tr${playerRowAttrs(p)}>
           <td>${p.name}</td>
           <td>${p.team_logo ? `<img src="${p.team_logo}" style="width:20px;height:20px;object-fit:contain;vertical-align:middle;margin-right:0.3rem;border-radius:3px;" />` : ''}${p.team_name}</td>
           <td>${p.position || '–'}</td>
@@ -128,7 +144,7 @@ function renderGoalies() {
           const svp = p.save_pct !== null && p.save_pct !== undefined
             ? (p.save_pct < 1 ? (p.save_pct * 100).toFixed(1) : p.save_pct.toFixed(1)) + '%'
             : '–';
-          return `<tr>
+          return `<tr${playerRowAttrs(p)}>
             <td>${p.name}</td>
             <td>${p.team_logo ? `<img src="${p.team_logo}" style="width:20px;height:20px;object-fit:contain;vertical-align:middle;margin-right:0.3rem;border-radius:3px;" />` : ''}${p.team_name}</td>
             <td>${p.gp}</td>

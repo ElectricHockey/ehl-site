@@ -126,15 +126,24 @@ async function deleteSeason(id) {
 
 // ── Teams ─────────────────────────────────────────────────────────────────
 
+function colorSwatch(hex) {
+  if (!hex) return '—';
+  return `<span style="display:inline-block;width:18px;height:18px;border-radius:3px;background:${hex};border:1px solid #30363d;vertical-align:middle;" title="${hex}"></span>`;
+}
+
 async function loadTeams() {
   const res = await fetch(`${API}/teams`);
   const teams = await res.json();
   const tbody = document.querySelector('#teams-table tbody');
   tbody.innerHTML = teams.length === 0
-    ? '<tr><td colspan="6" style="color:#8b949e">No teams yet.</td></tr>'
+    ? '<tr><td colspan="7" style="color:#8b949e">No teams yet.</td></tr>'
     : teams.map(t => `
       <tr>
         <td>${t.logo_url ? `<img src="${t.logo_url}" class="team-logo-sm" alt="${t.name}" />` : '—'}</td>
+        <td style="white-space:nowrap;">
+          ${colorSwatch(t.color1)} ${colorSwatch(t.color2)}
+          <button class="btn-secondary" style="margin-left:0.4rem;padding:0.2rem 0.5rem;font-size:0.8rem;" onclick="editColors(${t.id},'${t.color1||''}','${t.color2||''}')">Colors</button>
+        </td>
         <td>${t.name}</td>
         <td>${t.conference || '—'}</td>
         <td>${t.division || '—'}</td>
@@ -161,6 +170,8 @@ document.getElementById('team-form').addEventListener('submit', async e => {
   fd.append('division', document.getElementById('team-division').value.trim());
   const eaId = document.getElementById('team-ea-id').value;
   if (eaId) fd.append('ea_club_id', eaId);
+  fd.append('color1', document.getElementById('team-color1').value);
+  fd.append('color2', document.getElementById('team-color2').value);
   const logoFile = document.getElementById('team-logo').files[0];
   if (logoFile) fd.append('logo', logoFile);
 
@@ -200,6 +211,40 @@ async function changeLogo(id) {
     await loadTeams();
   };
   input.click();
+}
+
+function editColors(id, currentColor1, currentColor2) {
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:999;display:flex;align-items:center;justify-content:center;';
+  overlay.innerHTML = `
+    <div style="background:#161b22;border:1px solid #30363d;border-radius:10px;padding:1.5rem 2rem;min-width:280px;">
+      <h3 style="margin-bottom:1rem;color:#e6edf3;">Team Colors</h3>
+      <div style="margin-bottom:1rem;">
+        <label style="display:block;color:#8b949e;font-size:0.85rem;margin-bottom:0.4rem;">Primary Color (gradient start)</label>
+        <input type="color" id="_ec1" value="${currentColor1 || '#1e3a5f'}" style="width:100%;height:36px;border:1px solid #30363d;border-radius:6px;cursor:pointer;" />
+      </div>
+      <div style="margin-bottom:1.2rem;">
+        <label style="display:block;color:#8b949e;font-size:0.85rem;margin-bottom:0.4rem;">Secondary Color (gradient end)</label>
+        <input type="color" id="_ec2" value="${currentColor2 || '#0d1117'}" style="width:100%;height:36px;border:1px solid #30363d;border-radius:6px;cursor:pointer;" />
+      </div>
+      <div style="display:flex;gap:0.5rem;">
+        <button id="_ec-save" style="flex:1;padding:0.5rem;background:#238636;border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:0.9rem;">Save</button>
+        <button id="_ec-cancel" style="flex:1;padding:0.5rem;background:#21262d;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;cursor:pointer;font-size:0.9rem;">Cancel</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  document.getElementById('_ec-save').addEventListener('click', async () => {
+    const c1 = document.getElementById('_ec1').value;
+    const c2 = document.getElementById('_ec2').value;
+    document.body.removeChild(overlay);
+    const fd = new FormData();
+    fd.append('color1', c1);
+    fd.append('color2', c2);
+    await fetch(`${API}/teams/${id}`, { method: 'PATCH', headers: adminHeaders(), body: fd });
+    await loadTeams();
+  });
+  document.getElementById('_ec-cancel').addEventListener('click', () => document.body.removeChild(overlay));
+  overlay.addEventListener('click', e => { if (e.target === overlay) document.body.removeChild(overlay); });
 }
 
 // ── Players ───────────────────────────────────────────────────────────────
@@ -246,7 +291,7 @@ async function loadGames() {
       <tr>
         <td>${g.id}</td><td>${g.date}</td>
         <td>${g.home_team_name}</td>
-        <td>${g.status === 'complete' ? `${g.home_score} – ${g.away_score}` : '–'}</td>
+        <td>${g.status === 'complete' ? `${g.home_score} – ${g.away_score}${g.is_overtime ? ' <span title="Overtime" style="color:#e3b341;font-size:0.8rem;">OT</span>' : ''}` : '–'}</td>
         <td>${g.away_team_name}</td>
         <td>${g.season_id ? (seasonMap[g.season_id] || `#${g.season_id}`) : '—'}</td>
         <td>${g.status === 'complete'
@@ -264,8 +309,10 @@ document.getElementById('game-form').addEventListener('submit', async e => {
   const home_score = parseInt(document.getElementById('game-home-score').value) || 0;
   const away_score = parseInt(document.getElementById('game-away-score').value) || 0;
   const season_id = document.getElementById('game-season').value || null;
+  const status = document.getElementById('game-status-select').value;
+  const is_overtime = document.getElementById('game-overtime').checked ? 1 : 0;
   if (home_team_id === away_team_id) { alert('Home and away teams must differ.'); return; }
-  await fetch(`${API}/games`, { method: 'POST', headers: adminJsonHeaders(), body: JSON.stringify({ date, home_team_id, away_team_id, home_score, away_score, season_id }) });
+  await fetch(`${API}/games`, { method: 'POST', headers: adminJsonHeaders(), body: JSON.stringify({ date, home_team_id, away_team_id, home_score, away_score, season_id, status, is_overtime }) });
   e.target.reset(); await loadGames();
 });
 

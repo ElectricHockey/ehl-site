@@ -142,11 +142,13 @@ app.post('/api/teams', requireAdmin, logoUpload.single('logo'), (req, res) => {
   const division = (body.division || '').trim();
   const ea_club_id = body.ea_club_id ? Number(body.ea_club_id) : null;
   const logo_url = req.file ? `/uploads/${req.file.filename}` : (body.logo_url || null);
+  const color1 = (body.color1 || '').trim();
+  const color2 = (body.color2 || '').trim();
 
   const result = db.prepare(
-    'INSERT INTO teams (name, conference, division, ea_club_id, logo_url) VALUES (?, ?, ?, ?, ?)'
-  ).run(name, conference, division, ea_club_id, logo_url);
-  res.status(201).json({ id: result.lastInsertRowid, name, conference, division, ea_club_id, logo_url });
+    'INSERT INTO teams (name, conference, division, ea_club_id, logo_url, color1, color2) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).run(name, conference, division, ea_club_id, logo_url, color1, color2);
+  res.status(201).json({ id: result.lastInsertRowid, name, conference, division, ea_club_id, logo_url, color1, color2 });
 });
 
 // Update team – accepts multipart/form-data (with optional logo) OR JSON
@@ -161,6 +163,8 @@ app.patch('/api/teams/:id', requireAdmin, logoUpload.single('logo'), (req, res) 
   const ea_club_id = body.ea_club_id !== undefined
     ? (body.ea_club_id ? Number(body.ea_club_id) : null)
     : team.ea_club_id;
+  const color1 = body.color1 !== undefined ? (body.color1 || '').trim() : (team.color1 || '');
+  const color2 = body.color2 !== undefined ? (body.color2 || '').trim() : (team.color2 || '');
 
   let logo_url = team.logo_url;
   if (req.file) {
@@ -174,8 +178,8 @@ app.patch('/api/teams/:id', requireAdmin, logoUpload.single('logo'), (req, res) 
     logo_url = body.logo_url || null;
   }
 
-  db.prepare('UPDATE teams SET name=?, conference=?, division=?, ea_club_id=?, logo_url=? WHERE id=?')
-    .run(name, conference, division, ea_club_id, logo_url, req.params.id);
+  db.prepare('UPDATE teams SET name=?, conference=?, division=?, ea_club_id=?, logo_url=?, color1=?, color2=? WHERE id=?')
+    .run(name, conference, division, ea_club_id, logo_url, color1, color2, req.params.id);
   res.json({ updated: true });
 });
 
@@ -350,17 +354,19 @@ app.get('/api/games', (req, res) => {
 });
 
 app.post('/api/games', requireAdmin, (req, res) => {
-  const { home_team_id, away_team_id, home_score, away_score, date, season_id } = req.body;
+  const { home_team_id, away_team_id, home_score, away_score, date, season_id, status, is_overtime } = req.body;
   if (!home_team_id || !away_team_id || !date) {
     return res.status(400).json({ error: 'home_team_id, away_team_id, and date are required' });
   }
+  const gameStatus = status === 'complete' ? 'complete' : 'scheduled';
+  const ot = is_overtime ? 1 : 0;
   const result = db.prepare(
-    'INSERT INTO games (home_team_id, away_team_id, home_score, away_score, date, status, season_id) VALUES (?, ?, ?, ?, ?, ?, ?)'
-  ).run(home_team_id, away_team_id, home_score || 0, away_score || 0, date, 'scheduled', season_id || null);
+    'INSERT INTO games (home_team_id, away_team_id, home_score, away_score, date, status, season_id, is_overtime) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(home_team_id, away_team_id, home_score || 0, away_score || 0, date, gameStatus, season_id || null, ot);
   res.status(201).json({
     id: result.lastInsertRowid, home_team_id, away_team_id,
     home_score: home_score || 0, away_score: away_score || 0, date,
-    status: 'scheduled', season_id: season_id || null,
+    status: gameStatus, season_id: season_id || null, is_overtime: ot,
   });
 });
 
@@ -380,6 +386,7 @@ app.patch('/api/games/:id', requireAdmin, (req, res) => {
   const ea_match_id = req.body.ea_match_id !== undefined ? req.body.ea_match_id : game.ea_match_id;
   const status = req.body.status !== undefined ? req.body.status : game.status;
   const season_id = req.body.season_id !== undefined ? req.body.season_id : game.season_id;
+  const is_overtime = req.body.is_overtime !== undefined ? (req.body.is_overtime ? 1 : 0) : (game.is_overtime || 0);
 
   if (req.body.home_score !== undefined) {
     home_score = parseInt(req.body.home_score, 10);
@@ -392,8 +399,8 @@ app.patch('/api/games/:id', requireAdmin, (req, res) => {
       return res.status(400).json({ error: 'away_score must be a non-negative integer (0–99)' });
   }
 
-  db.prepare('UPDATE games SET home_score=?, away_score=?, ea_match_id=?, status=?, season_id=? WHERE id=?')
-    .run(home_score, away_score, ea_match_id, status, season_id, req.params.id);
+  db.prepare('UPDATE games SET home_score=?, away_score=?, ea_match_id=?, status=?, season_id=?, is_overtime=? WHERE id=?')
+    .run(home_score, away_score, ea_match_id, status, season_id, is_overtime, req.params.id);
 
   if (req.body.player_stats) {
     const { home_players, away_players } = req.body.player_stats;
@@ -468,7 +475,8 @@ app.get('/api/stats/leaders', (req, res) => {
   const p = seasonId ? [seasonId] : [];
 
   const skaters = db.prepare(`
-    SELECT gps.player_name AS name, t.name AS team_name, t.logo_url AS team_logo, gps.position,
+    SELECT gps.player_name AS name, t.name AS team_name, t.logo_url AS team_logo,
+      t.color1 AS team_color1, t.color2 AS team_color2, gps.position,
       COUNT(DISTINCT gps.game_id) AS gp,
       SUM(gps.goals) AS goals, SUM(gps.assists) AS assists,
       SUM(gps.goals + gps.assists) AS points,
@@ -487,6 +495,7 @@ app.get('/api/stats/leaders', (req, res) => {
 
   const goalies = db.prepare(`
     SELECT gps.player_name AS name, t.name AS team_name, t.logo_url AS team_logo,
+      t.color1 AS team_color1, t.color2 AS team_color2,
       COUNT(DISTINCT gps.game_id) AS gp,
       SUM(gps.saves) AS saves, SUM(gps.goals_against) AS goals_against,
       SUM(gps.shots_against) AS shots_against,
@@ -564,12 +573,11 @@ app.get('/api/games/:id/ea-matches', async (req, res) => {
 
 app.get('/api/standings', (req, res) => {
   const seasonId = req.query.season_id ? Number(req.query.season_id) : null;
+  // Sort chronologically so _results array is in order for streak computation
   const filter = seasonId
-    ? "SELECT * FROM games WHERE status = 'complete' AND season_id = ?"
-    : "SELECT * FROM games WHERE status = 'complete'";
-  const games = seasonId
-    ? db.prepare(filter).all(seasonId)
-    : db.prepare(filter).all();
+    ? "SELECT * FROM games WHERE status = 'complete' AND season_id = ? ORDER BY date ASC, id ASC"
+    : "SELECT * FROM games WHERE status = 'complete' ORDER BY date ASC, id ASC";
+  const games = seasonId ? db.prepare(filter).all(seasonId) : db.prepare(filter).all();
 
   // Only include teams that appear in at least one game (no ghost 0-GP rows)
   const teamIds = new Set();
@@ -579,9 +587,17 @@ app.get('/api/standings', (req, res) => {
 
   const stats = {};
   for (const t of teams) {
-    stats[t.id] = { id: t.id, name: t.name, logo_url: t.logo_url || null,
-      conference: t.conference, division: t.division, gp: 0, w: 0, l: 0, pts: 0, gf: 0, ga: 0 };
+    stats[t.id] = {
+      id: t.id, name: t.name, logo_url: t.logo_url || null,
+      conference: t.conference, division: t.division,
+      color1: t.color1 || null, color2: t.color2 || null,
+      gp: 0, w: 0, otw: 0, l: 0, otl: 0, pts: 0, gf: 0, ga: 0,
+      home_w: 0, home_l: 0, home_otl: 0,
+      away_w: 0, away_l: 0, away_otl: 0,
+      _results: [],
+    };
   }
+
   for (const g of games) {
     const home = stats[g.home_team_id];
     const away = stats[g.away_team_id];
@@ -589,10 +605,54 @@ app.get('/api/standings', (req, res) => {
     home.gp++; away.gp++;
     home.gf += g.home_score; home.ga += g.away_score;
     away.gf += g.away_score; away.ga += g.home_score;
-    if (g.home_score > g.away_score) { home.w++; home.pts += 2; away.l++; }
-    else if (g.away_score > g.home_score) { away.w++; away.pts += 2; home.l++; }
-    else { home.pts++; away.pts++; }
+    const ot = !!g.is_overtime;
+    if (g.home_score > g.away_score) {
+      if (ot) {
+        home.w++; home.otw++; home.pts += 2; home.home_w++;
+        away.otl++; away.pts++; away.away_otl++;
+        home._results.push('W'); away._results.push('OTL');
+      } else {
+        home.w++; home.pts += 2; home.home_w++;
+        away.l++; away.away_l++;
+        home._results.push('W'); away._results.push('L');
+      }
+    } else if (g.away_score > g.home_score) {
+      if (ot) {
+        away.w++; away.otw++; away.pts += 2; away.away_w++;
+        home.otl++; home.pts++; home.home_otl++;
+        away._results.push('W'); home._results.push('OTL');
+      } else {
+        away.w++; away.pts += 2; away.away_w++;
+        home.l++; home.home_l++;
+        away._results.push('W'); home._results.push('L');
+      }
+    } else {
+      // Tie (kept for backward compatibility)
+      home.pts++; away.pts++;
+      home._results.push('T'); away._results.push('T');
+    }
   }
+
+  for (const t of Object.values(stats)) {
+    // Streak
+    if (t._results.length === 0) {
+      t.streak = '—';
+    } else {
+      const last = t._results[t._results.length - 1];
+      const isWin = last === 'W';
+      let count = 0;
+      for (let i = t._results.length - 1; i >= 0; i--) {
+        const r = t._results[i];
+        if (isWin ? r === 'W' : (r === 'L' || r === 'OTL')) count++;
+        else break;
+      }
+      t.streak = isWin ? `W${count}` : `L${count}`;
+    }
+    t.home_record = `${t.home_w}-${t.home_l}-${t.home_otl}`;
+    t.away_record = `${t.away_w}-${t.away_l}-${t.away_otl}`;
+    delete t._results;
+  }
+
   res.json(Object.values(stats).sort((a, b) => b.pts - a.pts || b.w - a.w));
 });
 
