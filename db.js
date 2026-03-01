@@ -156,5 +156,6 @@ try { db.exec('ALTER TABLE game_player_stats ADD COLUMN breakaway_saves INTEGER 
 try { db.exec('ALTER TABLE users ADD COLUMN position TEXT'); } catch (_) {}
 try { db.exec('ALTER TABLE users ADD COLUMN ip_hash TEXT'); } catch (_) {}
 try { db.exec('ALTER TABLE users ADD COLUMN discord TEXT'); } catch (_) {}
+try { db.exec('ALTER TABLE users ADD COLUMN discord_id TEXT'); } catch (_) {}
 
 module.exports = db;

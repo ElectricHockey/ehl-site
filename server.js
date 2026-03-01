@@ -74,6 +74,22 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'ehl-admin';
 const adminSessions = new Set();
 const playerSessions = new Map(); // token -> userId
 
+// ── Discord OAuth2 ─────────────────────────────────────────────────────────
+const DISCORD_CLIENT_ID     = process.env.DISCORD_CLIENT_ID     || '';
+const DISCORD_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || '';
+const DISCORD_REDIRECT_URI  = process.env.DISCORD_REDIRECT_URI  || 'http://localhost:3000/api/discord/callback';
+
+// Short-lived in-memory state stores (cleaned on use / TTL)
+const discordOAuthStates   = new Map(); // state  → { mode, userId, expires }
+const pendingDiscordLinks  = new Map(); // token  → { discord_id, discord, expires }
+
+// Periodically evict expired Discord OAuth state / pending-link entries
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of discordOAuthStates)  if (now > v.expires) discordOAuthStates.delete(k);
+  for (const [k, v] of pendingDiscordLinks) if (now > v.expires) pendingDiscordLinks.delete(k);
+}, 5 * 60 * 1000);
+
 function requireAdmin(req, res, next) {
   const token = req.headers['x-admin-token'];
   if (!token || !adminSessions.has(token)) return res.status(401).json({ error: 'Admin access required' });
@@ -124,17 +140,17 @@ app.get('/api/auth/status', (req, res) => {
 // ── Player registration & login ────────────────────────────────────────────
 
 app.post('/api/players/register', async (req, res) => {
-  const { username, platform, password, email, position, discord } = req.body;
+  const { username, platform, password, email, position, discord, discord_id } = req.body;
   if (!username || !username.trim()) return res.status(400).json({ error: 'Username (gamertag) is required' });
   if (!password || password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
-  if (!discord || !discord.trim()) return res.status(400).json({ error: 'Discord username is required' });
+  if (!discord || !discord.trim()) return res.status(400).json({ error: 'Discord account is required. Please connect with Discord.' });
   const plat = (platform === 'psn' ? 'psn' : 'xbox');
   const pos = position ? position.trim() : null;
   const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(username.trim());
   if (existing) return res.status(409).json({ error: 'That gamertag is already registered' });
   const hash = await hashPassword(password);
-  const r = db.prepare('INSERT INTO users (username, platform, password_hash, email, position, discord) VALUES (?, ?, ?, ?, ?, ?)')
-    .run(username.trim(), plat, hash, email ? email.trim() : null, pos, discord.trim());
+  const r = db.prepare('INSERT INTO users (username, platform, password_hash, email, position, discord, discord_id) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .run(username.trim(), plat, hash, email ? email.trim() : null, pos, discord.trim(), discord_id || null);
   // Also create a player record linked to this user
   const pr = db.prepare('INSERT INTO players (name, user_id, is_rostered, position) VALUES (?, ?, 0, ?)')
     .run(username.trim(), r.lastInsertRowid, pos);
@@ -161,7 +177,7 @@ app.post('/api/players/logout', (req, res) => {
 });
 
 app.get('/api/players/me', requirePlayer, (req, res) => {
-  const user = db.prepare('SELECT id, username, platform, email, position, discord, created_at FROM users WHERE id = ?').get(req.userId);
+  const user = db.prepare('SELECT id, username, platform, email, position, discord, discord_id, created_at FROM users WHERE id = ?').get(req.userId);
   if (!user) return res.status(404).json({ error: 'User not found' });
   const player = db.prepare('SELECT * FROM players WHERE user_id = ?').get(req.userId);
   const staff = db.prepare(`
@@ -1081,6 +1097,79 @@ app.get('/api/games/:id/ea-matches', async (req, res) => {
   } catch (err) {
     res.status(502).json({ error: 'Failed to fetch EA data', details: err.message });
   }
+});
+
+// ── Discord OAuth2 routes ──────────────────────────────────────────────────
+
+// Step 1 – redirect the browser to Discord's authorization page.
+// ?token=<player_token>  → link an existing account (from dashboard)
+// (no token)             → called during registration
+app.get('/api/discord/connect', (req, res) => {
+  if (!DISCORD_CLIENT_ID || !DISCORD_CLIENT_SECRET) return res.status(501).json({ error: 'Discord OAuth is not configured on this server. Set DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET environment variables.' });
+  const playerToken = req.query.token || '';
+  const mode   = (playerToken && playerSessions.has(playerToken)) ? 'player' : 'register';
+  const userId = mode === 'player' ? playerSessions.get(playerToken) : null;
+  const state  = crypto.randomBytes(16).toString('hex');
+  discordOAuthStates.set(state, { mode, userId, expires: Date.now() + 10 * 60 * 1000 });
+  const params = new URLSearchParams({
+    client_id: DISCORD_CLIENT_ID, redirect_uri: DISCORD_REDIRECT_URI,
+    response_type: 'code', scope: 'identify', state,
+  });
+  res.redirect(`https://discord.com/api/oauth2/authorize?${params}`);
+});
+
+// Step 2 – Discord sends the browser back here with ?code=&state=
+app.get('/api/discord/callback', async (req, res) => {
+  const { code, state, error } = req.query;
+  if (error) return res.redirect(`/register.html?discord_error=${encodeURIComponent(error)}`);
+  const stateData = discordOAuthStates.get(state);
+  discordOAuthStates.delete(state);
+  if (!stateData || Date.now() > stateData.expires) return res.redirect('/register.html?discord_error=expired');
+  try {
+    // Exchange code for access token
+    const tokenRes = await fetch('https://discord.com/api/oauth2/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: DISCORD_CLIENT_ID, client_secret: DISCORD_CLIENT_SECRET,
+        grant_type: 'authorization_code', code, redirect_uri: DISCORD_REDIRECT_URI,
+      }),
+    });
+    if (!tokenRes.ok) throw new Error('token_exchange_failed');
+    const tokenData = await tokenRes.json();
+    // Fetch the Discord user's profile
+    const userRes = await fetch('https://discord.com/api/users/@me', {
+      headers: { Authorization: `Bearer ${tokenData.access_token}` },
+    });
+    if (!userRes.ok) throw new Error('user_fetch_failed');
+    const du = await userRes.json();
+    const discord_id = du.id;
+    const discord    = du.username;
+
+    if (stateData.mode === 'player') {
+      // Update existing logged-in player
+      db.prepare('UPDATE users SET discord_id = ?, discord = ? WHERE id = ?').run(discord_id, discord, stateData.userId);
+      return res.redirect('/dashboard.html?discord_linked=1');
+    } else {
+      // Store for pickup by the registration page
+      const linkToken = crypto.randomBytes(16).toString('hex');
+      pendingDiscordLinks.set(linkToken, { discord_id, discord, expires: Date.now() + 10 * 60 * 1000 });
+      return res.redirect(`/register.html?discord_token=${linkToken}&discord_username=${encodeURIComponent(discord)}`);
+    }
+  } catch (err) {
+    const dest = stateData.mode === 'player' ? '/dashboard.html' : '/register.html';
+    return res.redirect(`${dest}?discord_error=${encodeURIComponent(err.message)}`);
+  }
+});
+
+// Step 3 – Registration page verifies the pending discord link token before submitting.
+// Token is consumed on first use to prevent reuse.
+app.get('/api/discord/pending', (req, res) => {
+  const { token } = req.query;
+  const pending = pendingDiscordLinks.get(token);
+  if (!pending || Date.now() > pending.expires) return res.status(404).json({ error: 'Invalid or expired Discord link token' });
+  pendingDiscordLinks.delete(token); // consume — one-time use
+  res.json({ discord_id: pending.discord_id, discord: pending.discord });
 });
 
 // ── Start ──────────────────────────────────────────────────────────────────
