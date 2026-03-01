@@ -23,6 +23,7 @@ db.exec(`
     password_hash TEXT NOT NULL,
     email TEXT,
     position TEXT,
+    ip_hash TEXT,
     created_at TEXT DEFAULT (datetime('now'))
   );
 
@@ -153,5 +154,6 @@ try { db.exec('ALTER TABLE game_player_stats ADD COLUMN penalty_shot_ga INTEGER 
 try { db.exec('ALTER TABLE game_player_stats ADD COLUMN breakaway_shots INTEGER DEFAULT 0'); } catch (_) {}
 try { db.exec('ALTER TABLE game_player_stats ADD COLUMN breakaway_saves INTEGER DEFAULT 0'); } catch (_) {}
 try { db.exec('ALTER TABLE users ADD COLUMN position TEXT'); } catch (_) {}
+try { db.exec('ALTER TABLE users ADD COLUMN ip_hash TEXT'); } catch (_) {}
 
 module.exports = db;

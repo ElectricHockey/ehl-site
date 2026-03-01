@@ -52,10 +52,21 @@ const logoUpload = multer({
 
 const apiLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 300, standardHeaders: true, legacyHeaders: false });
 
+app.set('trust proxy', 1); // trust first proxy so req.ip reflects real client IP
 app.use(cors());
 app.use(express.json());
 app.use('/api', apiLimiter);
 app.use(express.static(path.join(__dirname, 'public')));
+
+// ── IP helpers ─────────────────────────────────────────────────────────────
+
+// Hash the IP with a fixed HMAC secret so the raw address is never stored.
+// The secret is derived from ADMIN_PASSWORD at startup (set below), so we
+// define the helper after the constant is declared.
+function hashIp(ip) {
+  const secret = process.env.IP_HMAC_SECRET || process.env.ADMIN_PASSWORD || 'ehl-ip-secret';
+  return crypto.createHmac('sha256', secret).update(ip || '').digest('hex');
+}
 
 // ── Admin Auth ─────────────────────────────────────────────────────────────
 
