@@ -858,18 +858,104 @@ app.get('/api/stats/leaders', (req, res) => {
   const seasonId = req.query.season_id ? Number(req.query.season_id) : null;
   const sf = seasonId ? 'AND g.season_id = ?' : '';
   const p = seasonId ? [seasonId] : [];
+
+  // Current-team subquery: pick the rostered player record per name (prefer user-linked rows)
+  const rosterSub = `(
+    SELECT name, team_id FROM players
+    WHERE is_rostered = 1
+    GROUP BY name
+  ) rp`;
+
   const skaters = db.prepare(`
-    SELECT ${SKATER_SELECT}
-    FROM game_player_stats gps JOIN teams t ON gps.team_id = t.id JOIN games g ON gps.game_id = g.id
+    SELECT
+      gps.player_name AS name,
+      COALESCE(t.name, 'FA') AS team_name,
+      t.logo_url AS team_logo,
+      t.color1 AS team_color1,
+      t.color2 AS team_color2,
+      COALESCE(u.position, MAX(gps.position)) AS position,
+      COUNT(DISTINCT gps.game_id) AS gp,
+      ROUND(AVG(NULLIF(gps.overall_rating,0)),0)   AS overall_rating,
+      ROUND(AVG(NULLIF(gps.defensive_rating,0)),0) AS defensive_rating,
+      ROUND(AVG(NULLIF(gps.team_play_rating,0)),0) AS team_play_rating,
+      SUM(gps.goals) AS goals, SUM(gps.assists) AS assists,
+      SUM(gps.goals + gps.assists) AS points,
+      SUM(gps.plus_minus) AS plus_minus,
+      SUM(gps.shots) AS shots, SUM(gps.hits) AS hits,
+      SUM(gps.pim) AS pim, SUM(gps.pp_goals) AS pp_goals,
+      SUM(gps.sh_goals) AS sh_goals, SUM(gps.gwg) AS gwg,
+      SUM(gps.toi) AS toi,
+      CASE WHEN COUNT(DISTINCT gps.game_id) > 0
+        THEN ROUND(CAST(SUM(gps.possession_secs) AS REAL)/COUNT(DISTINCT gps.game_id),0)
+        ELSE 0 END AS apt,
+      SUM(gps.penalties_drawn) AS penalties_drawn,
+      SUM(gps.faceoff_wins) AS faceoff_wins,
+      SUM(gps.faceoff_wins + gps.faceoff_losses) AS faceoff_total,
+      SUM(gps.blocked_shots) AS blocked_shots,
+      CASE WHEN SUM(gps.faceoff_wins + gps.faceoff_losses) > 0
+        THEN ROUND(SUM(gps.faceoff_wins)*100.0/SUM(gps.faceoff_wins+gps.faceoff_losses),1)
+        ELSE NULL END AS fow_pct,
+      CASE WHEN SUM(gps.shots) > 0
+        THEN ROUND(SUM(gps.goals)*100.0/SUM(gps.shots),1)
+        ELSE NULL END AS shot_pct,
+      SUM(gps.deflections) AS deflections,
+      SUM(gps.interceptions) AS interceptions,
+      SUM(gps.giveaways) AS giveaways,
+      SUM(gps.takeaways) AS takeaways,
+      SUM(gps.pass_attempts) AS pass_attempts,
+      SUM(gps.pass_completions) AS pass_completions,
+      CASE WHEN SUM(gps.pass_attempts) > 0
+        THEN ROUND(SUM(gps.pass_completions)*100.0/SUM(gps.pass_attempts),1)
+        ELSE NULL END AS pass_pct_calc,
+      SUM(gps.hat_tricks) AS hat_tricks
+    FROM game_player_stats gps
+    JOIN games g ON gps.game_id = g.id
+    LEFT JOIN ${rosterSub} ON rp.name = gps.player_name
+    LEFT JOIN teams t ON t.id = rp.team_id
+    LEFT JOIN users u ON u.username = gps.player_name
     WHERE gps.position != 'G' AND g.status = 'complete' ${sf}
-    GROUP BY gps.player_name, gps.team_id ORDER BY points DESC, goals DESC
+    GROUP BY gps.player_name ORDER BY points DESC, goals DESC
   `).all(...p);
+
   const goalies = db.prepare(`
-    SELECT ${GOALIE_SELECT}
-    FROM game_player_stats gps JOIN teams t ON gps.team_id = t.id JOIN games g ON gps.game_id = g.id
+    SELECT
+      gps.player_name AS name,
+      COALESCE(t.name, 'FA') AS team_name,
+      t.logo_url AS team_logo,
+      t.color1 AS team_color1,
+      t.color2 AS team_color2,
+      COUNT(DISTINCT gps.game_id) AS gp,
+      SUM(gps.goals) AS goals, SUM(gps.assists) AS assists,
+      SUM(gps.shots_against) AS shots_against,
+      SUM(gps.goals_against) AS goals_against,
+      SUM(gps.saves) AS saves,
+      CASE WHEN SUM(gps.shots_against) > 0
+        THEN ROUND(CAST(SUM(gps.saves) AS REAL)/SUM(gps.shots_against),3)
+        ELSE NULL END AS save_pct,
+      CASE WHEN SUM(gps.toi) > 0
+        THEN ROUND(SUM(gps.goals_against)*3600.0/SUM(gps.toi),2)
+        ELSE NULL END AS gaa,
+      SUM(gps.toi) AS toi,
+      SUM(gps.shutouts) AS shutouts,
+      SUM(gps.penalty_shot_attempts) AS penalty_shot_attempts,
+      SUM(gps.penalty_shot_ga) AS penalty_shot_ga,
+      SUM(gps.breakaway_shots) AS breakaway_shots,
+      SUM(gps.breakaway_saves) AS breakaway_saves,
+      SUM(gps.goalie_wins) AS goalie_wins,
+      SUM(gps.goalie_losses) AS goalie_losses,
+      SUM(gps.goalie_otw) AS goalie_otw,
+      SUM(gps.goalie_otl) AS goalie_otl,
+      ROUND(AVG(NULLIF(gps.overall_rating,0)),0)   AS overall_rating,
+      ROUND(AVG(NULLIF(gps.defensive_rating,0)),0) AS defensive_rating,
+      ROUND(AVG(NULLIF(gps.team_play_rating,0)),0) AS team_play_rating
+    FROM game_player_stats gps
+    JOIN games g ON gps.game_id = g.id
+    LEFT JOIN ${rosterSub} ON rp.name = gps.player_name
+    LEFT JOIN teams t ON t.id = rp.team_id
     WHERE gps.position = 'G' AND g.status = 'complete' ${sf}
-    GROUP BY gps.player_name, gps.team_id ORDER BY save_pct DESC
+    GROUP BY gps.player_name ORDER BY save_pct DESC
   `).all(...p);
+
   res.json({ skaters, goalies });
 });
 

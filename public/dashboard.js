@@ -44,6 +44,7 @@ async function loadDashboard() {
         <p><strong>Gamertag:</strong> ${user.username}</p>
         <p><strong>Platform:</strong> ${user.platform === 'psn' ? 'PlayStation Network' : 'Xbox'}</p>
         <p><strong>Position:</strong> ${user.position || '—'}</p>
+        ${user.discord ? `<p><strong>Discord:</strong> ${user.discord}</p>` : ''}
         ${user.email ? `<p><strong>Email:</strong> ${user.email}</p>` : ''}
         <p><strong>Registered:</strong> ${new Date(user.created_at).toLocaleDateString()}</p>
         ${player

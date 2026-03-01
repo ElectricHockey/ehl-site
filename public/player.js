@@ -352,6 +352,9 @@ async function loadPlayer() {
     const platformLabel = player?.platform
       ? `<span class="player-badge-platform">${player.platform === 'psn' ? '🎮 PSN' : '🎮 Xbox'}</span>`
       : '';
+    const discordLabel = player?.discord
+      ? `<span class="player-badge-platform" style="color:#5865f2;border-color:#5865f2;background:rgba(88,101,242,0.12);">⊟ ${player.discord}</span>`
+      : '';
 
     // Team badge
     let teamBadge = '<span class="player-badge-fa">Free Agent</span>';
@@ -371,6 +374,7 @@ async function loadPlayer() {
             <span class="player-badge-pos">${isGoalie ? '🥅 Goalie' : `⛸️ ${pos}`}</span>
             ${teamBadge}
             ${platformLabel}
+            ${discordLabel}
           </div>
         </div>
       </div>

@@ -54,14 +54,16 @@ document.getElementById('register-form').addEventListener('submit', async e => {
   const platform = document.getElementById('reg-platform').value;
   const email    = document.getElementById('reg-email').value.trim();
   const position = document.getElementById('reg-position').value;
+  const discord  = document.getElementById('reg-discord').value.trim();
   const password = document.getElementById('reg-password').value;
   const confirm  = document.getElementById('reg-confirm').value;
   if (!position) { err.textContent = 'Please select your position'; err.style.display = ''; return; }
+  if (!discord) { err.textContent = 'Discord username is required'; err.style.display = ''; return; }
   if (password !== confirm) { err.textContent = 'Passwords do not match'; err.style.display = ''; return; }
   try {
     const res = await fetch(`${API}/players/register`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, platform, position, password, email: email || undefined }),
+      body: JSON.stringify({ username, platform, position, password, discord, email: email || undefined }),
     });
     const data = await res.json();
     if (!res.ok) { err.textContent = data.error || 'Registration failed'; err.style.display = ''; return; }

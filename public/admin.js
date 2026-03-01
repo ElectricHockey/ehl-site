@@ -369,11 +369,12 @@ async function loadRegPlayers() {
 
   const tbody = document.querySelector('#reg-players-table tbody');
   tbody.innerHTML = users.length === 0
-    ? '<tr><td colspan="7" style="color:#8b949e">No registered players yet.</td></tr>'
+    ? '<tr><td colspan="8" style="color:#8b949e">No registered players yet.</td></tr>'
     : users.map(u => `<tr>
         <td><strong>${u.username}</strong></td>
         <td>${u.position || '—'}</td>
         <td>${u.platform === 'psn' ? 'PlayStation' : 'Xbox'}</td>
+        <td>${u.discord ? `<span style="color:#5865f2;">⊟ ${u.discord}</span>` : '<span style="color:#8b949e;">—</span>'}</td>
         <td>${u.team_name || '—'}</td>
         <td>${u.is_rostered ? '<span style="color:#3fb950;">✓ Rostered</span>' : '<span style="color:#8b949e;">Free Agent</span>'}</td>
         <td style="white-space:nowrap;">
@@ -387,7 +388,8 @@ async function loadRegPlayers() {
             data-username="${u.username.replace(/"/g,'&quot;')}"
             data-platform="${u.platform}"
             data-position="${u.position||''}"
-            data-email="${(u.email||'').replace(/"/g,'&quot;')}">Edit</button>
+            data-email="${(u.email||'').replace(/"/g,'&quot;')}"
+            data-discord="${(u.discord||'').replace(/"/g,'&quot;')}">Edit</button>
         </td>
       </tr>`).join('');
 
@@ -419,18 +421,19 @@ async function assignOwner(userId) {
 document.addEventListener('click', e => {
   const btn = e.target.closest('[data-action="edit-player"]');
   if (!btn) return;
-  const { uid, username, platform, position, email } = btn.dataset;
-  openEditModal(Number(uid), username, platform, position, email);
+  const { uid, username, platform, position, email, discord } = btn.dataset;
+  openEditModal(Number(uid), username, platform, position, email, discord || '');
 });
 
 // ── Edit player modal ─────────────────────────────────────────────────────
 
-function openEditModal(id, username, platform, position, email) {
+function openEditModal(id, username, platform, position, email, discord) {
   document.getElementById('ep-id').value = id;
   document.getElementById('ep-username').value = username;
   document.getElementById('ep-platform').value = platform;
   document.getElementById('ep-position').value = position;
   document.getElementById('ep-email').value = email;
+  document.getElementById('ep-discord').value = discord || '';
   document.getElementById('ep-error').style.display = 'none';
   const overlay = document.getElementById('edit-player-overlay');
   overlay.style.display = 'flex';
@@ -446,12 +449,13 @@ async function savePlayerEdit() {
   const platform = document.getElementById('ep-platform').value;
   const position = document.getElementById('ep-position').value;
   const email    = document.getElementById('ep-email').value.trim();
+  const discord  = document.getElementById('ep-discord').value.trim();
   const errEl    = document.getElementById('ep-error');
   errEl.style.display = 'none';
   if (!username) { errEl.textContent = 'Gamertag cannot be empty'; errEl.style.display = ''; return; }
   const res = await fetch(`${API}/users/${id}`, {
     method: 'PATCH', headers: adminJsonHeaders(),
-    body: JSON.stringify({ username, platform, position: position || null, email: email || null }),
+    body: JSON.stringify({ username, platform, position: position || null, email: email || null, discord: discord || null }),
   });
   if (!res.ok) {
     const e = await res.json();
