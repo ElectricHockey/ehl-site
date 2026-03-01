@@ -41,6 +41,17 @@
       object-fit: contain; border-radius: 4px;
       vertical-align: middle;
     }
+    .score-card-link {
+      display: flex; text-decoration: none; color: inherit;
+      cursor: pointer; transition: border-color 0.15s, background 0.15s;
+    }
+    .score-card-link:hover { border-color: #388bfd; background: #1c2333; }
+    .score-view-stats {
+      font-size: 0.78rem; color: #388bfd; margin-left: 0.75rem;
+      align-self: center; white-space: nowrap; opacity: 0;
+      transition: opacity 0.15s;
+    }
+    .score-card-link:hover .score-view-stats { opacity: 1; }
   </style>
 </head>
 <body>
