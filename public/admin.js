@@ -422,12 +422,12 @@ document.addEventListener('click', e => {
   const btn = e.target.closest('[data-action="edit-player"]');
   if (!btn) return;
   const { uid, username, platform, position, email, discord } = btn.dataset;
-  openEditModal(Number(uid), username, platform, position, email, discord || '');
+  openEditModal({ id: Number(uid), username, platform, position, email, discord: discord || '' });
 });
 
 // ── Edit player modal ─────────────────────────────────────────────────────
 
-function openEditModal(id, username, platform, position, email, discord) {
+function openEditModal({ id, username, platform, position, email, discord }) {
   document.getElementById('ep-id').value = id;
   document.getElementById('ep-username').value = username;
   document.getElementById('ep-platform').value = platform;

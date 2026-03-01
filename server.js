@@ -859,10 +859,15 @@ app.get('/api/stats/leaders', (req, res) => {
   const sf = seasonId ? 'AND g.season_id = ?' : '';
   const p = seasonId ? [seasonId] : [];
 
-  // Current-team subquery: pick the rostered player record per name (prefer user-linked rows)
+  // Current-team subquery: pick the rostered player record per name (prefer user-linked row, then highest id)
   const rosterSub = `(
     SELECT name, team_id FROM players
-    WHERE is_rostered = 1
+    WHERE is_rostered = 1 AND id = (
+      SELECT id FROM players p2
+      WHERE p2.name = players.name AND p2.is_rostered = 1
+      ORDER BY (p2.user_id IS NOT NULL) DESC, p2.id DESC
+      LIMIT 1
+    )
     GROUP BY name
   ) rp`;
 

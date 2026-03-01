@@ -278,10 +278,10 @@ tbody tr.team-row:hover {
 /* ── Notification bell ────────────────────────────────────── */
 #notif-bell-wrap {
   position: relative;
-  margin-left: auto;
   display: flex;
   align-items: center;
 }
+.nav-portal { margin-left: auto; }
 #notif-bell-btn {
   background: none;
   border: none;
