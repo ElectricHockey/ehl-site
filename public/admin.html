@@ -102,6 +102,14 @@
             <label for="team-ea-id">EA Club ID</label>
             <input type="number" id="team-ea-id" placeholder="e.g. 1055" min="1" style="width:110px;" />
           </div>
+          <div class="form-group">
+            <label for="team-league-type">League Type</label>
+            <select id="team-league-type">
+              <option value="">— General —</option>
+              <option value="threes">3's (3v3, max 12)</option>
+              <option value="sixes">6's (6v6, max 20)</option>
+            </select>
+          </div>
           <div class="form-group" style="flex-direction:column;">
             <label for="team-color1">Primary Color <span style="color:#8b949e;font-size:0.8rem;">(gradient start)</span></label>
             <input type="color" id="team-color1" value="#1e3a5f" style="width:56px;height:32px;padding:2px;border-radius:4px;border:1px solid #30363d;background:none;cursor:pointer;" />
@@ -119,7 +127,15 @@
         </form>
       </div>
       <table id="teams-table">
-        <thead><tr><th>Logo</th><th>Colors</th><th>Name</th><th>Conference</th><th>Division</th><th>EA Club ID</th><th>Action</th></tr></thead>
+        <thead><tr><th>Logo</th><th>Colors</th><th>Name</th><th>Type</th><th>Conference</th><th>Division</th><th>EA Club ID</th><th>Owner</th><th>Action</th></tr></thead>
+        <tbody></tbody>
+      </table>
+
+      <!-- ── Registered Players ──────────────────────────────── -->
+      <h2>Registered Players <span id="unrostered-badge" style="display:none;background:#4b1f1f;color:#f85149;font-size:0.75rem;border-radius:10px;padding:0.15rem 0.55rem;font-weight:600;margin-left:0.4rem;"></span></h2>
+      <div id="unrostered-warning" style="display:none;background:#2d1b00;border:1px solid #9e6a03;border-radius:8px;padding:0.75rem 1rem;margin-bottom:1rem;color:#e3b341;font-size:0.88rem;"></div>
+      <table id="reg-players-table">
+        <thead><tr><th>Gamertag</th><th>Platform</th><th>Team</th><th>Rostered</th><th>Assign Owner</th></tr></thead>
         <tbody></tbody>
       </table>
 

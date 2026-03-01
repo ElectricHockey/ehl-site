@@ -49,6 +49,7 @@ function showAdminPanel() {
   loadTeams();
   loadPlayers();
   loadGames();
+  loadRegPlayers();
 }
 
 document.getElementById('login-form').addEventListener('submit', async e => {
@@ -135,8 +136,9 @@ async function loadTeams() {
   const res = await fetch(`${API}/teams`);
   const teams = await res.json();
   const tbody = document.querySelector('#teams-table tbody');
+  const ltLabel = lt => lt === 'threes' ? '3v3' : lt === 'sixes' ? '6v6' : '—';
   tbody.innerHTML = teams.length === 0
-    ? '<tr><td colspan="7" style="color:#8b949e">No teams yet.</td></tr>'
+    ? '<tr><td colspan="9" style="color:#8b949e">No teams yet.</td></tr>'
     : teams.map(t => `
       <tr>
         <td>${t.logo_url ? `<img src="${t.logo_url}" class="team-logo-sm" alt="${t.name}" />` : '—'}</td>
@@ -145,6 +147,7 @@ async function loadTeams() {
           <button class="btn-secondary" style="margin-left:0.4rem;padding:0.2rem 0.5rem;font-size:0.8rem;" onclick="editColors(${t.id},'${t.color1||''}','${t.color2||''}')">Colors</button>
         </td>
         <td>${t.name}</td>
+        <td>${ltLabel(t.league_type)}</td>
         <td>${t.conference || '—'}</td>
         <td>${t.division || '—'}</td>
         <td>
@@ -152,6 +155,7 @@ async function loadTeams() {
           <button class="btn-secondary" style="margin-left:0.4rem;padding:0.2rem 0.5rem;font-size:0.8rem;" onclick="setEaId(${t.id})">Edit</button>
           <button class="btn-secondary" style="margin-left:0.3rem;padding:0.2rem 0.5rem;font-size:0.8rem;" onclick="changeLogo(${t.id})">Logo</button>
         </td>
+        <td id="owner-cell-${t.id}" style="font-size:0.82rem;color:#8b949e;">—</td>
         <td><button class="btn-danger" onclick="deleteTeam(${t.id})">Delete</button></td>
       </tr>`).join('');
 
@@ -170,6 +174,7 @@ document.getElementById('team-form').addEventListener('submit', async e => {
   fd.append('division', document.getElementById('team-division').value.trim());
   const eaId = document.getElementById('team-ea-id').value;
   if (eaId) fd.append('ea_club_id', eaId);
+  fd.append('league_type', document.getElementById('team-league-type').value);
   fd.append('color1', document.getElementById('team-color1').value);
   fd.append('color2', document.getElementById('team-color2').value);
   const logoFile = document.getElementById('team-logo').files[0];
@@ -177,7 +182,7 @@ document.getElementById('team-form').addEventListener('submit', async e => {
 
   const res = await fetch(`${API}/teams`, {
     method: 'POST',
-    headers: adminHeaders(),  // no Content-Type – let browser set multipart boundary
+    headers: adminHeaders(),
     body: fd,
   });
   if (res.ok) { e.target.reset(); document.getElementById('logo-preview-new').style.display = 'none'; await loadTeams(); await loadGames(); }
@@ -187,7 +192,7 @@ document.getElementById('team-form').addEventListener('submit', async e => {
 async function deleteTeam(id) {
   if (!confirm('Delete this team? Related players and games will also be removed.')) return;
   await fetch(`${API}/teams/${id}`, { method: 'DELETE', headers: adminHeaders() });
-  await loadTeams(); await loadPlayers(); await loadGames();
+  await loadTeams(); await loadPlayers(); await loadGames(); await loadRegPlayers();
 }
 
 async function setEaId(id) {
@@ -320,6 +325,75 @@ async function deleteGame(id) {
   if (!confirm('Delete this game?')) return;
   await fetch(`${API}/games/${id}`, { method: 'DELETE', headers: adminHeaders() });
   await loadGames();
+}
+
+// ── Registered Players & Unrostered Warning ───────────────────────────────
+
+async function loadRegPlayers() {
+  const [usersRes, unrRes] = await Promise.all([
+    fetch(`${API}/users`, { headers: adminHeaders() }),
+    fetch(`${API}/admin/unrostered-stats`, { headers: adminHeaders() }),
+  ]);
+  if (!usersRes.ok) return;
+  const users = await usersRes.json();
+  const unrostered = unrRes.ok ? await unrRes.json() : [];
+
+  // Unrostered warning
+  const badge = document.getElementById('unrostered-badge');
+  const warning = document.getElementById('unrostered-warning');
+  if (unrostered.length > 0) {
+    badge.textContent = `⚠ ${unrostered.length} unrostered`;
+    badge.style.display = '';
+    warning.style.display = '';
+    warning.innerHTML = `<strong>⚠ Stats recorded for unrostered players:</strong><br>` +
+      unrostered.map(r => `<span style="margin-right:0.75rem;">${r.player_name} (${r.team_name}, ${r.game_count} game${r.game_count !== 1 ? 's' : ''})</span>`).join('');
+  } else {
+    badge.style.display = 'none';
+    warning.style.display = 'none';
+  }
+
+  // Load teams for the owner assignment selector
+  const teamsRes = await fetch(`${API}/teams`);
+  const teams = teamsRes.ok ? await teamsRes.json() : [];
+  const teamOpts = '<option value="">— Select team —</option>' + teams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+
+  const tbody = document.querySelector('#reg-players-table tbody');
+  tbody.innerHTML = users.length === 0
+    ? '<tr><td colspan="5" style="color:#8b949e">No registered players yet.</td></tr>'
+    : users.map(u => `<tr>
+        <td><strong>${u.username}</strong></td>
+        <td>${u.platform === 'psn' ? 'PlayStation' : 'Xbox'}</td>
+        <td>${u.team_name || '—'}</td>
+        <td>${u.is_rostered ? '<span style="color:#3fb950;">✓ Rostered</span>' : '<span style="color:#8b949e;">Free Agent</span>'}</td>
+        <td style="white-space:nowrap;">
+          <select id="owner-team-${u.id}" style="font-size:0.8rem;padding:0.2rem 0.4rem;background:#21262d;border:1px solid #30363d;color:#c9d1d9;border-radius:4px;">${teamOpts}</select>
+          <button class="btn-secondary" style="margin-left:0.3rem;font-size:0.78rem;padding:0.2rem 0.4rem;" onclick="assignOwner(${u.id})">Set Owner</button>
+        </td>
+      </tr>`).join('');
+
+  // Populate owner cells in teams table
+  for (const t of teams) {
+    const cell = document.getElementById(`owner-cell-${t.id}`);
+    if (!cell) continue;
+    // fetch team staff
+    const sr = await fetch(`${API}/teams/${t.id}/stats`).catch(() => null);
+    if (!sr || !sr.ok) continue;
+    const sd = await sr.json().catch(() => null);
+    if (!sd) continue;
+    const owner = sd.staff && sd.staff.find(s => s.role === 'owner');
+    cell.textContent = owner ? `👑 ${owner.username}` : '—';
+  }
+}
+
+async function assignOwner(userId) {
+  const sel = document.getElementById(`owner-team-${userId}`);
+  const teamId = sel.value;
+  if (!teamId) { alert('Please select a team first.'); return; }
+  const res = await fetch(`${API}/teams/${teamId}/owner`, {
+    method: 'POST', headers: adminJsonHeaders(), body: JSON.stringify({ user_id: userId }),
+  });
+  if (!res.ok) { const e = await res.json(); alert(e.error || 'Failed'); return; }
+  await loadRegPlayers();
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────

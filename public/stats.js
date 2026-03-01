@@ -1,18 +1,15 @@
 const API = '/api';
 
-let skatersData = [];
-let goaliesData = [];
+let skatersData = [], goaliesData = [];
 let skaterSort = { key: 'points', dir: 'desc' };
 let goalieSort  = { key: 'save_pct', dir: 'desc' };
 
-function formatToi(seconds) {
-  if (!seconds) return '0:00';
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  return `${m}:${String(s).padStart(2, '0')}`;
+function formatToi(s) {
+  if (!s) return '0:00';
+  const m = Math.floor(s / 60), sec = s % 60;
+  return `${m}:${String(sec).padStart(2,'0')}`;
 }
 
-// Convert hex to "r,g,b" string for CSS rgba() with a custom property
 function hexToRgbStr(hex) {
   if (!hex || hex.length < 4) return null;
   let h = hex.replace('#', '');
@@ -20,7 +17,6 @@ function hexToRgbStr(hex) {
   h = h.padEnd(6, '0');
   return `${parseInt(h.slice(0,2),16)},${parseInt(h.slice(2,4),16)},${parseInt(h.slice(4,6),16)}`;
 }
-
 function playerRowAttrs(p) {
   const c1 = hexToRgbStr(p.team_color1);
   if (!c1) return '';
@@ -35,139 +31,135 @@ function switchTab(tab) {
   document.querySelector(`.tab-btn[onclick="switchTab('${tab}')"]`).classList.add('active');
 }
 
-// ── Sort helpers ──────────────────────────────────────────────────────────
-
 function sortData(data, key, dir) {
   return [...data].sort((a, b) => {
-    const av = a[key] ?? -Infinity;
-    const bv = b[key] ?? -Infinity;
+    const av = a[key] ?? -Infinity, bv = b[key] ?? -Infinity;
     return dir === 'asc' ? av - bv : bv - av;
   });
 }
-
-function thClass(key, currentSort) {
-  if (currentSort.key !== key) return 'sortable-th';
-  return `sortable-th ${currentSort.dir === 'asc' ? 'sort-asc' : 'sort-desc'}`;
+function thClass(key, cur) {
+  if (cur.key !== key) return 'sortable-th';
+  return `sortable-th ${cur.dir === 'asc' ? 'sort-asc' : 'sort-desc'}`;
 }
-
-// ── Skaters ───────────────────────────────────────────────────────────────
+function fmt1(v) { return v !== null && v !== undefined ? Number(v).toFixed(1) : '–'; }
 
 function renderSkaters() {
   const root = document.getElementById('skaters-root');
-  if (skatersData.length === 0) {
-    root.innerHTML = '<p style="color:#8b949e">No skater stats yet. Complete games will appear here.</p>';
-    return;
-  }
-
+  if (skatersData.length === 0) { root.innerHTML = '<p style="color:#8b949e">No skater stats yet.</p>'; return; }
   const sorted = sortData(skatersData, skaterSort.key, skaterSort.dir);
-  const s = key => thClass(key, skaterSort);
-
-  root.innerHTML = `
-    <table id="skaters-table">
-      <thead><tr>
-        <th>Player</th>
-        <th>Team</th>
-        <th>Pos</th>
-        <th class="${s('gp')}"   onclick="sortSkaters('gp')">GP</th>
-        <th class="${s('goals')}" onclick="sortSkaters('goals')">G</th>
-        <th class="${s('assists')}" onclick="sortSkaters('assists')">A</th>
-        <th class="${s('points')}" onclick="sortSkaters('points')">PTS</th>
-        <th class="${s('plus_minus')}" onclick="sortSkaters('plus_minus')">+/-</th>
-        <th class="${s('shots')}" onclick="sortSkaters('shots')">SOG</th>
-        <th class="${s('hits')}" onclick="sortSkaters('hits')">HIT</th>
-        <th class="${s('blocked_shots')}" onclick="sortSkaters('blocked_shots')">BS</th>
-        <th class="${s('takeaways')}" onclick="sortSkaters('takeaways')">TKW</th>
-        <th class="${s('giveaways')}" onclick="sortSkaters('giveaways')">GVW</th>
-        <th class="${s('pp_goals')}" onclick="sortSkaters('pp_goals')">PPG</th>
-        <th class="${s('sh_goals')}" onclick="sortSkaters('sh_goals')">SHG</th>
-        <th class="${s('pim')}" onclick="sortSkaters('pim')">PIM</th>
-        <th class="${s('toi')}" onclick="sortSkaters('toi')">TOI</th>
-      </tr></thead>
-      <tbody>
-        ${sorted.map(p => `<tr${playerRowAttrs(p)}>
-          <td>${p.name}</td>
-          <td>${p.team_logo ? `<img src="${p.team_logo}" style="width:20px;height:20px;object-fit:contain;vertical-align:middle;margin-right:0.3rem;border-radius:3px;" />` : ''}${p.team_name}</td>
-          <td>${p.position || '–'}</td>
-          <td>${p.gp}</td>
-          <td>${p.goals}</td>
-          <td>${p.assists}</td>
-          <td><strong>${p.points}</strong></td>
-          <td>${p.plus_minus >= 0 ? '+' : ''}${p.plus_minus}</td>
-          <td>${p.shots}</td>
-          <td>${p.hits}</td>
-          <td>${p.blocked_shots}</td>
-          <td>${p.takeaways}</td>
-          <td>${p.giveaways}</td>
-          <td>${p.pp_goals}</td>
-          <td>${p.sh_goals}</td>
-          <td>${p.pim}</td>
-          <td>${formatToi(p.toi)}</td>
-        </tr>`).join('')}
-      </tbody>
-    </table>`;
+  const s = k => thClass(k, skaterSort);
+  root.innerHTML = `<div style="overflow-x:auto;"><table id="skaters-table">
+    <thead><tr>
+      <th>Player</th><th>Team</th><th>Pos</th>
+      <th class="${s('gp')}" onclick="sortSkaters('gp')">GP</th>
+      <th class="${s('goals')}" onclick="sortSkaters('goals')">G</th>
+      <th class="${s('assists')}" onclick="sortSkaters('assists')">A</th>
+      <th class="${s('points')}" onclick="sortSkaters('points')">PTS</th>
+      <th class="${s('plus_minus')}" onclick="sortSkaters('plus_minus')">+/-</th>
+      <th class="${s('shots')}" onclick="sortSkaters('shots')">SOG</th>
+      <th class="${s('hits')}" onclick="sortSkaters('hits')">HITS</th>
+      <th class="${s('blocked_shots')}" onclick="sortSkaters('blocked_shots')">BS</th>
+      <th class="${s('takeaways')}" onclick="sortSkaters('takeaways')">TKA</th>
+      <th class="${s('giveaways')}" onclick="sortSkaters('giveaways')">GVA</th>
+      <th class="${s('pp_goals')}" onclick="sortSkaters('pp_goals')">PPG</th>
+      <th class="${s('sh_goals')}" onclick="sortSkaters('sh_goals')">SHG</th>
+      <th class="${s('gwg')}" onclick="sortSkaters('gwg')">GWG</th>
+      <th class="${s('pim')}" onclick="sortSkaters('pim')">PIM</th>
+      <th class="${s('penalties_drawn')}" onclick="sortSkaters('penalties_drawn')">PD</th>
+      <th class="${s('faceoff_wins')}" onclick="sortSkaters('faceoff_wins')">FOW</th>
+      <th class="${s('faceoff_total')}" onclick="sortSkaters('faceoff_total')">FOT</th>
+      <th class="${s('fow_pct')}" onclick="sortSkaters('fow_pct')">FOW%</th>
+      <th class="${s('shot_pct')}" onclick="sortSkaters('shot_pct')">S%</th>
+      <th class="${s('deflections')}" onclick="sortSkaters('deflections')">DLF</th>
+      <th class="${s('interceptions')}" onclick="sortSkaters('interceptions')">INT</th>
+      <th class="${s('pass_attempts')}" onclick="sortSkaters('pass_attempts')">PA</th>
+      <th class="${s('pass_pct_calc')}" onclick="sortSkaters('pass_pct_calc')">PC%</th>
+      <th class="${s('hat_tricks')}" onclick="sortSkaters('hat_tricks')">HT</th>
+      <th class="${s('apt')}" onclick="sortSkaters('apt')">APT</th>
+      <th class="${s('toi')}" onclick="sortSkaters('toi')">TOI</th>
+      <th class="${s('overall_rating')}" onclick="sortSkaters('overall_rating')">OR</th>
+      <th class="${s('defensive_rating')}" onclick="sortSkaters('defensive_rating')">DR</th>
+      <th class="${s('team_play_rating')}" onclick="sortSkaters('team_play_rating')">TPR</th>
+    </tr></thead>
+    <tbody>${sorted.map(p => `<tr${playerRowAttrs(p)}>
+      <td>${p.name}</td>
+      <td>${p.team_logo ? `<img src="${p.team_logo}" style="width:18px;height:18px;object-fit:contain;vertical-align:middle;margin-right:0.25rem;border-radius:2px;" />` : ''}${p.team_name}</td>
+      <td>${p.position||'–'}</td>
+      <td>${p.gp}</td><td>${p.goals}</td><td>${p.assists}</td>
+      <td><strong>${p.points}</strong></td>
+      <td>${p.plus_minus >= 0 ? '+' : ''}${p.plus_minus}</td>
+      <td>${p.shots}</td><td>${p.hits}</td><td>${p.blocked_shots}</td>
+      <td>${p.takeaways}</td><td>${p.giveaways}</td>
+      <td>${p.pp_goals}</td><td>${p.sh_goals}</td><td>${p.gwg||0}</td>
+      <td>${p.pim}</td><td>${p.penalties_drawn||0}</td>
+      <td>${p.faceoff_wins||0}</td><td>${p.faceoff_total||0}</td>
+      <td>${fmt1(p.fow_pct)}%</td><td>${fmt1(p.shot_pct)}%</td>
+      <td>${p.deflections||0}</td><td>${p.interceptions||0}</td>
+      <td>${p.pass_attempts||0}</td>
+      <td>${p.pass_pct_calc !== null && p.pass_pct_calc !== undefined ? fmt1(p.pass_pct_calc)+'%' : '–'}</td>
+      <td>${p.hat_tricks||0}</td>
+      <td>${formatToi(p.apt)}</td><td>${formatToi(p.toi)}</td>
+      <td>${p.overall_rating||'–'}</td><td>${p.defensive_rating||'–'}</td><td>${p.team_play_rating||'–'}</td>
+    </tr>`).join('')}</tbody>
+  </table></div>`;
 }
 
 function sortSkaters(key) {
-  if (skaterSort.key === key) {
-    skaterSort.dir = skaterSort.dir === 'desc' ? 'asc' : 'desc';
-  } else {
-    skaterSort = { key, dir: 'desc' };
-  }
+  skaterSort = skaterSort.key === key ? { key, dir: skaterSort.dir === 'desc' ? 'asc' : 'desc' } : { key, dir: 'desc' };
   renderSkaters();
 }
 
-// ── Goalies ───────────────────────────────────────────────────────────────
-
 function renderGoalies() {
   const root = document.getElementById('goalies-root');
-  if (goaliesData.length === 0) {
-    root.innerHTML = '<p style="color:#8b949e">No goalie stats yet. Complete games will appear here.</p>';
-    return;
-  }
-
+  if (goaliesData.length === 0) { root.innerHTML = '<p style="color:#8b949e">No goalie stats yet.</p>'; return; }
   const sorted = sortData(goaliesData, goalieSort.key, goalieSort.dir);
-  const s = key => thClass(key, goalieSort);
-
-  root.innerHTML = `
-    <table id="goalies-table">
-      <thead><tr>
-        <th>Player</th>
-        <th>Team</th>
-        <th class="${s('gp')}" onclick="sortGoalies('gp')">GP</th>
-        <th class="${s('saves')}" onclick="sortGoalies('saves')">SV</th>
-        <th class="${s('goals_against')}" onclick="sortGoalies('goals_against')">GA</th>
-        <th class="${s('shots_against')}" onclick="sortGoalies('shots_against')">SA</th>
-        <th class="${s('save_pct')}" onclick="sortGoalies('save_pct')">SV%</th>
-      </tr></thead>
-      <tbody>
-        ${sorted.map(p => {
-          const svp = p.save_pct !== null && p.save_pct !== undefined
-            ? (p.save_pct < 1 ? (p.save_pct * 100).toFixed(1) : p.save_pct.toFixed(1)) + '%'
-            : '–';
-          return `<tr${playerRowAttrs(p)}>
-            <td>${p.name}</td>
-            <td>${p.team_logo ? `<img src="${p.team_logo}" style="width:20px;height:20px;object-fit:contain;vertical-align:middle;margin-right:0.3rem;border-radius:3px;" />` : ''}${p.team_name}</td>
-            <td>${p.gp}</td>
-            <td>${p.saves}</td>
-            <td>${p.goals_against}</td>
-            <td>${p.shots_against}</td>
-            <td><strong>${svp}</strong></td>
-          </tr>`;
-        }).join('')}
-      </tbody>
-    </table>`;
+  const s = k => thClass(k, goalieSort);
+  root.innerHTML = `<div style="overflow-x:auto;"><table id="goalies-table">
+    <thead><tr>
+      <th>Player</th><th>Team</th>
+      <th class="${s('gp')}" onclick="sortGoalies('gp')">GP</th>
+      <th class="${s('goals')}" onclick="sortGoalies('goals')">G</th>
+      <th class="${s('assists')}" onclick="sortGoalies('assists')">A</th>
+      <th class="${s('shots_against')}" onclick="sortGoalies('shots_against')">SA</th>
+      <th class="${s('goals_against')}" onclick="sortGoalies('goals_against')">GA</th>
+      <th class="${s('save_pct')}" onclick="sortGoalies('save_pct')">SV%</th>
+      <th class="${s('gaa')}" onclick="sortGoalies('gaa')">GAA</th>
+      <th class="${s('toi')}" onclick="sortGoalies('toi')">TOI</th>
+      <th class="${s('shutouts')}" onclick="sortGoalies('shutouts')">SO</th>
+      <th class="${s('penalty_shot_attempts')}" onclick="sortGoalies('penalty_shot_attempts')">PSA</th>
+      <th class="${s('penalty_shot_ga')}" onclick="sortGoalies('penalty_shot_ga')">PSGA</th>
+      <th class="${s('breakaway_shots')}" onclick="sortGoalies('breakaway_shots')">BKSA</th>
+      <th class="${s('breakaway_saves')}" onclick="sortGoalies('breakaway_saves')">BKSV</th>
+      <th class="${s('goalie_wins')}" onclick="sortGoalies('goalie_wins')">W</th>
+      <th class="${s('goalie_losses')}" onclick="sortGoalies('goalie_losses')">L</th>
+      <th class="${s('goalie_otw')}" onclick="sortGoalies('goalie_otw')">OTW</th>
+      <th class="${s('goalie_otl')}" onclick="sortGoalies('goalie_otl')">OTL</th>
+    </tr></thead>
+    <tbody>${sorted.map(p => {
+      const svp = p.save_pct !== null && p.save_pct !== undefined
+        ? (p.save_pct < 1 ? (p.save_pct * 100).toFixed(1) : Number(p.save_pct).toFixed(1)) + '%' : '–';
+      return `<tr${playerRowAttrs(p)}>
+        <td>${p.name}</td>
+        <td>${p.team_logo ? `<img src="${p.team_logo}" style="width:18px;height:18px;object-fit:contain;vertical-align:middle;margin-right:0.25rem;border-radius:2px;" />` : ''}${p.team_name}</td>
+        <td>${p.gp}</td><td>${p.goals||0}</td><td>${p.assists||0}</td>
+        <td>${p.shots_against}</td><td>${p.goals_against}</td>
+        <td><strong>${svp}</strong></td>
+        <td>${p.gaa !== null && p.gaa !== undefined ? Number(p.gaa).toFixed(2) : '–'}</td>
+        <td>${formatToi(p.toi)}</td>
+        <td>${p.shutouts||0}</td>
+        <td>${p.penalty_shot_attempts||0}</td><td>${p.penalty_shot_ga||0}</td>
+        <td>${p.breakaway_shots||0}</td><td>${p.breakaway_saves||0}</td>
+        <td>${p.goalie_wins||0}</td><td>${p.goalie_losses||0}</td>
+        <td>${p.goalie_otw||0}</td><td>${p.goalie_otl||0}</td>
+      </tr>`;
+    }).join('')}</tbody>
+  </table></div>`;
 }
 
 function sortGoalies(key) {
-  if (goalieSort.key === key) {
-    goalieSort.dir = goalieSort.dir === 'desc' ? 'asc' : 'desc';
-  } else {
-    goalieSort = { key, dir: 'desc' };
-  }
+  goalieSort = goalieSort.key === key ? { key, dir: goalieSort.dir === 'desc' ? 'asc' : 'desc' } : { key, dir: 'desc' };
   renderGoalies();
 }
-
-// ── Init ───────────────────────────────────────────────────────────────────
 
 async function loadStats() {
   try {
@@ -187,8 +179,6 @@ async function loadStats() {
 }
 
 loadStats();
-
-// Wire season selector after SeasonSelector is loaded
 if (typeof SeasonSelector !== 'undefined') {
   (async () => {
     await SeasonSelector.init('season-selector-container');

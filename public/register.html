@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Register / Login – EHL</title>
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    .auth-card {
+      max-width: 420px; margin: 2.5rem auto;
+      background: #161b22; border: 1px solid #30363d;
+      border-radius: 10px; padding: 2rem 2.5rem;
+    }
+    .auth-tabs { display: flex; gap: 0; margin-bottom: 1.5rem; border-bottom: 1px solid #30363d; }
+    .auth-tab {
+      padding: 0.5rem 1.2rem; background: none; border: none;
+      color: #8b949e; cursor: pointer; font-size: 0.95rem;
+      border-bottom: 2px solid transparent; transition: all 0.15s;
+    }
+    .auth-tab.active { color: #58a6ff; border-bottom-color: #58a6ff; }
+    .auth-section { display: none; }
+    .auth-section.active { display: block; }
+    .platform-group { display: flex; gap: 0.75rem; margin-top: 0.3rem; }
+    .platform-btn {
+      flex: 1; padding: 0.5rem; border: 1px solid #30363d; border-radius: 6px;
+      background: #21262d; color: #8b949e; cursor: pointer; font-size: 0.88rem;
+      transition: all 0.15s; text-align: center;
+    }
+    .platform-btn.selected { border-color: #58a6ff; color: #58a6ff; background: #1c2a3a; }
+    .error-msg { color: #f85149; font-size: 0.85rem; margin-top: 0.5rem; display: none; }
+    .success-msg { color: #3fb950; font-size: 0.85rem; margin-top: 0.5rem; display: none; }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="index.html" class="brand">
+      <img src="logo.svg" alt="EHL" class="brand-logo" />
+      <span class="brand-text">EHL</span>
+    </a>
+    <a href="index.html">Home</a>
+    <a href="schedule.html">Schedule</a>
+    <div class="nav-dropdown">
+      <a href="standings.html">Standings ▾</a>
+      <div class="nav-dropdown-menu">
+        <a href="recent-scores.html">🏒 Recent Scores</a>
+      </div>
+    </div>
+    <a href="stats.html">Stats</a>
+    <a href="register.html" class="active">Player Portal</a>
+    <a href="admin.html">Admin</a>
+  </nav>
+
+  <div class="auth-card">
+    <div class="auth-tabs">
+      <button class="auth-tab active" onclick="showTab('login')">Sign In</button>
+      <button class="auth-tab" onclick="showTab('register')">Register</button>
+    </div>
+
+    <!-- LOGIN -->
+    <div id="tab-login" class="auth-section active">
+      <h2 style="margin-top:0;margin-bottom:1rem;">Welcome Back</h2>
+      <form id="login-form">
+        <div class="form-group" style="flex-direction:column;margin-bottom:0.75rem;">
+          <label for="login-username">Gamertag</label>
+          <input type="text" id="login-username" placeholder="Xbox / PSN gamertag" required autocomplete="username" />
+        </div>
+        <div class="form-group" style="flex-direction:column;margin-bottom:0.75rem;">
+          <label for="login-password">Password</label>
+          <input type="password" id="login-password" placeholder="Password" required autocomplete="current-password" />
+        </div>
+        <button type="submit" style="width:100%;margin-top:0.5rem;">Sign In</button>
+        <div id="login-error" class="error-msg"></div>
+      </form>
+    </div>
+
+    <!-- REGISTER -->
+    <div id="tab-register" class="auth-section">
+      <h2 style="margin-top:0;margin-bottom:1rem;">Create Account</h2>
+      <form id="register-form">
+        <div class="form-group" style="flex-direction:column;margin-bottom:0.75rem;">
+          <label>Platform</label>
+          <div class="platform-group">
+            <button type="button" class="platform-btn selected" id="btn-xbox" onclick="selectPlatform('xbox')">🎮 Xbox</button>
+            <button type="button" class="platform-btn" id="btn-psn" onclick="selectPlatform('psn')">🎮 PSN</button>
+          </div>
+          <input type="hidden" id="reg-platform" value="xbox" />
+        </div>
+        <div class="form-group" style="flex-direction:column;margin-bottom:0.75rem;">
+          <label for="reg-username">Gamertag *</label>
+          <input type="text" id="reg-username" placeholder="Your Xbox / PSN username" required autocomplete="username" />
+        </div>
+        <div class="form-group" style="flex-direction:column;margin-bottom:0.75rem;">
+          <label for="reg-email">Email <span style="color:#8b949e;font-size:0.8rem;">(optional)</span></label>
+          <input type="email" id="reg-email" placeholder="email@example.com" autocomplete="email" />
+        </div>
+        <div class="form-group" style="flex-direction:column;margin-bottom:0.75rem;">
+          <label for="reg-password">Password *</label>
+          <input type="password" id="reg-password" placeholder="At least 6 characters" required autocomplete="new-password" />
+        </div>
+        <div class="form-group" style="flex-direction:column;margin-bottom:0.75rem;">
+          <label for="reg-confirm">Confirm Password *</label>
+          <input type="password" id="reg-confirm" placeholder="Repeat password" required autocomplete="new-password" />
+        </div>
+        <button type="submit" style="width:100%;margin-top:0.5rem;">Create Account</button>
+        <div id="register-error" class="error-msg"></div>
+        <div id="register-success" class="success-msg"></div>
+      </form>
+    </div>
+  </div>
+
+  <script src="register.js"></script>
+  <script src="nav.js"></script>
+</body>
+</html>

@@ -65,54 +65,100 @@ function renderFullStats(players, teamName) {
   const posOrder = { G: 0, C: 1, LW: 2, RW: 3, LD: 4, RD: 5 };
   const sorted = [...players].sort((a, b) => (posOrder[a.position] ?? 9) - (posOrder[b.position] ?? 9));
   const skaters = sorted.filter(p => p.position !== 'G');
-  const goalies = sorted.filter(p => p.position === 'G');
+  const goalies  = sorted.filter(p => p.position === 'G');
 
-  // Support both DB-snake and camelCase field names
   const v = (p, snake, camel) => p[snake] !== undefined ? p[snake] : (p[camel] !== undefined ? p[camel] : 0);
-  const pm = p => { const val = v(p, 'plus_minus', 'plusMinus'); return `${val >= 0 ? '+' : ''}${val}`; };
-  const toi = p => formatToi(v(p, 'toi', 'toi'));
+  const pm = p => { const val = v(p,'plus_minus','plusMinus'); return `${val >= 0 ? '+' : ''}${val}`; };
+  const toi = p => formatToi(v(p,'toi','toi'));
+  const fmt1 = n => n !== null && n !== undefined ? Number(n).toFixed(1) : '–';
   const svpct = p => {
     const sp = p.save_pct !== undefined ? p.save_pct : p.savesPct;
     return sp !== null && sp !== undefined ? (sp < 1 ? (sp * 100).toFixed(1) + '%' : sp.toFixed(1) + '%') : '–';
   };
+  const foWpct = p => {
+    const fw = v(p,'faceoff_wins','faceoffWins'), fl = v(p,'faceoff_losses','faceoffLosses');
+    return fw + fl > 0 ? fmt1(fw * 100.0 / (fw + fl)) + '%' : '–';
+  };
+  const sPct = p => {
+    const g = v(p,'goals','goals'), sh = v(p,'shots','shots');
+    return sh > 0 ? fmt1(g * 100.0 / sh) + '%' : '–';
+  };
+  const pcPct = p => {
+    const pa = v(p,'pass_attempts','passAttempts'), pc = v(p,'pass_completions','passCompletions');
+    const stored = p.pass_pct !== undefined ? p.pass_pct : p.passPct;
+    if (stored !== null && stored !== undefined) return fmt1(stored * 100) + '%';
+    return pa > 0 ? fmt1(pc * 100.0 / pa) + '%' : '–';
+  };
 
   let html = '';
   if (skaters.length > 0) {
-    html += `<table class="stats-table">
+    html += `<div style="overflow-x:auto;"><table class="stats-table">
       <thead><tr>
-        <th>Pos</th><th>Player</th><th>G</th><th>A</th><th>PTS</th>
-        <th>+/-</th><th>SOG</th><th>HIT</th><th>BS</th><th>TKW</th><th>GVW</th><th>PPG</th><th>SHG</th><th>PIM</th><th>TOI</th>
+        <th>Pos</th><th>Player</th>
+        <th>G</th><th>A</th><th>PTS</th><th>+/-</th>
+        <th>SOG</th><th>HITS</th><th>BS</th><th>TKA</th><th>GVA</th>
+        <th>PPG</th><th>SHG</th><th>GWG</th><th>PIM</th><th>PD</th>
+        <th>FOW</th><th>FOT</th><th>FOW%</th><th>S%</th>
+        <th>DLF</th><th>INT</th><th>PA</th><th>PC%</th><th>HT</th>
+        <th>PT</th><th>TOI</th><th>OR</th><th>DR</th><th>TPR</th>
       </tr></thead>
       <tbody>${skaters.map(p => `<tr>
-        <td>${p.position || '–'}</td>
+        <td>${p.position||'–'}</td>
         <td>${p.player_name || p.name}</td>
-        <td>${p.goals}</td><td>${p.assists}</td>
+        <td>${v(p,'goals','goals')}</td><td>${v(p,'assists','assists')}</td>
         <td><strong>${v(p,'goals','goals') + v(p,'assists','assists')}</strong></td>
         <td>${pm(p)}</td>
-        <td>${p.shots}</td>
-        <td>${p.hits}</td>
+        <td>${v(p,'shots','shots')}</td>
+        <td>${v(p,'hits','hits')}</td>
         <td>${v(p,'blocked_shots','blockedShots')}</td>
         <td>${v(p,'takeaways','takeaways')}</td>
         <td>${v(p,'giveaways','giveaways')}</td>
         <td>${v(p,'pp_goals','ppGoals')}</td>
         <td>${v(p,'sh_goals','shGoals')}</td>
-        <td>${p.pim}</td>
+        <td>${v(p,'gwg','gwg')}</td>
+        <td>${v(p,'pim','pim')}</td>
+        <td>${v(p,'penalties_drawn','penaltiesDrawn')}</td>
+        <td>${v(p,'faceoff_wins','faceoffWins')}</td>
+        <td>${v(p,'faceoff_wins','faceoffWins') + v(p,'faceoff_losses','faceoffLosses')}</td>
+        <td>${foWpct(p)}</td><td>${sPct(p)}</td>
+        <td>${v(p,'deflections','deflections')}</td>
+        <td>${v(p,'interceptions','interceptions')}</td>
+        <td>${v(p,'pass_attempts','passAttempts')}</td>
+        <td>${pcPct(p)}</td>
+        <td>${v(p,'hat_tricks','hatTricks')}</td>
+        <td>${formatToi(v(p,'possession_secs','possessionSecs'))}</td>
         <td>${toi(p)}</td>
+        <td>${v(p,'overall_rating','overallRating')||'–'}</td>
+        <td>${v(p,'defensive_rating','defensiveRating')||'–'}</td>
+        <td>${v(p,'team_play_rating','teamPlayRating')||'–'}</td>
       </tr>`).join('')}</tbody>
-    </table>`;
+    </table></div>`;
   }
   if (goalies.length > 0) {
-    html += `<table class="stats-table" style="margin-top:0.4rem;">
-      <thead><tr><th>Pos</th><th>Player</th><th>SV</th><th>GA</th><th>SA</th><th>SV%</th></tr></thead>
+    html += `<div style="overflow-x:auto;"><table class="stats-table" style="margin-top:0.4rem;">
+      <thead><tr>
+        <th>Player</th><th>G</th><th>A</th>
+        <th>SA</th><th>GA</th><th>SV%</th><th>TOI</th>
+        <th>SO</th><th>PSA</th><th>PSGA</th><th>BKSA</th><th>BKSV</th>
+        <th>W</th><th>L</th><th>OTW</th><th>OTL</th>
+      </tr></thead>
       <tbody>${goalies.map(p => `<tr>
-        <td>G</td>
         <td>${p.player_name || p.name}</td>
-        <td>${p.saves}</td>
-        <td>${v(p,'goals_against','goalsAgainst')}</td>
+        <td>${v(p,'goals','goals')}</td><td>${v(p,'assists','assists')}</td>
         <td>${v(p,'shots_against','shotsAgainst')}</td>
-        <td>${svpct(p)}</td>
+        <td>${v(p,'goals_against','goalsAgainst')}</td>
+        <td>${svpct(p)}</td><td>${toi(p)}</td>
+        <td>${v(p,'shutouts','shutouts')}</td>
+        <td>${v(p,'penalty_shot_attempts','penaltyShotAttempts')}</td>
+        <td>${v(p,'penalty_shot_ga','penaltyShotGa')}</td>
+        <td>${v(p,'breakaway_shots','breakawayShots')}</td>
+        <td>${v(p,'breakaway_saves','breakawaySaves')}</td>
+        <td>${v(p,'goalie_wins','goalieWins')}</td>
+        <td>${v(p,'goalie_losses','goalieLosses')}</td>
+        <td>${v(p,'goalie_otw','goalieOtw')}</td>
+        <td>${v(p,'goalie_otl','goalieOtl')}</td>
       </tr>`).join('')}</tbody>
-    </table>`;
+    </table></div>`;
   }
   return html;
 }
@@ -123,7 +169,7 @@ function renderPickerPlayerStats(players) {
   const posOrder = { G: 0, C: 1, LW: 2, RW: 3, LD: 4, RD: 5 };
   const sorted = [...players].sort((a, b) => (posOrder[a.position] ?? 9) - (posOrder[b.position] ?? 9));
   const skaters = sorted.filter(p => p.position !== 'G');
-  const goalies = sorted.filter(p => p.position === 'G');
+  const goalies  = sorted.filter(p => p.position === 'G');
   let html = '';
   if (skaters.length > 0) {
     html += `<table><thead><tr>
@@ -139,10 +185,11 @@ function renderPickerPlayerStats(players) {
   }
   if (goalies.length > 0) {
     html += `<table style="margin-top:0.4rem;"><thead><tr>
-      <th>Pos</th><th>Player</th><th>SV</th><th>GA</th><th>SV%</th>
+      <th>Player</th><th>G</th><th>A</th><th>SA</th><th>GA</th><th>SV%</th>
     </tr></thead><tbody>${goalies.map(p => `<tr>
-      <td>G</td><td>${p.name}</td><td>${p.saves}</td><td>${p.goalsAgainst}</td>
-      <td>${p.savesPct !== null ? (p.savesPct * 100).toFixed(1) + '%' : '–'}</td>
+      <td>${p.name}</td><td>${p.goals||0}</td><td>${p.assists||0}</td>
+      <td>${p.shotsAgainst}</td><td>${p.goalsAgainst}</td>
+      <td>${p.savesPct !== null && p.savesPct !== undefined ? (p.savesPct < 1 ? (p.savesPct * 100).toFixed(1) : p.savesPct.toFixed(1)) + '%' : '–'}</td>
     </tr>`).join('')}</tbody></table>`;
   }
   return html;
