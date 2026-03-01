@@ -426,7 +426,7 @@ app.delete('/api/teams/:id/roster/:playerId', requireTeamRole(['owner', 'gm']), 
 
 // ── EA Helpers ─────────────────────────────────────────────────────────────
 
-const EA_POSITIONS = { '0': 'G', '1': 'C', '2': 'LW', '3': 'RW', '4': 'LD', '5': 'RD' };
+const EA_POSITIONS = { '0': 'G', 'goalie': 'G', '1': 'C', '2': 'LW', '3': 'RW', '4': 'LD', '5': 'RD' };
 
 function mapResult(r) {
   if (r === '1' || r === 1) return 'W';
