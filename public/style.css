@@ -391,3 +391,34 @@ tbody tr.team-row:hover {
   transition: background 0.15s;
 }
 .notif-decline:hover { background: #6e3030; color: #fff; }
+
+/* ── Stat column tooltips ─────────────────────────────────── */
+/* Any element with data-tip="..." shows a dark tooltip on hover / .tip-open */
+[data-tip] {
+  position: relative;
+  cursor: help;
+}
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 5px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1c2a3a;
+  color: #e6edf3;
+  border: 1px solid #388bfd55;
+  border-radius: 6px;
+  padding: 0.25rem 0.55rem;
+  font-size: 0.73rem;
+  font-weight: 500;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s;
+  z-index: 500;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.45);
+}
+[data-tip]:hover::after,
+[data-tip].tip-open::after {
+  opacity: 1;
+}

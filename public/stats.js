@@ -51,35 +51,35 @@ function renderSkaters() {
   root.innerHTML = `<div style="overflow-x:auto;"><table id="skaters-table">
     <thead><tr>
       <th>Player</th><th>Team</th><th>Pos</th>
-      <th class="${s('gp')}" onclick="sortSkaters('gp')">GP</th>
-      <th class="${s('goals')}" onclick="sortSkaters('goals')">G</th>
-      <th class="${s('assists')}" onclick="sortSkaters('assists')">A</th>
-      <th class="${s('points')}" onclick="sortSkaters('points')">PTS</th>
-      <th class="${s('plus_minus')}" onclick="sortSkaters('plus_minus')">+/-</th>
-      <th class="${s('shots')}" onclick="sortSkaters('shots')">SOG</th>
-      <th class="${s('hits')}" onclick="sortSkaters('hits')">HITS</th>
-      <th class="${s('blocked_shots')}" onclick="sortSkaters('blocked_shots')">BS</th>
-      <th class="${s('takeaways')}" onclick="sortSkaters('takeaways')">TKA</th>
-      <th class="${s('giveaways')}" onclick="sortSkaters('giveaways')">GVA</th>
-      <th class="${s('pp_goals')}" onclick="sortSkaters('pp_goals')">PPG</th>
-      <th class="${s('sh_goals')}" onclick="sortSkaters('sh_goals')">SHG</th>
-      <th class="${s('gwg')}" onclick="sortSkaters('gwg')">GWG</th>
-      <th class="${s('pim')}" onclick="sortSkaters('pim')">PIM</th>
-      <th class="${s('penalties_drawn')}" onclick="sortSkaters('penalties_drawn')">PD</th>
-      <th class="${s('faceoff_wins')}" onclick="sortSkaters('faceoff_wins')">FOW</th>
-      <th class="${s('faceoff_total')}" onclick="sortSkaters('faceoff_total')">FOT</th>
-      <th class="${s('fow_pct')}" onclick="sortSkaters('fow_pct')">FOW%</th>
-      <th class="${s('shot_pct')}" onclick="sortSkaters('shot_pct')">S%</th>
-      <th class="${s('deflections')}" onclick="sortSkaters('deflections')">DLF</th>
-      <th class="${s('interceptions')}" onclick="sortSkaters('interceptions')">INT</th>
-      <th class="${s('pass_attempts')}" onclick="sortSkaters('pass_attempts')">PA</th>
-      <th class="${s('pass_pct_calc')}" onclick="sortSkaters('pass_pct_calc')">PC%</th>
-      <th class="${s('hat_tricks')}" onclick="sortSkaters('hat_tricks')">HT</th>
-      <th class="${s('apt')}" onclick="sortSkaters('apt')">APT</th>
-      <th class="${s('toi')}" onclick="sortSkaters('toi')">TOI</th>
-      <th class="${s('overall_rating')}" onclick="sortSkaters('overall_rating')">OR</th>
-      <th class="${s('defensive_rating')}" onclick="sortSkaters('defensive_rating')">DR</th>
-      <th class="${s('team_play_rating')}" onclick="sortSkaters('team_play_rating')">TPR</th>
+      <th data-tip="Games Played" class="${s('gp')}" onclick="sortSkaters('gp')">GP</th>
+      <th data-tip="Goals" class="${s('goals')}" onclick="sortSkaters('goals')">G</th>
+      <th data-tip="Assists" class="${s('assists')}" onclick="sortSkaters('assists')">A</th>
+      <th data-tip="Points" class="${s('points')}" onclick="sortSkaters('points')">PTS</th>
+      <th data-tip="Plus / Minus" class="${s('plus_minus')}" onclick="sortSkaters('plus_minus')">+/-</th>
+      <th data-tip="Shots on Goal" class="${s('shots')}" onclick="sortSkaters('shots')">SOG</th>
+      <th data-tip="Hits" class="${s('hits')}" onclick="sortSkaters('hits')">HITS</th>
+      <th data-tip="Blocked Shots" class="${s('blocked_shots')}" onclick="sortSkaters('blocked_shots')">BS</th>
+      <th data-tip="Takeaways" class="${s('takeaways')}" onclick="sortSkaters('takeaways')">TKA</th>
+      <th data-tip="Giveaways" class="${s('giveaways')}" onclick="sortSkaters('giveaways')">GVA</th>
+      <th data-tip="Power Play Goals" class="${s('pp_goals')}" onclick="sortSkaters('pp_goals')">PPG</th>
+      <th data-tip="Short-Hand Goals" class="${s('sh_goals')}" onclick="sortSkaters('sh_goals')">SHG</th>
+      <th data-tip="Game-Winning Goals" class="${s('gwg')}" onclick="sortSkaters('gwg')">GWG</th>
+      <th data-tip="Penalty Minutes" class="${s('pim')}" onclick="sortSkaters('pim')">PIM</th>
+      <th data-tip="Penalties Drawn" class="${s('penalties_drawn')}" onclick="sortSkaters('penalties_drawn')">PD</th>
+      <th data-tip="Faceoff Wins" class="${s('faceoff_wins')}" onclick="sortSkaters('faceoff_wins')">FOW</th>
+      <th data-tip="Faceoff Total" class="${s('faceoff_total')}" onclick="sortSkaters('faceoff_total')">FOT</th>
+      <th data-tip="Faceoff Win %" class="${s('fow_pct')}" onclick="sortSkaters('fow_pct')">FOW%</th>
+      <th data-tip="Shooting %" class="${s('shot_pct')}" onclick="sortSkaters('shot_pct')">S%</th>
+      <th data-tip="Deflections" class="${s('deflections')}" onclick="sortSkaters('deflections')">DLF</th>
+      <th data-tip="Interceptions" class="${s('interceptions')}" onclick="sortSkaters('interceptions')">INT</th>
+      <th data-tip="Pass Attempts" class="${s('pass_attempts')}" onclick="sortSkaters('pass_attempts')">PA</th>
+      <th data-tip="Pass Completion %" class="${s('pass_pct_calc')}" onclick="sortSkaters('pass_pct_calc')">PC%</th>
+      <th data-tip="Hat Tricks" class="${s('hat_tricks')}" onclick="sortSkaters('hat_tricks')">HT</th>
+      <th data-tip="Avg. Puck Possession (sec/game)" class="${s('apt')}" onclick="sortSkaters('apt')">APT</th>
+      <th data-tip="Time on Ice" class="${s('toi')}" onclick="sortSkaters('toi')">TOI</th>
+      <th data-tip="Overall Rating" class="${s('overall_rating')}" onclick="sortSkaters('overall_rating')">OR</th>
+      <th data-tip="Defensive Rating" class="${s('defensive_rating')}" onclick="sortSkaters('defensive_rating')">DR</th>
+      <th data-tip="Team Play Rating" class="${s('team_play_rating')}" onclick="sortSkaters('team_play_rating')">TPR</th>
     </tr></thead>
     <tbody>${sorted.map(p => `<tr${playerRowAttrs(p)}>
       <td>${p.name}</td>
@@ -117,23 +117,23 @@ function renderGoalies() {
   root.innerHTML = `<div style="overflow-x:auto;"><table id="goalies-table">
     <thead><tr>
       <th>Player</th><th>Team</th>
-      <th class="${s('gp')}" onclick="sortGoalies('gp')">GP</th>
-      <th class="${s('goals')}" onclick="sortGoalies('goals')">G</th>
-      <th class="${s('assists')}" onclick="sortGoalies('assists')">A</th>
-      <th class="${s('shots_against')}" onclick="sortGoalies('shots_against')">SA</th>
-      <th class="${s('goals_against')}" onclick="sortGoalies('goals_against')">GA</th>
-      <th class="${s('save_pct')}" onclick="sortGoalies('save_pct')">SV%</th>
-      <th class="${s('gaa')}" onclick="sortGoalies('gaa')">GAA</th>
-      <th class="${s('toi')}" onclick="sortGoalies('toi')">TOI</th>
-      <th class="${s('shutouts')}" onclick="sortGoalies('shutouts')">SO</th>
-      <th class="${s('penalty_shot_attempts')}" onclick="sortGoalies('penalty_shot_attempts')">PSA</th>
-      <th class="${s('penalty_shot_ga')}" onclick="sortGoalies('penalty_shot_ga')">PSGA</th>
-      <th class="${s('breakaway_shots')}" onclick="sortGoalies('breakaway_shots')">BKSA</th>
-      <th class="${s('breakaway_saves')}" onclick="sortGoalies('breakaway_saves')">BKSV</th>
-      <th class="${s('goalie_wins')}" onclick="sortGoalies('goalie_wins')">W</th>
-      <th class="${s('goalie_losses')}" onclick="sortGoalies('goalie_losses')">L</th>
-      <th class="${s('goalie_otw')}" onclick="sortGoalies('goalie_otw')">OTW</th>
-      <th class="${s('goalie_otl')}" onclick="sortGoalies('goalie_otl')">OTL</th>
+      <th data-tip="Games Played" class="${s('gp')}" onclick="sortGoalies('gp')">GP</th>
+      <th data-tip="Goals" class="${s('goals')}" onclick="sortGoalies('goals')">G</th>
+      <th data-tip="Assists" class="${s('assists')}" onclick="sortGoalies('assists')">A</th>
+      <th data-tip="Shots Against" class="${s('shots_against')}" onclick="sortGoalies('shots_against')">SA</th>
+      <th data-tip="Goals Against" class="${s('goals_against')}" onclick="sortGoalies('goals_against')">GA</th>
+      <th data-tip="Save Percentage" class="${s('save_pct')}" onclick="sortGoalies('save_pct')">SV%</th>
+      <th data-tip="Goals Against Average" class="${s('gaa')}" onclick="sortGoalies('gaa')">GAA</th>
+      <th data-tip="Time on Ice" class="${s('toi')}" onclick="sortGoalies('toi')">TOI</th>
+      <th data-tip="Shutouts" class="${s('shutouts')}" onclick="sortGoalies('shutouts')">SO</th>
+      <th data-tip="Penalty Shot Attempts Against" class="${s('penalty_shot_attempts')}" onclick="sortGoalies('penalty_shot_attempts')">PSA</th>
+      <th data-tip="Penalty Shot Goals Against" class="${s('penalty_shot_ga')}" onclick="sortGoalies('penalty_shot_ga')">PSGA</th>
+      <th data-tip="Breakaway Shots Against" class="${s('breakaway_shots')}" onclick="sortGoalies('breakaway_shots')">BKSA</th>
+      <th data-tip="Breakaway Saves" class="${s('breakaway_saves')}" onclick="sortGoalies('breakaway_saves')">BKSV</th>
+      <th data-tip="Wins" class="${s('goalie_wins')}" onclick="sortGoalies('goalie_wins')">W</th>
+      <th data-tip="Losses" class="${s('goalie_losses')}" onclick="sortGoalies('goalie_losses')">L</th>
+      <th data-tip="Overtime Wins" class="${s('goalie_otw')}" onclick="sortGoalies('goalie_otw')">OTW</th>
+      <th data-tip="Overtime Losses" class="${s('goalie_otl')}" onclick="sortGoalies('goalie_otl')">OTL</th>
     </tr></thead>
     <tbody>${sorted.map(p => {
       const svp = p.save_pct !== null && p.save_pct !== undefined

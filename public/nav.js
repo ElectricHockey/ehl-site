@@ -16,3 +16,15 @@ document.addEventListener('click', e => {
     document.querySelectorAll('.nav-dropdown').forEach(d => d.classList.remove('open'));
   }
 });
+
+// Stat-tip click/tap toggle (for mobile and for clicking stat headers)
+document.addEventListener('click', e => {
+  const tip = e.target.closest('[data-tip]');
+  if (tip) {
+    const wasOpen = tip.classList.contains('tip-open');
+    document.querySelectorAll('[data-tip].tip-open').forEach(el => el.classList.remove('tip-open'));
+    if (!wasOpen) tip.classList.add('tip-open');
+  } else {
+    document.querySelectorAll('[data-tip].tip-open').forEach(el => el.classList.remove('tip-open'));
+  }
+});

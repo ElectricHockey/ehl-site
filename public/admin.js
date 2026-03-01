@@ -45,11 +45,21 @@ function showLoginForm() {
 function showAdminPanel() {
   document.getElementById('login-section').style.display = 'none';
   document.getElementById('admin-panel').style.display = '';
+  showAdminTab('seasons');
   loadSeasons();
   loadTeams();
   loadPlayers();
   loadGames();
   loadRegPlayers();
+}
+
+function showAdminTab(name) {
+  document.querySelectorAll('.admin-section').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.admin-tab-btn').forEach(btn =>
+    btn.classList.toggle('active', btn.getAttribute('onclick') === `showAdminTab('${name}')`)
+  );
+  const sec = document.getElementById(`admin-tab-${name}`);
+  if (sec) sec.classList.add('active');
 }
 
 document.getElementById('login-form').addEventListener('submit', async e => {
