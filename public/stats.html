@@ -25,7 +25,6 @@
     .tab-btn:hover:not(.active) { background: #21262d; }
     .tab-section { display: none; }
     .tab-section.active { display: block; }
-    .league-stats-block { margin-bottom: 3rem; }
   </style>
 </head>
 <body>
@@ -53,34 +52,16 @@
 
     <div style="margin-bottom:1.25rem;" id="season-selector-container"></div>
 
-    <!-- 3's stats -->
-    <div class="league-stats-block">
-      <h2 class="league-section-heading">⛸️ 3's Statistics</h2>
-      <div class="tab-bar">
-        <button class="tab-btn active" onclick="switchStatsTab('threes','skaters')">⛸️ Skaters</button>
-        <button class="tab-btn"        onclick="switchStatsTab('threes','goalies')">🥅 Goalies</button>
-      </div>
-      <div id="tab-threes-skaters" class="tab-section active">
-        <div id="skaters-root-threes"><p class="loading">Loading…</p></div>
-      </div>
-      <div id="tab-threes-goalies" class="tab-section">
-        <div id="goalies-root-threes"><p class="loading">Loading…</p></div>
-      </div>
+    <div class="tab-bar">
+      <button class="tab-btn active" data-tab="skaters" onclick="switchStatsTab('skaters')">⛸️ Skaters</button>
+      <button class="tab-btn"        data-tab="goalies" onclick="switchStatsTab('goalies')">🥅 Goalies</button>
     </div>
 
-    <!-- 6's stats -->
-    <div class="league-stats-block">
-      <h2 class="league-section-heading">🏒 6's Statistics</h2>
-      <div class="tab-bar">
-        <button class="tab-btn active" onclick="switchStatsTab('sixes','skaters')">⛸️ Skaters</button>
-        <button class="tab-btn"        onclick="switchStatsTab('sixes','goalies')">🥅 Goalies</button>
-      </div>
-      <div id="tab-sixes-skaters" class="tab-section active">
-        <div id="skaters-root-sixes"><p class="loading">Loading…</p></div>
-      </div>
-      <div id="tab-sixes-goalies" class="tab-section">
-        <div id="goalies-root-sixes"><p class="loading">Loading…</p></div>
-      </div>
+    <div id="tab-skaters" class="tab-section active">
+      <div id="skaters-root"><p class="loading">Loading…</p></div>
+    </div>
+    <div id="tab-goalies" class="tab-section">
+      <div id="goalies-root"><p class="loading">Loading…</p></div>
     </div>
   </div>
 

@@ -68,14 +68,13 @@ const leagueSort = {
   sixes:  { skater: { key: 'points', dir: 'desc' }, goalie: { key: 'save_pct', dir: 'desc' } },
 };
 
-function switchStatsTab(league, tab) {
+function switchStatsTab(tab) {
   ['skaters', 'goalies'].forEach(t => {
-    const sec = document.getElementById(`tab-${league}-${t}`);
+    const sec = document.getElementById(`tab-${t}`);
     if (sec) sec.classList.toggle('active', t === tab);
   });
-  const bar = document.getElementById(`tab-bar-${league}`);
-  if (bar) bar.querySelectorAll('.tab-btn').forEach(btn =>
-    btn.classList.toggle('active', btn.textContent.toLowerCase().includes(tab === 'skaters' ? 'skater' : 'goalie'))
+  document.querySelectorAll('.tab-btn').forEach(btn =>
+    btn.classList.toggle('active', btn.dataset.tab === tab)
   );
 }
 
@@ -92,7 +91,7 @@ function sortGoalies(key, league) {
 }
 
 function renderSkaters(league) {
-  const root = document.getElementById(`skaters-root-${league}`);
+  const root = document.getElementById('skaters-root');
   if (!root) return;
   const data = leagueData[league].skaters;
   if (data.length === 0) { root.innerHTML = '<p style="color:#8b949e">No skater stats yet for this season.</p>'; return; }
@@ -100,7 +99,7 @@ function renderSkaters(league) {
   const sorted = sortData(data, leagueSort[league].skater.key, leagueSort[league].skater.dir);
   const s = k => thClass(k, leagueSort[league].skater);
   const L = JSON.stringify(league); // safe string for onclick
-  root.innerHTML = `<div style="overflow-x:auto;"><table id="skaters-table-${league}">
+  root.innerHTML = `<div style="overflow-x:auto;"><table id="skaters-table">
     <thead><tr>
       <th>Player</th><th>Team</th><th>Pos</th>
       <th data-tip="Overall Rating (avg. of OR + DR + TPR)" class="${s('_ovr')}" onclick="sortSkaters('_ovr',${L})">OVR</th>
@@ -164,7 +163,7 @@ function renderSkaters(league) {
 }
 
 function renderGoalies(league) {
-  const root = document.getElementById(`goalies-root-${league}`);
+  const root = document.getElementById('goalies-root');
   if (!root) return;
   const data = leagueData[league].goalies;
   if (data.length === 0) { root.innerHTML = '<p style="color:#8b949e">No goalie stats yet for this season.</p>'; return; }
@@ -172,7 +171,7 @@ function renderGoalies(league) {
   const sorted = sortData(data, leagueSort[league].goalie.key, leagueSort[league].goalie.dir);
   const s = k => thClass(k, leagueSort[league].goalie);
   const L = JSON.stringify(league);
-  root.innerHTML = `<div style="overflow-x:auto;"><table id="goalies-table-${league}">
+  root.innerHTML = `<div style="overflow-x:auto;"><table id="goalies-table">
     <thead><tr>
       <th>Player</th><th>Team</th>
       <th data-tip="Overall Rating (avg. of OR + DR + TPR)" class="${s('_ovr')}" onclick="sortGoalies('_ovr',${L})">OVR</th>
@@ -233,23 +232,21 @@ async function fetchLeagueStats(seasonId) {
 }
 
 async function loadStats() {
-  const threesSid = typeof SeasonSelector !== 'undefined' ? SeasonSelector.getSelectedSeasonId('threes') : null;
-  const sixesSid  = typeof SeasonSelector !== 'undefined' ? SeasonSelector.getSelectedSeasonId('sixes')  : null;
+  const sid    = typeof SeasonSelector !== 'undefined' ? SeasonSelector.getSelectedSeasonId()    : null;
+  const league = (typeof SeasonSelector !== 'undefined' ? SeasonSelector.getSelectedLeagueType() : null) || 'threes';
 
-  const [threesData, sixesData] = await Promise.all([
-    fetchLeagueStats(threesSid),
-    fetchLeagueStats(sixesSid),
-  ]);
+  if (!sid) {
+    document.getElementById('skaters-root').innerHTML = '<p style="color:#8b949e">Select a league and season above.</p>';
+    document.getElementById('goalies-root').innerHTML = '';
+    return;
+  }
 
-  leagueData.threes.skaters = threesData.skaters || [];
-  leagueData.threes.goalies = threesData.goalies || [];
-  leagueData.sixes.skaters  = sixesData.skaters  || [];
-  leagueData.sixes.goalies  = sixesData.goalies  || [];
+  const data = await fetchLeagueStats(sid);
+  leagueData[league].skaters = data.skaters || [];
+  leagueData[league].goalies = data.goalies || [];
 
-  renderSkaters('threes');
-  renderGoalies('threes');
-  renderSkaters('sixes');
-  renderGoalies('sixes');
+  renderSkaters(league);
+  renderGoalies(league);
 }
 
 if (typeof SeasonSelector !== 'undefined') {

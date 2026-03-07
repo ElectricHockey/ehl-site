@@ -198,27 +198,23 @@ function renderPickerPlayerStats(players) {
 // ── Schedule table ─────────────────────────────────────────────────────────
 
 async function loadSchedule() {
-  const threesSid = SeasonSelector.getSelectedSeasonId('threes');
-  const sixesSid  = SeasonSelector.getSelectedSeasonId('sixes');
+  const sid = SeasonSelector.getSelectedSeasonId();
 
-  const fetchGames = async sid => {
-    if (!sid) return [];
-    try {
-      const res = await fetch(`${API}/games?season_id=${sid}`);
-      return res.ok ? await res.json() : [];
-    } catch { return []; }
-  };
+  const root = document.getElementById('schedule-root');
+  if (!root) return;
 
-  const [gamesThrees, gamesSixes] = await Promise.all([
-    fetchGames(threesSid),
-    fetchGames(sixesSid),
-  ]);
+  if (!sid) {
+    root.innerHTML = '<p style="color:#8b949e">Select a league and season above to view the schedule.</p>';
+    allGames = [];
+    return;
+  }
 
-  // Combined for lookup
-  allGames = [...gamesThrees, ...gamesSixes];
+  try {
+    const res = await fetch(`${API}/games?season_id=${sid}`);
+    allGames = res.ok ? await res.json() : [];
+  } catch { allGames = []; }
 
-  renderScheduleSection('schedule-threes', gamesThrees);
-  renderScheduleSection('schedule-sixes',  gamesSixes);
+  renderScheduleSection('schedule-root', allGames);
 
   // Check for ?g= URL param to auto-open a game
   const params = new URLSearchParams(window.location.search);
@@ -575,16 +571,11 @@ async function clearAssignment(gameId) {
 
 async function refreshGame(gameId) {
   try {
-    // Reload both schedules
-    const threesSid = SeasonSelector.getSelectedSeasonId('threes');
-    const sixesSid  = SeasonSelector.getSelectedSeasonId('sixes');
-    const fetchGames = async sid => {
-      if (!sid) return [];
-      const res = await fetch(`${API}/games?season_id=${sid}`);
-      return res.ok ? await res.json() : [];
-    };
-    const [gamesThrees, gamesSixes] = await Promise.all([fetchGames(threesSid), fetchGames(sixesSid)]);
-    allGames = [...gamesThrees, ...gamesSixes];
+    const sid = SeasonSelector.getSelectedSeasonId();
+    if (!sid) return;
+    const res = await fetch(`${API}/games?season_id=${sid}`);
+    if (!res.ok) return;
+    allGames = await res.json();
     const g = allGames.find(x => x.id === gameId);
     if (!g) return;
     const row = document.getElementById(`game-row-${gameId}`);

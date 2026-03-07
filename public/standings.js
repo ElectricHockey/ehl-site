@@ -97,24 +97,16 @@ async function loadStandings() {
   const root = document.getElementById('standings-root');
   root.innerHTML = '<p class="loading">Loading standings…</p>';
   try {
-    const threesSid = typeof SeasonSelector !== 'undefined' ? SeasonSelector.getSelectedSeasonId('threes') : null;
-    const sixesSid  = typeof SeasonSelector !== 'undefined' ? SeasonSelector.getSelectedSeasonId('sixes')  : null;
+    const sid = typeof SeasonSelector !== 'undefined' ? SeasonSelector.getSelectedSeasonId() : null;
 
-    const [threesTeams, sixesTeams] = await Promise.all([
-      fetchStandings(threesSid),
-      fetchStandings(sixesSid),
-    ]);
+    if (!sid) {
+      root.innerHTML = '<p style="color:#8b949e">Select a league and season above to view standings.</p>';
+      return;
+    }
 
-    root.innerHTML = `
-      <div class="league-standings-block">
-        <h2 class="league-section-heading">⛸️ 3's Standings</h2>
-        ${buildStandingsHtml(threesTeams)}
-      </div>
-      <div class="league-standings-block" style="margin-top:2.5rem;">
-        <h2 class="league-section-heading">🏒 6's Standings</h2>
-        ${buildStandingsHtml(sixesTeams)}
-      </div>`;
-  } catch (err) {
+    const teams = await fetchStandings(sid);
+    root.innerHTML = buildStandingsHtml(teams);
+  } catch {
     root.innerHTML = `<p class="error">Failed to load standings. Is the server running?</p>`;
   }
 }

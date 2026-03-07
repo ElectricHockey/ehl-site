@@ -33,29 +33,16 @@ function buildScoreCards(games) {
 async function loadRecentScores() {
   const root = document.getElementById('scores-root');
   try {
-    const threesSid = typeof SeasonSelector !== 'undefined' ? SeasonSelector.getSelectedSeasonId('threes') : null;
-    const sixesSid  = typeof SeasonSelector !== 'undefined' ? SeasonSelector.getSelectedSeasonId('sixes')  : null;
+    const sid = typeof SeasonSelector !== 'undefined' ? SeasonSelector.getSelectedSeasonId() : null;
 
-    const fetchGames = async sid => {
-      if (!sid) return [];
-      const res = await fetch(`${API}/games?season_id=${sid}`);
-      return res.ok ? await res.json() : [];
-    };
+    if (!sid) {
+      root.innerHTML = '<p style="color:#8b949e">Select a league and season above.</p>';
+      return;
+    }
 
-    const [gamesThrees, gamesSixes] = await Promise.all([
-      fetchGames(threesSid),
-      fetchGames(sixesSid),
-    ]);
-
-    root.innerHTML = `
-      <div style="margin-bottom:2.5rem;">
-        <h2 class="league-section-heading">⛸️ 3's Recent Scores</h2>
-        ${buildScoreCards(gamesThrees)}
-      </div>
-      <div>
-        <h2 class="league-section-heading">🏒 6's Recent Scores</h2>
-        ${buildScoreCards(gamesSixes)}
-      </div>`;
+    const res = await fetch(`${API}/games?season_id=${sid}`);
+    const games = res.ok ? await res.json() : [];
+    root.innerHTML = buildScoreCards(games);
   } catch {
     root.innerHTML = '<p class="error">Failed to load scores. Is the server running?</p>';
   }
