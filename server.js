@@ -766,14 +766,15 @@ app.get('/api/games', (req, res) => {
 });
 
 app.post('/api/games', requireAdmin, (req, res) => {
-  const { home_team_id, away_team_id, home_score, away_score, date, season_id, status, is_overtime } = req.body;
+  const { home_team_id, away_team_id, home_score, away_score, date, season_id, status, is_overtime, playoff_series_id } = req.body;
   if (!home_team_id || !away_team_id || !date) return res.status(400).json({ error: 'home_team_id, away_team_id, and date are required' });
   const gameStatus = status === 'complete' ? 'complete' : 'scheduled';
   const ot = is_overtime ? 1 : 0;
+  const psi = playoff_series_id ? Number(playoff_series_id) : null;
   const result = db.prepare(
-    'INSERT INTO games (home_team_id, away_team_id, home_score, away_score, date, status, season_id, is_overtime) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(home_team_id, away_team_id, home_score || 0, away_score || 0, date, gameStatus, season_id || null, ot);
-  res.status(201).json({ id: result.lastInsertRowid, home_team_id, away_team_id, home_score: home_score || 0, away_score: away_score || 0, date, status: gameStatus, season_id: season_id || null, is_overtime: ot });
+    'INSERT INTO games (home_team_id, away_team_id, home_score, away_score, date, status, season_id, is_overtime, playoff_series_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(home_team_id, away_team_id, home_score || 0, away_score || 0, date, gameStatus, season_id || null, ot, psi);
+  res.status(201).json({ id: result.lastInsertRowid, home_team_id, away_team_id, home_score: home_score || 0, away_score: away_score || 0, date, status: gameStatus, season_id: season_id || null, is_overtime: ot, playoff_series_id: psi });
 });
 
 app.delete('/api/games/:id', requireAdmin, (req, res) => {
@@ -997,10 +998,9 @@ app.get('/api/admin/unrostered-stats', requireAdmin, (req, res) => {
   res.json(rows);
 });
 
-// ── Standings ──────────────────────────────────────────────────────────────
+// ── Standings helper ───────────────────────────────────────────────────────
 
-app.get('/api/standings', (req, res) => {
-  const seasonId = req.query.season_id ? Number(req.query.season_id) : null;
+function calcStandings(seasonId) {
   const filter = seasonId
     ? "SELECT * FROM games WHERE status = 'complete' AND season_id = ? ORDER BY date ASC, id ASC"
     : "SELECT * FROM games WHERE status = 'complete' ORDER BY date ASC, id ASC";
@@ -1053,7 +1053,188 @@ app.get('/api/standings', (req, res) => {
     t.away_record = `${t.away_w}-${t.away_l}-${t.away_otl}`;
     delete t._results;
   }
-  res.json(Object.values(stats).sort((a, b) => b.pts - a.pts || b.w - a.w));
+  return Object.values(stats).sort((a, b) => b.pts - a.pts || b.w - a.w);
+}
+
+// ── Standings ──────────────────────────────────────────────────────────────
+
+app.get('/api/standings', (req, res) => {
+  const seasonId = req.query.season_id ? Number(req.query.season_id) : null;
+  res.json(calcStandings(seasonId));
+});
+
+// ── Playoffs ────────────────────────────────────────────────────────────────
+
+function getPlayoffBracket(playoffId) {
+  const playoff = db.prepare('SELECT * FROM playoffs WHERE id = ?').get(playoffId);
+  if (!playoff) return null;
+  const teams = db.prepare(`
+    SELECT pt.seed, t.id AS team_id, t.name, t.logo_url, t.color1, t.color2
+    FROM playoff_teams pt JOIN teams t ON pt.team_id = t.id
+    WHERE pt.playoff_id = ? ORDER BY pt.seed
+  `).all(playoffId);
+  const allSeries = db.prepare(`
+    SELECT ps.*,
+      ht.name AS high_seed_name, ht.logo_url AS high_seed_logo,
+      ht.color1 AS high_seed_color1, ht.color2 AS high_seed_color2,
+      lt.name AS low_seed_name, lt.logo_url AS low_seed_logo,
+      lt.color1 AS low_seed_color1, lt.color2 AS low_seed_color2,
+      wt.name AS winner_name
+    FROM playoff_series ps
+    LEFT JOIN teams ht ON ps.high_seed_id = ht.id
+    LEFT JOIN teams lt ON ps.low_seed_id = lt.id
+    LEFT JOIN teams wt ON ps.winner_id = wt.id
+    WHERE ps.playoff_id = ?
+    ORDER BY ps.round_number, ps.series_number
+  `).all(playoffId);
+  const rounds = {};
+  for (const s of allSeries) {
+    if (!rounds[s.round_number]) rounds[s.round_number] = [];
+    rounds[s.round_number].push(s);
+  }
+  return { playoff, teams, rounds };
+}
+
+// GET /api/playoffs/by-season/:seasonId
+app.get('/api/playoffs/by-season/:seasonId', (req, res) => {
+  const playoff = db.prepare('SELECT * FROM playoffs WHERE season_id = ?').get(req.params.seasonId);
+  if (!playoff) return res.status(404).json({ error: 'No playoff found for this season' });
+  const bracket = getPlayoffBracket(playoff.id);
+  if (!bracket) return res.status(404).json({ error: 'Playoff data not found' });
+  res.json(bracket);
+});
+
+// POST /api/playoffs – create bracket from season standings
+app.post('/api/playoffs', requireAdmin, (req, res) => {
+  const { season_id, teams_qualify, min_games_played, series_length } = req.body;
+  if (!season_id || !teams_qualify || teams_qualify < 2) {
+    return res.status(400).json({ error: 'season_id and teams_qualify (min 2) are required' });
+  }
+  const validTeamCounts = [2, 4, 8, 16];
+  const n = Number(teams_qualify);
+  if (!validTeamCounts.includes(n)) {
+    return res.status(400).json({ error: 'teams_qualify must be 2, 4, 8, or 16' });
+  }
+  const season = db.prepare('SELECT * FROM seasons WHERE id = ?').get(season_id);
+  if (!season) return res.status(404).json({ error: 'Season not found' });
+  const existing = db.prepare('SELECT id FROM playoffs WHERE season_id = ?').get(season_id);
+  if (existing) return res.status(409).json({ error: 'A playoff already exists for this season. Delete it first.' });
+
+  // Build standings and filter by min games played
+  const standings = calcStandings(Number(season_id));
+  const minGP = Number(min_games_played) || 0;
+  const qualified = standings.filter(t => t.gp >= minGP).slice(0, n);
+  if (qualified.length < 2) {
+    return res.status(400).json({ error: `Only ${qualified.length} team(s) qualify. Need at least 2.` });
+  }
+  // Pad with BYE slots if fewer teams qualified than requested
+  const effectiveN = qualified.length;
+
+  const pl = db.prepare(
+    'INSERT INTO playoffs (season_id, teams_qualify, min_games_played, series_length) VALUES (?, ?, ?, ?)'
+  ).run(Number(season_id), effectiveN, minGP, Number(series_length) || 7);
+  const playoffId = pl.lastInsertRowid;
+
+  // Insert seeded teams
+  qualified.forEach((t, i) => {
+    db.prepare('INSERT INTO playoff_teams (playoff_id, team_id, seed) VALUES (?, ?, ?)').run(playoffId, t.id, i + 1);
+  });
+
+  // Generate round 1 matchups: 1 vs N, 2 vs N-1, …
+  const m = Math.floor(effectiveN / 2);
+  for (let i = 0; i < m; i++) {
+    const hi = qualified[i];
+    const lo = qualified[effectiveN - 1 - i];
+    db.prepare(
+      'INSERT INTO playoff_series (playoff_id, round_number, series_number, high_seed_id, low_seed_id, high_seed_num, low_seed_num) VALUES (?, 1, ?, ?, ?, ?, ?)'
+    ).run(playoffId, i + 1, hi.id, lo.id, i + 1, effectiveN - i);
+  }
+
+  res.status(201).json(getPlayoffBracket(playoffId));
+});
+
+// POST /api/playoffs/:id/advance-round – create next-round matchups from current-round winners
+app.post('/api/playoffs/:id/advance-round', requireAdmin, (req, res) => {
+  const playoff = db.prepare('SELECT * FROM playoffs WHERE id = ?').get(req.params.id);
+  if (!playoff) return res.status(404).json({ error: 'Playoff not found' });
+
+  const curRound = db.prepare(
+    'SELECT MAX(round_number) AS round FROM playoff_series WHERE playoff_id = ?'
+  ).get(req.params.id).round;
+
+  const series = db.prepare(
+    'SELECT * FROM playoff_series WHERE playoff_id = ? AND round_number = ? ORDER BY series_number'
+  ).all(req.params.id, curRound);
+
+  if (series.some(s => !s.winner_id)) {
+    return res.status(400).json({ error: 'Not all series in the current round are complete' });
+  }
+  if (series.length === 1) {
+    return res.json({ message: 'Playoff complete', champion_id: series[0].winner_id });
+  }
+
+  // Sort winners by original seed (ascending = best seed first)
+  const winners = series.map(s => {
+    const pt = db.prepare('SELECT seed FROM playoff_teams WHERE playoff_id = ? AND team_id = ?').get(req.params.id, s.winner_id);
+    return { team_id: s.winner_id, seed: pt ? pt.seed : 9999 };
+  }).sort((a, b) => a.seed - b.seed);
+
+  const nextRound = curRound + 1;
+  const m = Math.floor(winners.length / 2);
+  for (let i = 0; i < m; i++) {
+    const hi = winners[i];
+    const lo = winners[winners.length - 1 - i];
+    db.prepare(
+      'INSERT INTO playoff_series (playoff_id, round_number, series_number, high_seed_id, low_seed_id, high_seed_num, low_seed_num) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).run(req.params.id, nextRound, i + 1, hi.team_id, lo.team_id, hi.seed, lo.seed);
+  }
+
+  res.json(getPlayoffBracket(req.params.id));
+});
+
+// PATCH /api/playoff-series/:id – update series wins (auto-sets winner)
+app.patch('/api/playoff-series/:id', requireAdmin, (req, res) => {
+  const s = db.prepare('SELECT * FROM playoff_series WHERE id = ?').get(req.params.id);
+  if (!s) return res.status(404).json({ error: 'Series not found' });
+  const pl = db.prepare('SELECT series_length FROM playoffs WHERE id = ?').get(s.playoff_id);
+  const winsToWin = Math.ceil((pl ? pl.series_length : 7) / 2);
+
+  const hw = req.body.high_seed_wins !== undefined ? Number(req.body.high_seed_wins) : s.high_seed_wins;
+  const lw = req.body.low_seed_wins  !== undefined ? Number(req.body.low_seed_wins)  : s.low_seed_wins;
+  let winner_id = null;
+  if (hw >= winsToWin) winner_id = s.high_seed_id;
+  else if (lw >= winsToWin) winner_id = s.low_seed_id;
+
+  db.prepare('UPDATE playoff_series SET high_seed_wins = ?, low_seed_wins = ?, winner_id = ? WHERE id = ?')
+    .run(hw, lw, winner_id, req.params.id);
+  res.json({ ok: true, winner_id });
+});
+
+// GET /api/playoff-series/:id/games – games linked to a series
+app.get('/api/playoff-series/:id/games', (req, res) => {
+  const games = db.prepare(`
+    SELECT g.*,
+      ht.name AS home_team_name, ht.logo_url AS home_logo,
+      at.name AS away_team_name, at.logo_url AS away_logo
+    FROM games g
+    JOIN teams ht ON g.home_team_id = ht.id
+    JOIN teams at ON g.away_team_id = at.id
+    WHERE g.playoff_series_id = ?
+    ORDER BY g.date, g.id
+  `).all(req.params.id);
+  res.json(games);
+});
+
+// DELETE /api/playoffs/:id
+app.delete('/api/playoffs/:id', requireAdmin, (req, res) => {
+  const playoff = db.prepare('SELECT * FROM playoffs WHERE id = ?').get(req.params.id);
+  if (!playoff) return res.status(404).json({ error: 'Playoff not found' });
+  // Unlink games
+  db.prepare('UPDATE games SET playoff_series_id = NULL WHERE playoff_series_id IN (SELECT id FROM playoff_series WHERE playoff_id = ?)').run(req.params.id);
+  db.prepare('DELETE FROM playoff_series WHERE playoff_id = ?').run(req.params.id);
+  db.prepare('DELETE FROM playoff_teams WHERE playoff_id = ?').run(req.params.id);
+  db.prepare('DELETE FROM playoffs WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
 });
 
 // ── EA Matches ─────────────────────────────────────────────────────────────

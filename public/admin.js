@@ -51,6 +51,7 @@ function showAdminPanel() {
   loadPlayers();
   loadGames();
   loadRegPlayers();
+  loadAdminPlayoffs();
 }
 
 function showAdminTab(name) {
@@ -471,6 +472,175 @@ async function savePlayerEdit() {
 // Close modal on overlay click
 document.getElementById('edit-player-overlay').addEventListener('click', e => {
   if (e.target === document.getElementById('edit-player-overlay')) closeEditModal();
+});
+
+// ── Playoffs ──────────────────────────────────────────────────────────────
+
+const typeLabel = lt => lt === 'threes' ? "3's" : lt === 'sixes' ? "6's" : lt || '?';
+
+async function loadAdminPlayoffs() {
+  // Populate season dropdown for create form
+  const res = await fetch(`${API}/seasons`);
+  const seasons = res.ok ? await res.json() : [];
+  const sel = document.getElementById('po-season');
+  if (sel) {
+    sel.innerHTML = '<option value="">— Select Season —</option>' +
+      seasons.map(s => `<option value="${s.id}">${s.name} (${typeLabel(s.league_type)})</option>`).join('');
+  }
+
+  // For each season, try to load its playoff
+  const list = document.getElementById('playoffs-list');
+  if (!list) return;
+  if (seasons.length === 0) {
+    list.innerHTML = '<p style="color:#8b949e;font-size:0.85rem;">No seasons yet. Create a season first.</p>';
+    return;
+  }
+
+  list.innerHTML = '<p style="color:#8b949e;font-size:0.85rem;">Loading…</p>';
+  const rows = [];
+  for (const s of seasons) {
+    try {
+      const pr = await fetch(`${API}/playoffs/by-season/${s.id}`);
+      if (pr.ok) {
+        const data = await pr.json();
+        rows.push(renderAdminPlayoffCard(s, data));
+      }
+    } catch { /* season has no playoff */ }
+  }
+  list.innerHTML = rows.length > 0
+    ? rows.join('')
+    : '<p style="color:#8b949e;font-size:0.85rem;">No playoff brackets created yet. Use the form above to generate one.</p>';
+}
+
+function abbrevAdmin(name) {
+  if (!name) return '???';
+  const words = name.trim().split(/\s+/);
+  if (words.length === 1) return name.slice(0, 3).toUpperCase();
+  return words.map(w => w[0]).join('').toUpperCase().slice(0, 3);
+}
+
+function renderAdminPlayoffCard(season, data) {
+  const pl = data.playoff;
+  const numRounds = Object.keys(data.rounds).length;
+  const lastRound = data.rounds[numRounds];
+  const finalSeries = lastRound && lastRound.length === 1 ? lastRound[0] : null;
+  const isComplete = finalSeries && finalSeries.winner_id;
+  const champion   = isComplete ? data.teams.find(t => t.team_id === finalSeries.winner_id) : null;
+
+  const teamPills = data.teams.map(t =>
+    `<span style="background:#21262d;border-radius:4px;padding:0.15rem 0.4rem;font-size:0.75rem;white-space:nowrap;">${t.seed}. ${t.name}</span>`
+  ).join(' ');
+
+  // Build series summary for each round
+  let roundHtml = '';
+  for (let r = 1; r <= numRounds; r++) {
+    const series = (data.rounds[r] || []).sort((a,b) => a.series_number - b.series_number);
+    const rName = r === numRounds ? 'Final' : r === numRounds - 1 ? 'Semis' : `R${r}`;
+    roundHtml += `<div style="margin-bottom:0.75rem;">
+      <div style="font-size:0.78rem;font-weight:600;color:#8b949e;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.4rem;">${rName}</div>
+      <div style="display:flex;flex-direction:column;gap:0.4rem;">
+        ${series.map(s => renderAdminSeriesRow(s, pl)).join('')}
+      </div>
+    </div>`;
+  }
+
+  // Check if current round is complete to offer advance button
+  const curRound = numRounds > 0 ? Math.max(...Object.keys(data.rounds).map(Number)) : 0;
+  const curSeries = data.rounds[curRound] || [];
+  const curRoundDone = curSeries.length > 0 && curSeries.every(s => s.winner_id);
+  const canAdvance  = curRoundDone && curSeries.length > 1;
+
+  return `<div style="background:#161b22;border:1px solid #30363d;border-radius:10px;padding:1.25rem;margin-bottom:1.25rem;">
+    <div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:0.75rem;">
+      <strong style="font-size:1rem;">${season.name}</strong>
+      <span style="color:#8b949e;font-size:0.82rem;">${typeLabel(season.league_type)}</span>
+      <span style="color:#8b949e;font-size:0.82rem;">Best of ${pl.series_length} · ${pl.teams_qualify} teams · Min ${pl.min_games_played} GP</span>
+      ${champion ? `<span style="background:#1a3a2a;color:#3fb950;border-radius:10px;padding:0.1rem 0.6rem;font-size:0.78rem;font-weight:700;">🏆 ${champion.name}</span>` : ''}
+      <div style="margin-left:auto;display:flex;gap:0.4rem;flex-wrap:wrap;">
+        ${canAdvance ? `<button class="btn-secondary" style="font-size:0.8rem;padding:0.25rem 0.6rem;" onclick="advancePlayoffRound(${pl.id})">⏭ Advance to Round ${curRound + 1}</button>` : ''}
+        <a href="playoffs.html" class="btn-secondary" style="font-size:0.8rem;padding:0.25rem 0.6rem;text-decoration:none;">👁 View Bracket</a>
+        <button class="btn-danger" style="font-size:0.8rem;padding:0.25rem 0.6rem;" onclick="deletePlayoff(${pl.id})">Delete</button>
+      </div>
+    </div>
+    <div style="display:flex;gap:0.3rem;flex-wrap:wrap;margin-bottom:0.75rem;">${teamPills}</div>
+    ${roundHtml}
+  </div>`;
+}
+
+function renderAdminSeriesRow(s, pl) {
+  const winsToWin = Math.ceil((pl.series_length || 7) / 2);
+  const done = s.winner_id != null;
+  const hi   = s.high_seed_name || 'TBD';
+  const lo   = s.low_seed_name  || 'TBD';
+
+  return `<div style="display:flex;align-items:center;gap:0.5rem;background:#0d1117;border-radius:6px;padding:0.35rem 0.65rem;">
+    <span style="font-size:0.78rem;color:#8b949e;min-width:22px;">${s.high_seed_num || '?'}</span>
+    <span style="font-size:0.82rem;font-weight:600;flex:1;${s.winner_id === s.high_seed_id ? 'color:#3fb950;' : ''}">${abbrevAdmin(hi)}</span>
+    <input type="number" min="0" max="${winsToWin}" value="${s.high_seed_wins}" id="high-wins-${s.id}"
+      style="width:38px;text-align:center;background:#161b22;border:1px solid #30363d;color:#e6edf3;border-radius:4px;padding:0.1rem;"
+      onchange="updateSeriesWins(${s.id}, this.value, document.getElementById('low-wins-${s.id}').value)" />
+    <span style="color:#8b949e;">–</span>
+    <input type="number" min="0" max="${winsToWin}" value="${s.low_seed_wins}" id="low-wins-${s.id}"
+      style="width:38px;text-align:center;background:#161b22;border:1px solid #30363d;color:#e6edf3;border-radius:4px;padding:0.1rem;"
+      onchange="updateSeriesWins(${s.id}, document.getElementById('high-wins-${s.id}').value, this.value)" />
+    <span style="font-size:0.82rem;font-weight:600;flex:1;text-align:right;${s.winner_id === s.low_seed_id ? 'color:#3fb950;' : ''}">${abbrevAdmin(lo)}</span>
+    <span style="font-size:0.78rem;color:#8b949e;min-width:22px;text-align:right;">${s.low_seed_num || '?'}</span>
+    ${done ? `<span style="font-size:0.75rem;color:#3fb950;margin-left:0.2rem;" title="Series complete">✓</span>` : ''}
+  </div>`;
+}
+
+async function updateSeriesWins(seriesId, highWins, lowWins) {
+  await fetch(`${API}/playoff-series/${seriesId}`, {
+    method: 'PATCH',
+    headers: adminJsonHeaders(),
+    body: JSON.stringify({ high_seed_wins: Number(highWins), low_seed_wins: Number(lowWins) }),
+  });
+  await loadAdminPlayoffs();
+}
+
+async function advancePlayoffRound(playoffId) {
+  const res = await fetch(`${API}/playoffs/${playoffId}/advance-round`, {
+    method: 'POST',
+    headers: adminJsonHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    alert(err.error || 'Could not advance round');
+    return;
+  }
+  showStatus('Next round matchups created!');
+  await loadAdminPlayoffs();
+}
+
+async function deletePlayoff(playoffId) {
+  if (!confirm('Delete this playoff bracket? This cannot be undone.')) return;
+  const res = await fetch(`${API}/playoffs/${playoffId}`, { method: 'DELETE', headers: adminHeaders() });
+  if (res.ok) { showStatus('Playoff deleted.'); await loadAdminPlayoffs(); }
+  else { const e = await res.json(); alert(e.error || 'Failed to delete'); }
+}
+
+document.getElementById('playoff-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const season_id    = document.getElementById('po-season').value;
+  const teams_qualify = Number(document.getElementById('po-qualify').value);
+  const min_games_played = Number(document.getElementById('po-min-gp').value);
+  const series_length = Number(document.getElementById('po-series-length').value);
+
+  if (!season_id) { alert('Please select a season.'); return; }
+
+  const res = await fetch(`${API}/playoffs`, {
+    method: 'POST',
+    headers: adminJsonHeaders(),
+    body: JSON.stringify({ season_id: Number(season_id), teams_qualify, min_games_played, series_length }),
+  });
+  if (res.ok) {
+    e.target.reset();
+    showStatus('Playoff bracket created!');
+    await loadAdminPlayoffs();
+  } else {
+    const err = await res.json();
+    alert(err.error || 'Failed to create playoff');
+  }
 });
 
 // ── Init ──────────────────────────────────────────────────────────────────

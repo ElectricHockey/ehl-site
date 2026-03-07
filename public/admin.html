@@ -37,6 +37,7 @@
       <a href="standings.html">Standings ▾</a>
       <div class="nav-dropdown-menu">
         <a href="recent-scores.html">🏒 Recent Scores</a>
+        <a href="playoffs.html">🏆 Playoffs</a>
       </div>
     </div>
     <a href="stats.html">Stats</a>
@@ -69,6 +70,7 @@
         <button class="admin-tab-btn" data-tab="reg-players" onclick="showAdminTab('reg-players')">👤 Registered Players</button>
         <button class="admin-tab-btn" data-tab="players" onclick="showAdminTab('players')">🎮 Players</button>
         <button class="admin-tab-btn" data-tab="games" onclick="showAdminTab('games')">📅 Games</button>
+        <button class="admin-tab-btn" data-tab="playoffs" onclick="showAdminTab('playoffs')">🏆 Playoffs</button>
       </div>
 
       <div id="status-msg" style="display:none;padding:0.5rem 1rem;border-radius:6px;margin-bottom:1rem;font-size:0.88rem;"></div>
@@ -209,6 +211,46 @@
           <thead><tr><th>ID</th><th>Date</th><th>Home</th><th>Score</th><th>Away</th><th>Season</th><th>Status</th><th>Action</th></tr></thead>
           <tbody></tbody>
         </table>
+      </div>
+
+      <!-- ── Playoffs tab ──────────────────────────────────── -->
+      <div id="admin-tab-playoffs" class="admin-section">
+        <h2>Playoffs</h2>
+
+        <!-- Create form -->
+        <div class="form-section">
+          <h3 style="margin-bottom:0.75rem;font-size:1rem;">Create Playoff Bracket</h3>
+          <form id="playoff-form">
+            <div class="form-group">
+              <label for="po-season">Season *</label>
+              <select id="po-season" required><option value="">— Select Season —</option></select>
+            </div>
+            <div class="form-group">
+              <label for="po-qualify">Teams that qualify *</label>
+              <select id="po-qualify" required style="width:100px;">
+                <option value="4">4</option>
+                <option value="8" selected>8</option>
+                <option value="16">16</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="po-min-gp">Min. games played to qualify for roster</label>
+              <input type="number" id="po-min-gp" value="0" min="0" style="width:80px;" />
+            </div>
+            <div class="form-group">
+              <label for="po-series-length">Series length (best of)</label>
+              <select id="po-series-length" style="width:100px;">
+                <option value="3">3</option>
+                <option value="5">5</option>
+                <option value="7" selected>7</option>
+              </select>
+            </div>
+            <button type="submit">🏒 Generate Bracket</button>
+          </form>
+        </div>
+
+        <!-- Existing playoffs list -->
+        <div id="playoffs-list" style="margin-top:1.5rem;"></div>
       </div>
 
       <!-- ── Edit Player Modal (shared, not inside any tab) ─── -->

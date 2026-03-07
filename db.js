@@ -69,6 +69,43 @@ db.exec(`
     FOREIGN KEY (away_team_id) REFERENCES teams(id)
   );
 
+  CREATE TABLE IF NOT EXISTS playoffs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    season_id INTEGER NOT NULL UNIQUE,
+    teams_qualify INTEGER NOT NULL DEFAULT 8,
+    min_games_played INTEGER NOT NULL DEFAULT 0,
+    series_length INTEGER NOT NULL DEFAULT 7,
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (season_id) REFERENCES seasons(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS playoff_teams (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    playoff_id INTEGER NOT NULL,
+    team_id INTEGER NOT NULL,
+    seed INTEGER NOT NULL,
+    FOREIGN KEY (playoff_id) REFERENCES playoffs(id) ON DELETE CASCADE,
+    FOREIGN KEY (team_id) REFERENCES teams(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS playoff_series (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    playoff_id INTEGER NOT NULL,
+    round_number INTEGER NOT NULL,
+    series_number INTEGER NOT NULL,
+    high_seed_id INTEGER,
+    low_seed_id INTEGER,
+    high_seed_num INTEGER,
+    low_seed_num INTEGER,
+    high_seed_wins INTEGER NOT NULL DEFAULT 0,
+    low_seed_wins INTEGER NOT NULL DEFAULT 0,
+    winner_id INTEGER,
+    FOREIGN KEY (playoff_id) REFERENCES playoffs(id) ON DELETE CASCADE,
+    FOREIGN KEY (high_seed_id) REFERENCES teams(id),
+    FOREIGN KEY (low_seed_id) REFERENCES teams(id),
+    FOREIGN KEY (winner_id) REFERENCES teams(id)
+  );
+
   CREATE TABLE IF NOT EXISTS game_player_stats (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     game_id INTEGER NOT NULL,
@@ -157,5 +194,6 @@ try { db.exec('ALTER TABLE users ADD COLUMN position TEXT'); } catch (_) {}
 try { db.exec('ALTER TABLE users ADD COLUMN ip_hash TEXT'); } catch (_) {}
 try { db.exec('ALTER TABLE users ADD COLUMN discord TEXT'); } catch (_) {}
 try { db.exec('ALTER TABLE users ADD COLUMN discord_id TEXT'); } catch (_) {}
+try { db.exec('ALTER TABLE games ADD COLUMN playoff_series_id INTEGER'); } catch (_) {}
 
 module.exports = db;

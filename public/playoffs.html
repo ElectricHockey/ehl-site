@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Playoffs – EHL</title>
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    /* ── Bracket container ────────────────────────────────── */
+    .bracket-outer {
+      position: relative;
+      overflow-x: auto;
+      overflow-y: visible;
+    }
+    .bracket-grid {
+      display: flex;
+      align-items: flex-start;
+      gap: 0;
+      padding: 1.5rem 0.5rem 2rem;
+      min-width: max-content;
+      position: relative;
+    }
+    .bracket-svg {
+      position: absolute;
+      top: 0; left: 0;
+      pointer-events: none;
+      overflow: visible;
+    }
+
+    /* ── Round column ─────────────────────────────────────── */
+    .b-round {
+      display: flex;
+      flex-direction: column;
+      width: 210px;
+      flex-shrink: 0;
+    }
+    .b-round-title {
+      text-align: center;
+      font-size: 0.75rem;
+      color: #8b949e;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 0.5rem;
+      height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .b-spacer { flex-shrink: 0; }
+
+    /* ── Series card ──────────────────────────────────────── */
+    .b-series {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      overflow: hidden;
+      cursor: pointer;
+      transition: border-color 0.15s, box-shadow 0.15s;
+      flex-shrink: 0;
+    }
+    .b-series:hover { border-color: #58a6ff; box-shadow: 0 0 0 2px rgba(88,166,255,0.15); }
+    .b-series.b-series-complete { border-color: #3fb950; }
+
+    .b-team {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.35rem 0.55rem;
+      border-bottom: 1px solid #21262d;
+      min-height: 40px;
+    }
+    .b-team:last-child { border-bottom: none; }
+    .b-team.b-winner { background: rgba(63,185,80,0.08); }
+    .b-team.b-loser { opacity: 0.5; }
+
+    .b-seed {
+      font-size: 0.7rem;
+      font-weight: 700;
+      color: #8b949e;
+      min-width: 18px;
+      text-align: right;
+      flex-shrink: 0;
+    }
+    .b-logo {
+      width: 24px;
+      height: 24px;
+      object-fit: contain;
+      border-radius: 3px;
+      flex-shrink: 0;
+    }
+    .b-logo-placeholder {
+      width: 24px;
+      height: 24px;
+      background: #21262d;
+      border-radius: 3px;
+      flex-shrink: 0;
+    }
+    .b-team-name {
+      font-size: 0.78rem;
+      font-weight: 600;
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .b-wins {
+      font-size: 0.82rem;
+      font-weight: 700;
+      min-width: 18px;
+      text-align: center;
+      flex-shrink: 0;
+    }
+    .b-wins.b-wins-champion { color: #3fb950; }
+    .b-tbd {
+      color: #8b949e;
+      font-size: 0.75rem;
+      font-style: italic;
+    }
+
+    /* ── Champion box ─────────────────────────────────────── */
+    .b-champion-col {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      width: 160px;
+      flex-shrink: 0;
+    }
+    .b-champ-box {
+      background: linear-gradient(135deg,#1a3a2a,#1c2a3a);
+      border: 2px solid #3fb950;
+      border-radius: 12px;
+      padding: 1.5rem 1rem;
+      text-align: center;
+      min-width: 130px;
+    }
+    .b-champ-trophy { font-size: 2rem; margin-bottom: 0.4rem; }
+    .b-champ-label {
+      font-size: 0.7rem;
+      font-weight: 700;
+      color: #3fb950;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 0.5rem;
+    }
+    .b-champ-logo { width: 52px; height: 52px; object-fit: contain; border-radius: 6px; margin-bottom: 0.4rem; }
+    .b-champ-name { font-size: 0.9rem; font-weight: 700; color: #e6edf3; }
+    .b-champ-tbd {
+      background: #161b22;
+      border: 2px dashed #30363d;
+      border-radius: 12px;
+      padding: 1.5rem 1rem;
+      text-align: center;
+      color: #8b949e;
+      font-size: 0.85rem;
+      font-style: italic;
+      min-width: 130px;
+    }
+
+    /* ── Series detail panel ──────────────────────────────── */
+    .series-panel {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 10px;
+      padding: 1.25rem 1.5rem;
+      margin-top: 1.5rem;
+    }
+    .series-panel h3 { margin-bottom: 0.5rem; font-size: 1.1rem; }
+    .series-panel .sp-meta { color: #8b949e; font-size: 0.85rem; margin-bottom: 1rem; }
+    .sp-matchup {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      font-size: 1rem;
+      margin-bottom: 1rem;
+    }
+    .sp-team {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .sp-team img { width: 32px; height: 32px; object-fit: contain; border-radius: 4px; }
+    .sp-score {
+      font-size: 1.6rem;
+      font-weight: 700;
+      color: #58a6ff;
+      min-width: 80px;
+      text-align: center;
+    }
+
+    /* Games in series */
+    .series-games-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; margin-top: 0.75rem; }
+    .series-games-table th { color: #8b949e; font-weight: 600; padding: 0.3rem 0.6rem; text-align: left; border-bottom: 1px solid #21262d; }
+    .series-games-table td { padding: 0.45rem 0.6rem; border-bottom: 1px solid #21262d; }
+    .series-games-table tr:last-child td { border-bottom: none; }
+    .series-games-table tr:hover td { background: #1c2128; cursor: pointer; }
+
+    /* ── Empty / loading ──────────────────────────────────── */
+    .bracket-empty {
+      background: #161b22;
+      border: 1px dashed #30363d;
+      border-radius: 10px;
+      padding: 2.5rem;
+      text-align: center;
+      color: #8b949e;
+    }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="index.html" class="brand">
+      <img src="logo.svg" alt="EHL" class="brand-logo" />
+      <span class="brand-text">EHL</span>
+    </a>
+    <a href="index.html">Home</a>
+    <a href="schedule.html">Schedule</a>
+    <div class="nav-dropdown">
+      <a href="standings.html">Standings ▾</a>
+      <div class="nav-dropdown-menu">
+        <a href="recent-scores.html">🏒 Recent Scores</a>
+        <a href="playoffs.html" class="active">🏆 Playoffs</a>
+      </div>
+    </div>
+    <a href="stats.html">Stats</a>
+    <a href="admin.html">Admin</a>
+    <a href="register.html" class="nav-portal">Player Portal</a>
+  </nav>
+
+  <div class="container">
+    <h1 id="page-title">🏆 Playoffs</h1>
+    <div style="margin-bottom:1.25rem;" id="season-selector-container"></div>
+    <div id="playoff-root">
+      <p class="loading">Loading playoff bracket…</p>
+    </div>
+  </div>
+
+  <!-- Series detail modal -->
+  <div id="series-detail" class="series-panel" style="display:none;">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;">
+      <div>
+        <h3 id="sp-title">Series</h3>
+        <div class="sp-meta" id="sp-meta"></div>
+      </div>
+      <button class="btn-close" onclick="closeSeriesDetail()" title="Close">✕</button>
+    </div>
+    <div class="sp-matchup" id="sp-matchup"></div>
+    <div id="sp-games-section">
+      <h4 style="margin-bottom:0.5rem;font-size:0.9rem;color:#8b949e;">Games in this series</h4>
+      <div id="sp-games"><p class="loading" style="font-size:0.85rem;">Loading…</p></div>
+    </div>
+  </div>
+
+  <script src="season-selector.js"></script>
+  <script src="playoffs.js"></script>
+  <script src="notifications.js"></script>
+  <script src="nav.js"></script>
+</body>
+</html>
