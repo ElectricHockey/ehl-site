@@ -671,23 +671,29 @@ app.get('/api/players/profile/:name', (req, res) => {
   const seasonTeamStats = isGoalie
     ? db.prepare(`
         SELECT g.season_id, COALESCE(s.name,'No Season') AS season_name,
+          COALESCE(s.league_type,'') AS league_type,
+          CASE WHEN g.playoff_series_id IS NOT NULL THEN 1 ELSE 0 END AS is_playoff,
           ${GOALIE_SELECT}
         FROM game_player_stats gps
         JOIN teams t ON gps.team_id = t.id
         JOIN games g ON gps.game_id = g.id
         LEFT JOIN seasons s ON g.season_id = s.id
         WHERE gps.player_name = ? AND gps.position = 'G' AND g.status = 'complete'
-        GROUP BY g.season_id, gps.team_id ORDER BY g.season_id DESC
+        GROUP BY g.season_id, gps.team_id, CASE WHEN g.playoff_series_id IS NOT NULL THEN 1 ELSE 0 END
+        ORDER BY g.season_id DESC, is_playoff
       `).all(name)
     : db.prepare(`
         SELECT g.season_id, COALESCE(s.name,'No Season') AS season_name,
+          COALESCE(s.league_type,'') AS league_type,
+          CASE WHEN g.playoff_series_id IS NOT NULL THEN 1 ELSE 0 END AS is_playoff,
           ${SKATER_SELECT}
         FROM game_player_stats gps
         JOIN teams t ON gps.team_id = t.id
         JOIN games g ON gps.game_id = g.id
         LEFT JOIN seasons s ON g.season_id = s.id
         WHERE gps.player_name = ? AND gps.position != 'G' AND g.status = 'complete'
-        GROUP BY g.season_id, gps.team_id ORDER BY g.season_id DESC
+        GROUP BY g.season_id, gps.team_id, CASE WHEN g.playoff_series_id IS NOT NULL THEN 1 ELSE 0 END
+        ORDER BY g.season_id DESC, is_playoff
       `).all(name);
 
   // Last 5 games
@@ -698,11 +704,14 @@ app.get('/api/players/profile/:name', (req, res) => {
       gps.team_id AS player_team_id, gps.position,
       gps.goals, gps.assists, gps.shots, gps.hits, gps.plus_minus, gps.toi,
       gps.saves, gps.goals_against, gps.shots_against, gps.goalie_wins, gps.goalie_losses,
-      gps.overall_rating, gps.defensive_rating, gps.team_play_rating
+      gps.overall_rating, gps.defensive_rating, gps.team_play_rating,
+      COALESCE(s.league_type,'') AS league_type,
+      CASE WHEN g.playoff_series_id IS NOT NULL THEN 1 ELSE 0 END AS is_playoff
     FROM game_player_stats gps
     JOIN games g ON gps.game_id = g.id
     JOIN teams ht ON g.home_team_id = ht.id
     JOIN teams at ON g.away_team_id = at.id
+    LEFT JOIN seasons s ON g.season_id = s.id
     WHERE gps.player_name = ? AND g.status = 'complete'
     ORDER BY g.date DESC, g.id DESC LIMIT 5
   `).all(name);

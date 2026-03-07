@@ -1,5 +1,13 @@
 const API = '/api';
 
+// League type keys — must match values stored in the seasons.league_type column
+const LT_SIXES  = 'sixes';
+const LT_THREES = 'threes';
+const LT_TABS   = [
+  { key: LT_SIXES,  label: "6's" },
+  { key: LT_THREES, label: "3's" },
+];
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function formatToi(s) {
@@ -219,22 +227,22 @@ function goalieThead() {
 function renderCareerTable(seasonTeamStats, isGoalie) {
   if (!seasonTeamStats.length) return '<p style="color:#8b949e;">No stats recorded yet.</p>';
 
-  // Group rows by season
-  const seasons = [];
-  const seasonMap = {};
+  // Group rows by (season_id, is_playoff) — each combination becomes one visual block
+  const blocks = [];
+  const blockMap = {};
   for (const r of seasonTeamStats) {
-    const key = r.season_id ?? 'none';
-    if (!seasonMap[key]) {
-      seasonMap[key] = { season_id: r.season_id, season_name: r.season_name, rows: [] };
-      seasons.push(seasonMap[key]);
+    const ip = r.is_playoff ? 1 : 0;
+    const key = `${r.season_id ?? 'none'}_${ip}`;
+    if (!blockMap[key]) {
+      blockMap[key] = { season_id: r.season_id, season_name: r.season_name, is_playoff: ip, rows: [] };
+      blocks.push(blockMap[key]);
     }
-    seasonMap[key].rows.push(r);
+    blockMap[key].rows.push(r);
   }
 
-  const allRows = seasonTeamStats;
-  const careerTotal = isGoalie ? sumGoalieRows(allRows) : sumSkaterRows(allRows);
-  careerTotal.team_name = 'Career Total';
-  careerTotal.team_logo = null;
+  const regularRows = seasonTeamStats.filter(r => !r.is_playoff);
+  const playoffRows = seasonTeamStats.filter(r => r.is_playoff);
+  const hasPlayoffs = playoffRows.length > 0;
 
   const thead = isGoalie ? goalieThead() : skaterThead();
   const rowFn = isGoalie ? goalieRow : skaterRow;
@@ -242,25 +250,43 @@ function renderCareerTable(seasonTeamStats, isGoalie) {
   let html = `<div style="overflow-x:auto;"><table class="season-stats-table">
     ${thead}<tbody>`;
 
-  for (const season of seasons) {
-    const { season_name, rows } = season;
+  for (const block of blocks) {
+    const { season_name, is_playoff, rows } = block;
 
-    // Season separator label row
-    html += `<tr><td colspan="99" style="background:#0d1117;color:#8b949e;font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;padding:0.35rem 0.5rem;">📅 ${season_name}</td></tr>`;
+    if (is_playoff) {
+      html += `<tr><td colspan="99" style="background:#0d1117;color:#f0883e;font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;padding:0.35rem 0.5rem;">🏆 ${season_name} – Playoffs</td></tr>`;
+    } else {
+      html += `<tr><td colspan="99" style="background:#0d1117;color:#8b949e;font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;padding:0.35rem 0.5rem;">📅 ${season_name}</td></tr>`;
+    }
 
     for (const r of rows) html += rowFn(r);
 
-    // Season total (only if more than one team this season)
+    // Block total (only if player was on multiple teams within this block)
     if (rows.length > 1) {
-      const seasonTot = isGoalie ? sumGoalieRows(rows) : sumSkaterRows(rows);
-      seasonTot.team_name = 'Season Total';
-      seasonTot.team_logo = null;
-      html += rowFn(seasonTot, 'season-total-row');
+      const blockTot = isGoalie ? sumGoalieRows(rows) : sumSkaterRows(rows);
+      blockTot.team_name = is_playoff ? 'Playoff Total' : 'Season Total';
+      blockTot.team_logo = null;
+      html += rowFn(blockTot, 'season-total-row');
     }
   }
 
-  // Career total
-  html += rowFn(careerTotal, 'career-total-row');
+  // Career totals — split regular vs playoff when both exist
+  if (hasPlayoffs && regularRows.length > 0) {
+    const regTotal = isGoalie ? sumGoalieRows(regularRows) : sumSkaterRows(regularRows);
+    regTotal.team_name = 'Regular Season Career';
+    regTotal.team_logo = null;
+    html += rowFn(regTotal, 'career-total-row');
+
+    const plTotal = isGoalie ? sumGoalieRows(playoffRows) : sumSkaterRows(playoffRows);
+    plTotal.team_name = 'Playoffs Career';
+    plTotal.team_logo = null;
+    html += rowFn(plTotal, 'career-total-row');
+  } else {
+    const careerTotal = isGoalie ? sumGoalieRows(seasonTeamStats) : sumSkaterRows(seasonTeamStats);
+    careerTotal.team_name = 'Career Total';
+    careerTotal.team_logo = null;
+    html += rowFn(careerTotal, 'career-total-row');
+  }
 
   html += '</tbody></table></div>';
   return html;
@@ -324,6 +350,43 @@ function renderLastGames(lastGames, name, isGoalie) {
   </table></div>`;
 }
 
+// ── League-type tab rendering ──────────────────────────────────────────────
+
+function renderLeagueSections(seasonTeamStats, lastGames, isGoalie) {
+  const ltSet = new Set(seasonTeamStats.map(r => r.league_type || ''));
+  lastGames.forEach(g => ltSet.add(g.league_type || ''));
+
+  const has6 = ltSet.has(LT_SIXES);
+  const has3 = ltSet.has(LT_THREES);
+
+  // If only one type (or no type info), render flat — no tabs needed
+  if (!has6 || !has3) {
+    return `
+      <h2 class="section-heading">🕐 Last 5 Games</h2>
+      ${renderLastGames(lastGames, '', isGoalie)}
+      <h2 class="section-heading">📊 Career Stats</h2>
+      ${renderCareerTable(seasonTeamStats, isGoalie)}`;
+  }
+
+  // Both types exist — build tabs
+  const tabButtons = LT_TABS.map((t, i) =>
+    `<button class="lt-tab${i === 0 ? ' lt-tab-active' : ''}" data-lt="${t.key}">${t.label}</button>`
+  ).join('');
+
+  const tabPanels = LT_TABS.map((t, i) => {
+    const filteredStats = seasonTeamStats.filter(r => (r.league_type || '') === t.key);
+    const filteredGames = lastGames.filter(g => (g.league_type || '') === t.key);
+    return `<div class="lt-panel" id="lt-panel-${t.key}" style="${i > 0 ? 'display:none;' : ''}">
+      <h2 class="section-heading" style="margin-top:0.75rem;">🕐 Last 5 Games</h2>
+      ${renderLastGames(filteredGames, '', isGoalie)}
+      <h2 class="section-heading">📊 Career Stats</h2>
+      ${renderCareerTable(filteredStats, isGoalie)}
+    </div>`;
+  }).join('');
+
+  return `<div class="lt-tabs">${tabButtons}</div>${tabPanels}`;
+}
+
 // ── Main ───────────────────────────────────────────────────────────────────
 
 async function loadPlayer() {
@@ -378,15 +441,24 @@ async function loadPlayer() {
           </div>
         </div>
       </div>
-
-      <h2 class="section-heading">🕐 Last 5 Games</h2>
-      ${renderLastGames(lastGames, name, isGoalie)}
-
-      <h2 class="section-heading">📊 Career Stats</h2>
-      ${renderCareerTable(seasonTeamStats, isGoalie)}
+      ${renderLeagueSections(seasonTeamStats, lastGames, isGoalie)}
     `;
 
     root.innerHTML = html;
+
+    // Wire up league-type tab buttons
+    root.querySelectorAll('.lt-tab').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const lt = btn.dataset.lt;
+        // Only act on known league-type keys to avoid selector injection
+        if (!LT_TABS.some(t => t.key === lt)) return;
+        root.querySelectorAll('.lt-tab').forEach(b => b.classList.remove('lt-tab-active'));
+        btn.classList.add('lt-tab-active');
+        root.querySelectorAll('.lt-panel').forEach(p => { p.style.display = 'none'; });
+        const panel = root.querySelector(`#lt-panel-${lt}`);
+        if (panel) panel.style.display = '';
+      });
+    });
   } catch (err) {
     root.innerHTML = `<p class="error">Failed to load player: ${err.message}</p>`;
   }

@@ -75,6 +75,27 @@
     .back-link:hover { text-decoration: underline; }
     .player-link { color: #58a6ff; text-decoration: none; }
     .player-link:hover { text-decoration: underline; }
+    /* League-type tabs */
+    .lt-tabs {
+      display: flex;
+      gap: 0;
+      border-bottom: 2px solid #30363d;
+      margin-bottom: 0;
+    }
+    .lt-tab {
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: #8b949e;
+      cursor: pointer;
+      font-size: 0.95rem;
+      font-weight: 700;
+      padding: 0.5rem 1.25rem;
+      margin-bottom: -2px;
+      transition: color 0.15s;
+    }
+    .lt-tab:hover { color: #e6edf3; }
+    .lt-tab.lt-tab-active { color: #58a6ff; border-bottom-color: #58a6ff; }
   </style>
 </head>
 <body>
