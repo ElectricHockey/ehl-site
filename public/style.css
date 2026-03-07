@@ -275,6 +275,12 @@ tbody tr.team-row:hover {
   );
 }
 
+/* ── League type section headings (dual 3's/6's layout) ──────────────────── */
+.league-section-heading {
+  color: #58a6ff;
+  border-color: #1f6feb;
+}
+
 /* ── Notification bell ────────────────────────────────────── */
 #notif-bell-wrap {
   position: relative;

@@ -91,7 +91,7 @@ async function loadSeasons() {
   allSeasons = await res.json();
   const list = document.getElementById('seasons-list');
 
-  const typeLabel = lt => lt === 'threes' ? "3's" : lt === 'sixes' ? "6's" : 'General';
+  const typeLabel = lt => lt === 'threes' ? "3's" : lt === 'sixes' ? "6's" : lt || '?';
 
   if (allSeasons.length === 0) {
     list.innerHTML = '<p style="color:#8b949e;font-size:0.85rem;">No seasons yet. Create one above.</p>';
@@ -108,7 +108,7 @@ async function loadSeasons() {
 
   // Populate season dropdowns in game form
   const seasonOpts = '<option value="">— No Season —</option>' +
-    allSeasons.map(s => `<option value="${s.id}"${s.is_active ? ' selected' : ''}>${s.name}${s.league_type ? ' (' + typeLabel(s.league_type) + ')' : ''}</option>`).join('');
+    allSeasons.map(s => `<option value="${s.id}"${s.is_active ? ' selected' : ''}>${s.name} (${typeLabel(s.league_type)})</option>`).join('');
   document.getElementById('game-season').innerHTML = seasonOpts;
 }
 

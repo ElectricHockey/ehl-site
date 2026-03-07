@@ -198,71 +198,81 @@ function renderPickerPlayerStats(players) {
 // ── Schedule table ─────────────────────────────────────────────────────────
 
 async function loadSchedule() {
-  const root = document.getElementById('schedule-root');
-  try {
-    const sid = SeasonSelector.getSelectedSeasonId();
-    const url = sid ? `${API}/games?season_id=${sid}` : `${API}/games`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error('Server error');
-    allGames = await res.json();
+  const threesSid = SeasonSelector.getSelectedSeasonId('threes');
+  const sixesSid  = SeasonSelector.getSelectedSeasonId('sixes');
 
-    if (allGames.length === 0) {
-      root.innerHTML = '<p style="color:#8b949e">No games scheduled yet. Add games in the <a href="admin.html">Admin Panel</a>.</p>';
-      return;
-    }
+  const fetchGames = async sid => {
+    if (!sid) return [];
+    try {
+      const res = await fetch(`${API}/games?season_id=${sid}`);
+      return res.ok ? await res.json() : [];
+    } catch { return []; }
+  };
 
-    const sorted = [...allGames].sort((a, b) => a.date.localeCompare(b.date));
+  const [gamesThrees, gamesSixes] = await Promise.all([
+    fetchGames(threesSid),
+    fetchGames(sixesSid),
+  ]);
 
-    // Build columns: always show Date, Teams, Score, Status; admin also sees EA and actions
-    root.innerHTML = `
-      <table id="schedule-table">
-        <thead>
-          <tr>
-            <th>Date</th>
-            <th>Home Team</th>
-            <th>Score</th>
-            <th>Away Team</th>
-            <th>Status</th>
-            ${isAdmin ? '<th>EA Match</th><th>Actions</th>' : ''}
-          </tr>
-        </thead>
-        <tbody>
-          ${sorted.map(g => `
-            <tr class="game-row" id="game-row-${g.id}" data-game-id="${g.id}"
-              onclick="toggleGameDetail(${g.id}, event)">
-              <td>${g.date}</td>
-              <td>${g.home_logo ? `<img src="${g.home_logo}" style="width:22px;height:22px;object-fit:contain;vertical-align:middle;margin-right:0.3rem;border-radius:3px;" />` : ''}${g.home_team_name}</td>
-              <td>${g.status === 'complete' ? `${g.home_score} – ${g.away_score}` : '–'}</td>
-              <td>${g.away_logo ? `<img src="${g.away_logo}" style="width:22px;height:22px;object-fit:contain;vertical-align:middle;margin-right:0.3rem;border-radius:3px;" />` : ''}${g.away_team_name}</td>
-              <td id="status-cell-${g.id}">${statusBadge(g.status)}</td>
-              ${isAdmin ? `
-              <td id="ea-status-${g.id}">
-                ${g.ea_match_id
-                  ? `<span class="ea-badge ea-badge-linked">🔗 Linked</span>`
-                  : `<span class="ea-badge ea-badge-unlinked">Not linked</span>`}
-              </td>
-              <td>
-                <button class="btn-secondary" style="font-size:0.82rem;padding:0.3rem 0.7rem;"
-                  onclick="togglePicker(${g.id}, event)">
-                  Pick EA Match
-                </button>
-              </td>` : ''}
-            </tr>`).join('')}
-        </tbody>
-      </table>`;
+  // Combined for lookup
+  allGames = [...gamesThrees, ...gamesSixes];
 
-    // Check for ?g= URL param to auto-open a game
-    const params = new URLSearchParams(window.location.search);
-    const gParam = params.get('g');
-    if (gParam) {
-      const gId = parseInt(gParam, 10);
-      if (allGames.find(g => g.id === gId)) {
-        await openGameDetail(gId);
-      }
-    }
-  } catch (err) {
-    root.innerHTML = `<p class="error">Failed to load schedule: ${err.message}. Is the server running?</p>`;
+  renderScheduleSection('schedule-threes', gamesThrees);
+  renderScheduleSection('schedule-sixes',  gamesSixes);
+
+  // Check for ?g= URL param to auto-open a game
+  const params = new URLSearchParams(window.location.search);
+  const gParam = params.get('g');
+  if (gParam) {
+    const gId = parseInt(gParam, 10);
+    if (allGames.find(g => g.id === gId)) await openGameDetail(gId);
   }
+}
+
+function renderScheduleSection(containerId, games) {
+  const root = document.getElementById(containerId);
+  if (!root) return;
+  if (!games || games.length === 0) {
+    root.innerHTML = '<p style="color:#8b949e;">No games scheduled yet.</p>';
+    return;
+  }
+  const sorted = [...games].sort((a, b) => a.date.localeCompare(b.date));
+  root.innerHTML = `
+    <table class="schedule-section-table">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Home Team</th>
+          <th>Score</th>
+          <th>Away Team</th>
+          <th>Status</th>
+          ${isAdmin ? '<th>EA Match</th><th>Actions</th>' : ''}
+        </tr>
+      </thead>
+      <tbody>
+        ${sorted.map(g => `
+          <tr class="game-row" id="game-row-${g.id}" data-game-id="${g.id}"
+            onclick="toggleGameDetail(${g.id}, event)">
+            <td>${g.date}</td>
+            <td>${g.home_logo ? `<img src="${g.home_logo}" style="width:22px;height:22px;object-fit:contain;vertical-align:middle;margin-right:0.3rem;border-radius:3px;" />` : ''}${g.home_team_name}</td>
+            <td>${g.status === 'complete' ? `${g.home_score} – ${g.away_score}` : '–'}</td>
+            <td>${g.away_logo ? `<img src="${g.away_logo}" style="width:22px;height:22px;object-fit:contain;vertical-align:middle;margin-right:0.3rem;border-radius:3px;" />` : ''}${g.away_team_name}</td>
+            <td id="status-cell-${g.id}">${statusBadge(g.status)}</td>
+            ${isAdmin ? `
+            <td id="ea-status-${g.id}">
+              ${g.ea_match_id
+                ? `<span class="ea-badge ea-badge-linked">🔗 Linked</span>`
+                : `<span class="ea-badge ea-badge-unlinked">Not linked</span>`}
+            </td>
+            <td>
+              <button class="btn-secondary" style="font-size:0.82rem;padding:0.3rem 0.7rem;"
+                onclick="togglePicker(${g.id}, event)">
+                Pick EA Match
+              </button>
+            </td>` : ''}
+          </tr>`).join('')}
+      </tbody>
+    </table>`;
 }
 
 // ── Game Detail Panel ──────────────────────────────────────────────────────
@@ -565,13 +575,17 @@ async function clearAssignment(gameId) {
 
 async function refreshGame(gameId) {
   try {
-    const sid = SeasonSelector.getSelectedSeasonId();
-    const url = sid ? `${API}/games?season_id=${sid}` : `${API}/games`;
-    const res = await fetch(url);
-    if (!res.ok) return;
-    const games = await res.json();
-    allGames = games;
-    const g = games.find(x => x.id === gameId);
+    // Reload both schedules
+    const threesSid = SeasonSelector.getSelectedSeasonId('threes');
+    const sixesSid  = SeasonSelector.getSelectedSeasonId('sixes');
+    const fetchGames = async sid => {
+      if (!sid) return [];
+      const res = await fetch(`${API}/games?season_id=${sid}`);
+      return res.ok ? await res.json() : [];
+    };
+    const [gamesThrees, gamesSixes] = await Promise.all([fetchGames(threesSid), fetchGames(sixesSid)]);
+    allGames = [...gamesThrees, ...gamesSixes];
+    const g = allGames.find(x => x.id === gameId);
     if (!g) return;
     const row = document.getElementById(`game-row-${gameId}`);
     if (row) {

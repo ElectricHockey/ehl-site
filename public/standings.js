@@ -16,87 +16,104 @@ function teamRowAttrs(t) {
   return ` class="team-row" style="--c1:${c1};--c2:${c2};"`;
 }
 
+const thead = `<thead><tr>
+  <th>Team</th><th>GP</th><th>W</th><th title="Overtime wins (included in W)">OTW</th>
+  <th>L</th><th title="Overtime losses">OTL</th><th>PTS</th>
+  <th>GF</th><th>GA</th><th>DIFF</th><th>STK</th><th>HOME</th><th>AWAY</th>
+</tr></thead>`;
+
+const logoHtml = t => t.logo_url
+  ? `<img src="${t.logo_url}" style="width:24px;height:24px;object-fit:contain;vertical-align:middle;margin-right:0.4rem;border-radius:3px;" />`
+  : '';
+
+const streakStyle = s => s && s.startsWith('W')
+  ? 'font-weight:600;color:#3fb950;'
+  : s && s.startsWith('L') ? 'font-weight:600;color:#f85149;' : '';
+
+function makeRow(t) {
+  const diff = t.gf - t.ga;
+  return `<tr${teamRowAttrs(t)}>
+    <td>${logoHtml(t)}<a href="team.html?id=${t.id}">${t.name}</a></td>
+    <td>${t.gp}</td>
+    <td>${t.w}</td>
+    <td style="color:#8b949e;">${t.otw || 0}</td>
+    <td>${t.l}</td>
+    <td style="color:#8b949e;">${t.otl || 0}</td>
+    <td><strong>${t.pts}</strong></td>
+    <td>${t.gf}</td><td>${t.ga}</td>
+    <td>${diff >= 0 ? '+' : ''}${diff}</td>
+    <td style="${streakStyle(t.streak)}">${t.streak || '—'}</td>
+    <td style="color:#8b949e;font-size:0.82rem;">${t.home_record || '0-0-0'}</td>
+    <td style="color:#8b949e;font-size:0.82rem;">${t.away_record || '0-0-0'}</td>
+  </tr>`;
+}
+
+function buildStandingsHtml(teams) {
+  if (!teams) return '<p style="color:#8b949e">Select a season above to view standings.</p>';
+  if (teams.length === 0) return '<p style="color:#8b949e">No standings data for this season yet.</p>';
+
+  const hasGroups = teams.some(t => t.conference || t.division);
+  if (!hasGroups) {
+    const rows = [...teams].sort((a, b) => b.pts - a.pts || b.w - a.w).map(makeRow).join('');
+    return `<div style="overflow-x:auto;"><table>${thead}<tbody>${rows}</tbody></table></div>`;
+  }
+
+  // Grouped by conference → division
+  const conferences = {};
+  for (const t of teams) {
+    const conf = t.conference || 'Unassigned';
+    const div  = t.division  || '';
+    if (!conferences[conf]) conferences[conf] = {};
+    if (!conferences[conf][div]) conferences[conf][div] = [];
+    conferences[conf][div].push(t);
+  }
+  let html = '';
+  for (const conf of Object.keys(conferences).sort()) {
+    html += `<div class="conference-block"><h3>${conf}${conf !== 'Unassigned' ? ' Conference' : ''}</h3>`;
+    for (const div of Object.keys(conferences[conf]).sort()) {
+      if (div) html += `<div class="division-block"><h4 style="font-size:1rem;color:#8b949e;margin-top:1rem;">${div} Division</h4>`;
+      html += `<div style="overflow-x:auto;"><table>${thead}<tbody>`;
+      for (const t of conferences[conf][div].sort((a, b) => b.pts - a.pts || b.w - a.w)) {
+        html += makeRow(t);
+      }
+      html += '</tbody></table></div>';
+      if (div) html += '</div>';
+    }
+    html += '</div>';
+  }
+  return html;
+}
+
+async function fetchStandings(seasonId) {
+  if (!seasonId) return null;
+  try {
+    const res = await fetch(`${API}/standings?season_id=${seasonId}`);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch { return null; }
+}
+
 async function loadStandings() {
   const root = document.getElementById('standings-root');
+  root.innerHTML = '<p class="loading">Loading standings…</p>';
   try {
-    const sid = typeof SeasonSelector !== 'undefined' ? SeasonSelector.getSelectedSeasonId() : null;
-    const url = sid ? `${API}/standings?season_id=${sid}` : `${API}/standings`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error('Server error');
-    const teams = await res.json();
+    const threesSid = typeof SeasonSelector !== 'undefined' ? SeasonSelector.getSelectedSeasonId('threes') : null;
+    const sixesSid  = typeof SeasonSelector !== 'undefined' ? SeasonSelector.getSelectedSeasonId('sixes')  : null;
 
-    if (teams.length === 0) {
-      root.innerHTML = '<p style="color:#8b949e">No standings data yet. Add teams and games in the Admin panel.</p>';
-      return;
-    }
+    const [threesTeams, sixesTeams] = await Promise.all([
+      fetchStandings(threesSid),
+      fetchStandings(sixesSid),
+    ]);
 
-    // Logo helper
-    const logoHtml = t => t.logo_url
-      ? `<img src="${t.logo_url}" style="width:24px;height:24px;object-fit:contain;vertical-align:middle;margin-right:0.4rem;border-radius:3px;" />`
-      : '';
-
-    const streakStyle = s => s && s.startsWith('W')
-      ? 'font-weight:600;color:#3fb950;'
-      : s && s.startsWith('L') ? 'font-weight:600;color:#f85149;' : '';
-
-    const makeRow = t => {
-      const diff = t.gf - t.ga;
-      return `<tr${teamRowAttrs(t)}>
-        <td>${logoHtml(t)}<a href="team.html?id=${t.id}">${t.name}</a></td>
-        <td>${t.gp}</td>
-        <td>${t.w}</td>
-        <td style="color:#8b949e;">${t.otw || 0}</td>
-        <td>${t.l}</td>
-        <td style="color:#8b949e;">${t.otl || 0}</td>
-        <td><strong>${t.pts}</strong></td>
-        <td>${t.gf}</td><td>${t.ga}</td>
-        <td>${diff >= 0 ? '+' : ''}${diff}</td>
-        <td style="${streakStyle(t.streak)}">${t.streak || '—'}</td>
-        <td style="color:#8b949e;font-size:0.82rem;">${t.home_record || '0-0-0'}</td>
-        <td style="color:#8b949e;font-size:0.82rem;">${t.away_record || '0-0-0'}</td>
-      </tr>`;
-    };
-
-    const thead = `<thead><tr>
-      <th>Team</th><th>GP</th><th>W</th><th title="Overtime wins (included in W)">OTW</th>
-      <th>L</th><th title="Overtime losses">OTL</th><th>PTS</th>
-      <th>GF</th><th>GA</th><th>DIFF</th><th>STK</th><th>HOME</th><th>AWAY</th>
-    </tr></thead>`;
-
-    // Check if any team has conference/division
-    const hasGroups = teams.some(t => t.conference || t.division);
-
-    if (!hasGroups) {
-      const rows = [...teams].sort((a, b) => b.pts - a.pts || b.w - a.w).map(makeRow).join('');
-      root.innerHTML = `<div style="overflow-x:auto;"><table>${thead}<tbody>${rows}</tbody></table></div>`;
-      return;
-    }
-
-    // Grouped by conference → division
-    const conferences = {};
-    for (const t of teams) {
-      const conf = t.conference || 'Unassigned';
-      const div = t.division || '';
-      if (!conferences[conf]) conferences[conf] = {};
-      if (!conferences[conf][div]) conferences[conf][div] = [];
-      conferences[conf][div].push(t);
-    }
-
-    let html = '';
-    for (const conf of Object.keys(conferences).sort()) {
-      html += `<div class="conference-block"><h2>${conf}${conf !== 'Unassigned' ? ' Conference' : ''}</h2>`;
-      for (const div of Object.keys(conferences[conf]).sort()) {
-        if (div) html += `<div class="division-block"><h3>${div} Division</h3>`;
-        html += `<div style="overflow-x:auto;"><table>${thead}<tbody>`;
-        for (const t of conferences[conf][div].sort((a, b) => b.pts - a.pts || b.w - a.w)) {
-          html += makeRow(t);
-        }
-        html += '</tbody></table></div>';
-        if (div) html += '</div>';
-      }
-      html += '</div>';
-    }
-    root.innerHTML = html;
+    root.innerHTML = `
+      <div class="league-standings-block">
+        <h2 class="league-section-heading">⛸️ 3's Standings</h2>
+        ${buildStandingsHtml(threesTeams)}
+      </div>
+      <div class="league-standings-block" style="margin-top:2.5rem;">
+        <h2 class="league-section-heading">🏒 6's Standings</h2>
+        ${buildStandingsHtml(sixesTeams)}
+      </div>`;
   } catch (err) {
     root.innerHTML = `<p class="error">Failed to load standings. Is the server running?</p>`;
   }
