@@ -17,14 +17,68 @@ document.addEventListener('click', e => {
   }
 });
 
-// Stat-tip click/tap toggle (for mobile and for clicking stat headers)
-document.addEventListener('click', e => {
-  const tip = e.target.closest('[data-tip]');
-  if (tip) {
-    const wasOpen = tip.classList.contains('tip-open');
-    document.querySelectorAll('[data-tip].tip-open').forEach(el => el.classList.remove('tip-open'));
-    if (!wasOpen) tip.classList.add('tip-open');
-  } else {
-    document.querySelectorAll('[data-tip].tip-open').forEach(el => el.classList.remove('tip-open'));
+// ── JS-driven stat-column tooltips ──────────────────────────────────────────
+// Uses position:fixed so tooltips are NEVER clipped by overflow:auto containers.
+
+(function () {
+  // Create a single shared tooltip element once
+  let tooltip = document.getElementById('gs-tooltip');
+  if (!tooltip) {
+    tooltip = document.createElement('div');
+    tooltip.id = 'gs-tooltip';
+    document.body.appendChild(tooltip);
   }
-});
+
+  function showTooltip(target) {
+    const text = target.getAttribute('data-tip');
+    if (!text) return;
+    tooltip.textContent = text;
+    tooltip.style.display = 'block';
+    positionTooltip(target);
+  }
+
+  function hideTooltip() {
+    tooltip.style.display = 'none';
+  }
+
+  function positionTooltip(target) {
+    const r = target.getBoundingClientRect();
+    const tw = tooltip.offsetWidth;
+    const th = tooltip.offsetHeight;
+    // Centre above the target; clamp to viewport edges
+    let left = r.left + r.width / 2 - tw / 2;
+    let top  = r.top - th - 6;
+    // Clamp horizontally
+    if (left < 6) left = 6;
+    if (left + tw > window.innerWidth - 6) left = window.innerWidth - tw - 6;
+    // If above viewport, flip below
+    if (top < 6) top = r.bottom + 6;
+    tooltip.style.left = left + 'px';
+    tooltip.style.top  = top  + 'px';
+  }
+
+  // Hover on desktop
+  document.addEventListener('mouseover', e => {
+    const tip = e.target.closest('[data-tip]');
+    if (tip) showTooltip(tip);
+  });
+  document.addEventListener('mouseout', e => {
+    const tip = e.target.closest('[data-tip]');
+    if (tip) hideTooltip();
+  });
+
+  // Click/tap for mobile
+  document.addEventListener('click', e => {
+    const tip = e.target.closest('[data-tip]');
+    if (tip) {
+      if (tooltip.style.display === 'block' && tooltip.textContent === tip.getAttribute('data-tip')) {
+        hideTooltip();
+      } else {
+        showTooltip(tip);
+      }
+    } else {
+      hideTooltip();
+    }
+  });
+}());
+

@@ -432,3 +432,66 @@ tbody tr.team-row:hover {
 /* Player / team links inside tables */
 .player-link { color: #58a6ff; text-decoration: none; }
 .player-link:hover { text-decoration: underline; }
+
+/* ── Unified game stats table (game.html, schedule.html panel) ── */
+/* Scroll wrapper – overflow-y:visible allows JS tooltip to escape vertically */
+.stats-scroll-wrap {
+  overflow-x: auto;
+}
+
+.game-stats-table {
+  width: max-content;
+  font-size: 0.82rem;
+  border-collapse: collapse;
+}
+.game-stats-table thead th {
+  font-size: 0.72rem;
+  padding: 0.4rem 0.6rem;
+  border-bottom: 2px solid #30363d;
+  background: #161b22;
+  white-space: nowrap;
+  /* Keep th positioned so tooltip ::after can escape with JS positioning */
+  position: relative;
+}
+.game-stats-table td {
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid #21262d;
+  white-space: nowrap;
+}
+.game-stats-table tbody tr:hover td { background: #1c2128; }
+.game-stats-table .gs-rating { text-align: center; border-radius: 3px; }
+
+/* Team panel used inside game.html and schedule detail panel */
+.team-panel { margin-bottom: 2rem; }
+.team-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.6rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 2px solid #30363d;
+}
+.team-panel-logo { width: 28px; height: 28px; object-fit: contain; border-radius: 4px; background: #21262d; }
+.team-panel-name { font-size: 1rem; font-weight: 700; color: #e6edf3; }
+.stats-section-label {
+  font-size: 0.78rem; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.06em; color: #8b949e; margin: 0.75rem 0 0.3rem;
+}
+.no-stats { color: #8b949e; font-size: 0.88rem; padding: 0.4rem 0; }
+
+/* ── JS-driven tooltip (escapes overflow containers) ────────── */
+#gs-tooltip {
+  position: fixed;
+  z-index: 9000;
+  background: #1c2a3a;
+  color: #e6edf3;
+  border: 1px solid #388bfd55;
+  border-radius: 6px;
+  padding: 0.25rem 0.55rem;
+  font-size: 0.73rem;
+  font-weight: 500;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.45);
+  display: none;
+}
