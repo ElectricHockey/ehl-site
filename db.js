@@ -196,4 +196,51 @@ try { db.exec('ALTER TABLE users ADD COLUMN discord TEXT'); } catch (_) {}
 try { db.exec('ALTER TABLE users ADD COLUMN discord_id TEXT'); } catch (_) {}
 try { db.exec('ALTER TABLE games ADD COLUMN playoff_series_id INTEGER'); } catch (_) {}
 
+// ── Seed teams ──────────────────────────────────────────────────────────────
+// Edit this array to define your league's teams.
+// Teams are only inserted when the `teams` table is empty, so you can freely
+// add/remove entries here and then delete `league.db` to re-seed from scratch.
+//
+// Fields:
+//   name        (required) – display name of the team
+//   conference  – e.g. 'East', 'West'  (leave '' if unused)
+//   division    – e.g. 'Atlantic', 'Pacific'  (leave '' if unused)
+//   league_type – 'sixes' (6v6) | 'threes' (3v3) | '' (unset)
+//   color1      – primary hex colour, e.g. '#1a73e8'
+//   color2      – secondary hex colour, e.g. '#ffffff'
+//
+// To link each team to its EA Pro Clubs club, use the Admin panel after startup
+// (or add an `ea_club_id` integer field here and include it in the INSERT below).
+
+const SEED_TEAMS = [
+  // ── Example teams – replace with your actual teams ──────────────────────
+  // { name: 'Chicago Wolves',      conference: 'West', division: 'Central',  league_type: 'sixes',  color1: '#cc0000', color2: '#000000' },
+  // { name: 'New York Rangers',    conference: 'East', division: 'Atlantic', league_type: 'sixes',  color1: '#0038a8', color2: '#ce1126' },
+  // { name: 'Toronto Maple Leafs', conference: 'East', division: 'Atlantic', league_type: 'sixes',  color1: '#003e7e', color2: '#ffffff' },
+  // { name: 'Vancouver Canucks',   conference: 'West', division: 'Pacific',  league_type: 'sixes',  color1: '#00843d', color2: '#00205b' },
+];
+
+if (SEED_TEAMS.length > 0) {
+  const existing = db.prepare('SELECT COUNT(*) AS n FROM teams').get().n;
+  if (existing === 0) {
+    const insert = db.prepare(
+      'INSERT INTO teams (name, conference, division, league_type, color1, color2) VALUES (?, ?, ?, ?, ?, ?)'
+    );
+    const seedAll = db.transaction(() => {
+      for (const t of SEED_TEAMS) {
+        insert.run(
+          t.name        || '',
+          t.conference  || '',
+          t.division    || '',
+          t.league_type || '',
+          t.color1      || '',
+          t.color2      || ''
+        );
+      }
+    });
+    seedAll();
+    console.log(`[db] Seeded ${SEED_TEAMS.length} team(s).`);
+  }
+}
+
 module.exports = db;
