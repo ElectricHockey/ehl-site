@@ -6,7 +6,12 @@ function formatToi(s) {
   return `${m}:${String(sec).padStart(2,'0')}`;
 }
 function fmt1(v) { return v !== null && v !== undefined ? Number(v).toFixed(1) : '–'; }
-function pct3(v) { return v !== null && v !== undefined ? (v < 1 ? (v * 100).toFixed(1) : Number(v).toFixed(1)) + '%' : '–'; }
+function fmtPct(v) { return v !== null && v !== undefined ? Number(v).toFixed(1) + '%' : '–'; }
+function pct3(v) {
+  if (v === null || v === undefined) return '–';
+  const frac = v > 1 ? v / 100 : v;
+  return frac.toFixed(3).replace(/^0(?=\.)/, '');
+}
 function resultBadge(r) {
   if (r === 'W') return '<span class="badge badge-win">W</span>';
   if (r === 'L') return '<span class="badge badge-loss">L</span>';
@@ -66,7 +71,7 @@ function renderSkaterTable(players, teamColors) {
       <td>${p.pp_goals}</td><td>${p.sh_goals}</td><td>${p.gwg||0}</td>
       <td>${p.pim}</td><td>${p.penalties_drawn||0}</td>
       <td>${p.faceoff_wins||0}</td><td>${p.faceoff_total||0}</td>
-      <td>${fmt1(p.fow_pct)}%</td><td>${fmt1(p.shot_pct)}%</td>
+      <td>${fmtPct(p.fow_pct)}</td><td>${fmtPct(p.shot_pct)}</td>
       <td>${p.deflections||0}</td><td>${p.interceptions||0}</td>
       <td>${p.pass_attempts||0}</td><td>${p.pass_pct_calc !== null && p.pass_pct_calc !== undefined ? fmt1(p.pass_pct_calc)+'%' : '–'}</td>
       <td>${p.hat_tricks||0}</td>

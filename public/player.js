@@ -18,7 +18,8 @@ function formatToi(s) {
 function fmt1(v) { return v !== null && v !== undefined ? Number(v).toFixed(1) : '–'; }
 function pct3(v) {
   if (v === null || v === undefined) return '–';
-  return (v < 1 ? (v * 100).toFixed(1) : Number(v).toFixed(1)) + '%';
+  const frac = v > 1 ? v / 100 : v;
+  return frac.toFixed(3).replace(/^0(?=\.)/, '');
 }
 function computeOvr(p) {
   const vals = [p.overall_rating, p.defensive_rating, p.team_play_rating]
@@ -313,7 +314,7 @@ function renderLastGames(lastGames, name, isGoalie) {
     const gameLink = `<a href="game.html?id=${g.game_id}" class="player-link">${score}</a>`;
 
     if (isGoalie) {
-      const svp = g.shots_against > 0 ? ((g.saves / g.shots_against) * 100).toFixed(1) + '%' : '–';
+      const svp = g.shots_against > 0 ? (g.saves / g.shots_against).toFixed(3).replace(/^0(?=\.)/, '') : '–';
       return `<tr>
         <td>${date}</td><td>${result}</td><td>${gameLink}</td><td>${opponent}</td>
         ${ovrCell}

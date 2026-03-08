@@ -1,5 +1,12 @@
 const API = '/api';
 
+// Save percentage: display as hockey-standard decimal, e.g. .922
+function pct3(v) {
+  if (v === null || v === undefined) return '–';
+  const frac = v > 1 ? v / 100 : v;
+  return frac.toFixed(3).replace(/^0(?=\.)/, '');
+}
+
 let isAdmin = false;
 let activeGameId = null;       // game detail
 let activePickerGameId = null; // picker
@@ -84,7 +91,7 @@ function renderPickerPlayerStats(players) {
     </tr></thead><tbody>${goalies.map(p => `<tr>
       <td>${p.name}</td><td>${p.goals||0}</td><td>${p.assists||0}</td>
       <td>${p.shotsAgainst}</td><td>${p.goalsAgainst}</td>
-      <td>${p.savesPct !== null && p.savesPct !== undefined ? (p.savesPct < 1 ? (p.savesPct * 100).toFixed(1) : p.savesPct.toFixed(1)) + '%' : '–'}</td>
+      <td>${p.savesPct !== null && p.savesPct !== undefined ? pct3(p.savesPct) : (p.shotsAgainst > 0 ? pct3(p.saves / p.shotsAgainst) : '–')}</td>
     </tr>`).join('')}</tbody></table>`;
   }
   return html;

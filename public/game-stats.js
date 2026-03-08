@@ -20,7 +20,8 @@
 
   function pct3(v) {
     if (v === null || v === undefined) return '–';
-    return (v < 1 ? (v * 100).toFixed(1) : Number(v).toFixed(1)) + '%';
+    const frac = v > 1 ? v / 100 : v;
+    return frac.toFixed(3).replace(/^0(?=\.)/, '');
   }
 
   // ── Rating colour helpers ───────────────────────────────────────────────
@@ -72,7 +73,12 @@
     const ga  = v('goals_against', 'goalsAgainst');
     const gaa = toi > 0 ? Math.round(ga * 3600.0 / toi * 100) / 100 : null;
 
+    const savesVal        = v('saves',         'saves');
+    const shotsAgainstVal = v('shots_against',  'shotsAgainst');
     const rawSavePct = p.save_pct !== undefined ? p.save_pct : p.savesPct;
+    const computedSavePct = (rawSavePct !== null && rawSavePct !== undefined)
+      ? rawSavePct
+      : (shotsAgainstVal > 0 ? savesVal / shotsAgainstVal : null);
 
     return {
       name:     p.player_name || p.name,
@@ -107,10 +113,10 @@
       possession_secs:v('possession_secs', 'possessionSecs'),
       toi,
       // goalie
-      shots_against:          v('shots_against',          'shotsAgainst'),
+      shots_against:          shotsAgainstVal,
       goals_against:          ga,
-      saves:                  v('saves',                  'saves'),
-      save_pct:               rawSavePct,
+      saves:                  savesVal,
+      save_pct:               computedSavePct,
       gaa,
       shutouts:               v('shutouts',               'shutouts'),
       penalty_shot_attempts:  v('penalty_shot_attempts',  'penaltyShotAttempts'),

@@ -2,6 +2,15 @@ const API = '/api';
 
 // ── Rating helpers ─────────────────────────────────────────────────────────
 
+// Save percentage: display as hockey-standard decimal, e.g. .922
+function pct3(v) {
+  if (v === null || v === undefined) return '–';
+  const frac = v > 1 ? v / 100 : v;
+  return frac.toFixed(3).replace(/^0(?=\.)/, '');
+}
+// Stat percentage (fow%, shot%, pass%) with null guard, e.g. 47.3%
+function fmtPct(v) { return v !== null && v !== undefined ? Number(v).toFixed(1) + '%' : '–'; }
+
 // Compute a single OVR from the three EA sub-ratings (ignores zeros/nulls)
 function computeOvr(p) {
   const vals = [p.overall_rating, p.defensive_rating, p.team_play_rating]
@@ -151,7 +160,7 @@ function renderSkaters(league) {
       <td>${p.pp_goals}</td><td>${p.sh_goals}</td><td>${p.gwg||0}</td>
       <td>${p.pim}</td><td>${p.penalties_drawn||0}</td>
       <td>${p.faceoff_wins||0}</td><td>${p.faceoff_total||0}</td>
-      <td>${fmt1(p.fow_pct)}%</td><td>${fmt1(p.shot_pct)}%</td>
+      <td>${fmtPct(p.fow_pct)}</td><td>${fmtPct(p.shot_pct)}</td>
       <td>${p.deflections||0}</td><td>${p.interceptions||0}</td>
       <td>${p.pass_attempts||0}</td>
       <td>${p.pass_pct_calc !== null && p.pass_pct_calc !== undefined ? fmt1(p.pass_pct_calc)+'%' : '–'}</td>
@@ -197,8 +206,7 @@ function renderGoalies(league) {
       <th data-tip="Overtime Losses" class="${s('goalie_otl')}" onclick="sortGoalies('goalie_otl',${L})">OTL</th>
     </tr></thead>
     <tbody>${sorted.map(p => {
-      const svp = p.save_pct !== null && p.save_pct !== undefined
-        ? (p.save_pct < 1 ? (p.save_pct * 100).toFixed(1) : Number(p.save_pct).toFixed(1)) + '%' : '–';
+      const svp = pct3(p.save_pct);
       const ovr = p._ovr;
       return `<tr${playerRowAttrs(p)}>
         <td><a href="player.html?name=${encodeURIComponent(p.name)}" class="player-link">${p.name}</a></td>
