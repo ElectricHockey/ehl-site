@@ -238,14 +238,37 @@ function renderGameDetail(data) {
   const body = document.getElementById('detail-body');
   const { game, home_players, away_players, has_stats } = data;
 
+  const isComplete = game.status === 'complete';
+  const finalLabel = isComplete
+    ? `<div style="text-align:center;font-size:0.72rem;font-weight:700;letter-spacing:0.1em;color:#8b949e;text-transform:uppercase;padding-bottom:0.2rem;">${game.is_overtime ? 'FINAL/OT' : 'FINAL'}</div>`
+    : '';
+
+  // Power play summary from player stats (PP goals / PP opportunities)
+  let ppHtml = '';
+  if (isComplete && has_stats) {
+    const sum = (arr, key) => (arr || []).reduce((t, p) => t + (p[key] || 0), 0);
+    const homePPG  = sum(home_players, 'pp_goals');
+    const homePPO  = sum(home_players, 'penalties_drawn');
+    const awayPPG  = sum(away_players, 'pp_goals');
+    const awayPPO  = sum(away_players, 'penalties_drawn');
+    ppHtml = `<div style="text-align:center;font-size:0.82rem;color:#8b949e;padding:0.15rem 0 0.5rem;">
+      <span style="color:#c9d1d9;font-weight:600;">PP:</span>
+      ${game.home_team.name} <strong style="color:#e6edf3;">${homePPG}/${homePPO}</strong>
+      &nbsp;·&nbsp;
+      ${game.away_team.name} <strong style="color:#e6edf3;">${awayPPG}/${awayPPO}</strong>
+    </div>`;
+  }
+
   const scoreHtml = `
+    ${finalLabel}
     <div class="detail-scoreboard">
       <span class="detail-team-name">${game.home_team.name}</span>
-      <span class="detail-score-num">${game.status === 'complete' ? game.home_score : '–'}</span>
+      <span class="detail-score-num">${isComplete ? game.home_score : '–'}</span>
       <span class="detail-vs">vs</span>
-      <span class="detail-score-num">${game.status === 'complete' ? game.away_score : '–'}</span>
+      <span class="detail-score-num">${isComplete ? game.away_score : '–'}</span>
       <span class="detail-team-name">${game.away_team.name}</span>
     </div>
+    ${ppHtml}
     <p style="text-align:center;color:#8b949e;font-size:0.85rem;padding:0.25rem 0 0.5rem;">${game.date} · ${statusBadge(game.status)}</p>`;
 
   if (!has_stats) {

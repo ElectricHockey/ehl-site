@@ -760,6 +760,18 @@ app.delete('/api/players/:id', requireAdmin, (req, res) => {
   res.json({ deleted: true });
 });
 
+app.patch('/api/players/:id', requireAdmin, (req, res) => {
+  const player = db.prepare('SELECT * FROM players WHERE id = ?').get(req.params.id);
+  if (!player) return res.status(404).json({ error: 'Player not found' });
+  const team_id    = req.body.team_id !== undefined    ? (req.body.team_id || null)    : player.team_id;
+  const is_rostered = req.body.is_rostered !== undefined ? Number(req.body.is_rostered) : player.is_rostered;
+  const position   = req.body.position !== undefined   ? (req.body.position || null)   : player.position;
+  const number     = req.body.number !== undefined     ? (req.body.number || null)     : player.number;
+  db.prepare('UPDATE players SET team_id=?, is_rostered=?, position=?, number=? WHERE id=?')
+    .run(team_id, is_rostered, position, number, req.params.id);
+  res.json({ ok: true });
+});
+
 // ── Games ──────────────────────────────────────────────────────────────────
 
 app.get('/api/games', (req, res) => {

@@ -175,7 +175,81 @@ async function loadTeams() {
   const gOpts = '<option value="">Select team</option>' + teams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
   document.getElementById('game-home').innerHTML = gOpts;
   document.getElementById('game-away').innerHTML = gOpts;
+  // Roster tab team selector
+  const rSel = document.getElementById('roster-team-select');
+  const rPrev = rSel.value;
+  rSel.innerHTML = '<option value="">— Select a team —</option>' + teams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+  if (rPrev) rSel.value = rPrev;
 }
+
+// ── Roster Management ─────────────────────────────────────────────────────
+
+async function loadRoster() {
+  const teamId = document.getElementById('roster-team-select').value;
+  const body = document.getElementById('roster-body');
+  if (!teamId) { body.innerHTML = '<p style="color:#8b949e;">Select a team above to manage its roster.</p>'; return; }
+
+  const res = await fetch(`${API}/players`);
+  const allPlayers = await res.json();
+
+  const rostered  = allPlayers.filter(p => String(p.team_id) === String(teamId) && p.is_rostered);
+  const available = allPlayers.filter(p => !p.is_rostered || String(p.team_id) !== String(teamId));
+
+  const rosterRows = rostered.length === 0
+    ? '<tr><td colspan="4" style="color:#8b949e;">No rostered players.</td></tr>'
+    : rostered.map(p => `<tr>
+        <td>${p.number ?? '–'}</td>
+        <td>${p.name}</td>
+        <td>${p.position ?? '–'}</td>
+        <td><button class="btn-danger" onclick="rosterRemove(${p.id})">Remove</button></td>
+      </tr>`).join('');
+
+  const addOpts = available.length === 0
+    ? '<option value="">No available players</option>'
+    : '<option value="">— Pick a player —</option>' + available.map(p => {
+        const teamInfo = p.team_name ? `, ${p.team_name}` : '';
+        const rosterInfo = p.is_rostered ? ' (rostered)' : ' (FA)';
+        return `<option value="${p.id}">${p.name}${teamInfo}${rosterInfo}</option>`;
+      }).join('');
+
+  body.innerHTML = `
+    <h3 style="margin-top:0;">Current Roster <span style="font-size:0.8rem;color:#8b949e;font-weight:400;">(${rostered.length} players)</span></h3>
+    <table style="margin-bottom:1.5rem;">
+      <thead><tr><th>#</th><th>Name</th><th>Pos</th><th>Action</th></tr></thead>
+      <tbody>${rosterRows}</tbody>
+    </table>
+    <h3>Add Player to Roster</h3>
+    <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
+      <select id="roster-add-select" style="background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.35rem 0.6rem;min-width:220px;">${addOpts}</select>
+      <button class="btn-primary" onclick="rosterAdd()">Add to Roster</button>
+    </div>`;
+}
+
+async function rosterAdd() {
+  const teamId   = document.getElementById('roster-team-select').value;
+  const playerId = document.getElementById('roster-add-select').value;
+  if (!teamId || !playerId) { alert('Select a player to add.'); return; }
+  const res = await fetch(`${API}/players/${playerId}`, {
+    method: 'PATCH',
+    headers: adminJsonHeaders(),
+    body: JSON.stringify({ team_id: Number(teamId), is_rostered: 1 }),
+  });
+  if (!res.ok) { const e = await res.json().catch(() => ({})); alert(e.error || 'Failed to add player'); return; }
+  await loadRoster();
+}
+
+async function rosterRemove(playerId) {
+  if (!confirm('Remove this player from the roster?')) return;
+  const res = await fetch(`${API}/players/${playerId}`, {
+    method: 'PATCH',
+    headers: adminJsonHeaders(),
+    body: JSON.stringify({ is_rostered: 0 }),
+  });
+  if (!res.ok) { const e = await res.json().catch(() => ({})); alert(e.error || 'Failed to remove player'); return; }
+  await loadRoster();
+}
+
+// ── Teams ─────────────────────────────────────────────────────────────────
 
 document.getElementById('team-form').addEventListener('submit', async e => {
   e.preventDefault();

@@ -67,6 +67,7 @@
       <div class="admin-tab-bar">
         <button class="admin-tab-btn active" data-tab="seasons" onclick="showAdminTab('seasons')">🗓 Seasons</button>
         <button class="admin-tab-btn" data-tab="teams" onclick="showAdminTab('teams')">🏒 Teams</button>
+        <button class="admin-tab-btn" data-tab="roster" onclick="showAdminTab('roster')">📋 Rosters</button>
         <button class="admin-tab-btn" data-tab="reg-players" onclick="showAdminTab('reg-players')">👤 Registered Players</button>
         <button class="admin-tab-btn" data-tab="players" onclick="showAdminTab('players')">🎮 Players</button>
         <button class="admin-tab-btn" data-tab="games" onclick="showAdminTab('games')">📅 Games</button>
@@ -151,6 +152,18 @@
           <thead><tr><th>Logo</th><th>Colors</th><th>Name</th><th>Type</th><th>Conference</th><th>Division</th><th>EA Club ID</th><th>Owner</th><th>Action</th></tr></thead>
           <tbody></tbody>
         </table>
+      </div>
+
+      <!-- ── Roster tab ──────────────────────────────────────── -->
+      <div id="admin-tab-roster" class="admin-section">
+        <h2>Roster Management</h2>
+        <div class="form-section" style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;">
+          <label for="roster-team-select" style="color:#8b949e;font-size:0.9rem;">Team:</label>
+          <select id="roster-team-select" onchange="loadRoster()" style="background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.35rem 0.6rem;min-width:180px;">
+            <option value="">— Select a team —</option>
+          </select>
+        </div>
+        <div id="roster-body"></div>
       </div>
 
       <!-- ── Registered Players tab ──────────────────────── -->
