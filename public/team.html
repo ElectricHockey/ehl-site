@@ -8,6 +8,10 @@
   <style>
     .season-stats-table { font-size: 0.85rem; }
     .season-stats-table thead th { font-size: 0.72rem; }
+    .sortable-th { cursor: pointer; user-select: none; }
+    .sortable-th:hover { color: #58a6ff; }
+    .sortable-th.sort-asc::after  { content: ' ▲'; color: #58a6ff; }
+    .sortable-th.sort-desc::after { content: ' ▼'; color: #58a6ff; }
     .recent-game {
       display: flex; align-items: center; gap: 1rem;
       padding: 0.6rem 0; border-bottom: 1px solid #21262d;
