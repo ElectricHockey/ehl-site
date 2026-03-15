@@ -1013,7 +1013,7 @@ document.getElementById('site-logo-form').addEventListener('submit', async e => 
   try {
     const res = await fetch(`${API}/admin/site-logo`, {
       method: 'POST',
-      headers: { 'x-admin-token': localStorage.getItem('adminToken') || '' },
+      headers: { 'X-Admin-Token': getAdminToken() },
       body: fd,
     });
     if (res.ok) {
