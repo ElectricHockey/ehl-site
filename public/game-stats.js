@@ -27,14 +27,14 @@
   // ── Rating colour helpers ───────────────────────────────────────────────
 
   function computeOvr(p) {
-    const vals = [p.overall_rating, p.offensive_rating, p.defensive_rating, p.team_play_rating]
+    const vals = [p.offensive_rating, p.defensive_rating, p.team_play_rating]
       .map(Number).filter(v => v > 0);
     return vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null;
   }
 
   function ratingStyle(v) {
     if (!v || v <= 0) return 'color:#484f58;';
-    if (v >= 90) return 'background:rgba(255,215,0,0.22);color:#ffd700;font-weight:700;';
+    if (v >= 90) return 'background:rgba(35,134,54,0.35);color:#2ea043;font-weight:700;';
     if (v >= 80) return 'background:rgba(35,134,54,0.28);color:#3fb950;font-weight:700;';
     if (v >= 70) return 'background:rgba(46,160,67,0.18);color:#56d364;font-weight:600;';
     if (v >= 60) return 'background:rgba(158,106,3,0.22);color:#e3b341;font-weight:600;';
@@ -139,9 +139,8 @@
     return `<div class="stats-scroll-wrap"><table class="game-stats-table">
       <thead><tr>
         <th>Pos</th><th>Player</th>
-        <th data-tip="Overall Rating (avg. of OFFR + SKR + DR + TPR)">OVR</th>
+        <th data-tip="Overall Rating (avg. of OFFR + DR + TPR)">OVR</th>
         <th data-tip="Offense Rating">OFFR</th>
-        <th data-tip="Skill Rating (EA overall skill score)">SKR</th>
         <th data-tip="Defense Rating">DR</th>
         <th data-tip="Team Play Rating">TPR</th>
         <th data-tip="Goals">G</th>
@@ -178,7 +177,6 @@
           <td><a href="player.html?name=${encodeURIComponent(p.name)}" class="player-link">${p.name}</a></td>
           <td class="gs-rating" style="${ovrStyle(ovr)}">${ovr ?? '–'}</td>
           <td class="gs-rating" style="${ratingStyle(p.offensive_rating)}">${p.offensive_rating || '–'}</td>
-          <td class="gs-rating" style="${ratingStyle(p.overall_rating)}">${p.overall_rating || '–'}</td>
           <td class="gs-rating" style="${ratingStyle(p.defensive_rating)}">${p.defensive_rating || '–'}</td>
           <td class="gs-rating" style="${ratingStyle(p.team_play_rating)}">${p.team_play_rating || '–'}</td>
           <td>${p.goals}</td>
@@ -219,9 +217,8 @@
     return `<div class="stats-scroll-wrap"><table class="game-stats-table">
       <thead><tr>
         <th>Player</th>
-        <th data-tip="Overall Rating (avg. of OFFR + SKR + DR + TPR)">OVR</th>
+        <th data-tip="Overall Rating (avg. of OFFR + DR + TPR)">OVR</th>
         <th data-tip="Offense Rating">OFFR</th>
-        <th data-tip="Skill Rating (EA overall skill score)">SKR</th>
         <th data-tip="Defense Rating">DR</th>
         <th data-tip="Team Play Rating">TPR</th>
         <th data-tip="Shots Against">SA</th>
@@ -240,7 +237,6 @@
           <td><a href="player.html?name=${encodeURIComponent(p.name)}" class="player-link">${p.name}</a></td>
           <td class="gs-rating" style="${ovrStyle(ovr)}">${ovr ?? '–'}</td>
           <td class="gs-rating" style="${ratingStyle(p.offensive_rating)}">${p.offensive_rating || '–'}</td>
-          <td class="gs-rating" style="${ratingStyle(p.overall_rating)}">${p.overall_rating || '–'}</td>
           <td class="gs-rating" style="${ratingStyle(p.defensive_rating)}">${p.defensive_rating || '–'}</td>
           <td class="gs-rating" style="${ratingStyle(p.team_play_rating)}">${p.team_play_rating || '–'}</td>
           <td>${p.shots_against}</td>
