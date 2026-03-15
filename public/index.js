@@ -1,5 +1,9 @@
 const API = '/api';
 
+const RECENT_GAMES_COUNT = 6;
+const MIN_SHOTS_FOR_SAVE_PCT = 10;
+const STATS_LEADERS_COUNT = 5;
+
 function hexToRgbStr(hex) {
   if (!hex || hex.length < 4) return null;
   let h = hex.replace('#', '');
@@ -21,7 +25,7 @@ async function loadRecentScores(seasonId) {
   if (!root) return;
   if (!seasonId) { root.innerHTML = '<p style="color:#8b949e;font-size:0.88rem;">No active season.</p>'; return; }
   try {
-    const res = await fetch(`${API}/games?status=complete&season_id=${seasonId}&limit=6`);
+    const res = await fetch(`${API}/games?status=complete&season_id=${seasonId}&limit=${RECENT_GAMES_COUNT}`);
     if (!res.ok) { root.innerHTML = '<p style="color:#8b949e;font-size:0.88rem;">No games yet.</p>'; return; }
     const games = await res.json();
     if (!games.length) { root.innerHTML = '<p style="color:#8b949e;font-size:0.88rem;">No completed games yet.</p>'; return; }
@@ -100,7 +104,7 @@ async function loadStatsLeaders(seasonId) {
       return;
     }
 
-    function topBy(arr, key, n = 5) {
+    function topBy(arr, key, n = STATS_LEADERS_COUNT) {
       return [...arr].sort((a, b) => (b[key] ?? 0) - (a[key] ?? 0)).slice(0, n);
     }
 
@@ -127,7 +131,7 @@ async function loadStatsLeaders(seasonId) {
 
     if (goalies.length) {
       const svp = [...goalies]
-        .filter(g => (g.shots_against || 0) >= 10)
+        .filter(g => (g.shots_against || 0) >= MIN_SHOTS_FOR_SAVE_PCT)
         .sort((a, b) => (b.save_pct ?? 0) - (a.save_pct ?? 0))
         .slice(0, 5);
       if (svp.length) {

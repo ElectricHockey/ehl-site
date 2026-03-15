@@ -1,9 +1,10 @@
 const API = '/api';
+const TRANSACTIONS_DISPLAY_LIMIT = 50;
 
 async function loadTransactions() {
   const root = document.getElementById('transactions-root');
   try {
-    const res = await fetch(`${API}/transactions?limit=50`);
+    const res = await fetch(`${API}/transactions?limit=${TRANSACTIONS_DISPLAY_LIMIT}`);
     if (!res.ok) { root.innerHTML = '<p class="error">Failed to load transactions.</p>'; return; }
     const rows = await res.json();
     if (!rows.length) {
