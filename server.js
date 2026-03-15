@@ -443,7 +443,18 @@ app.delete('/api/teams/:id/roster/:playerId', requireTeamRole(['owner', 'gm']), 
 
 // ── EA Helpers ─────────────────────────────────────────────────────────────
 
-const EA_POSITIONS = { '0': 'G', 'goalie': 'G', '1': 'C', '2': 'LW', '3': 'RW', '4': 'LD', '5': 'RD' };
+// Maps EA string position names + numeric codes to EHL abbreviations.
+// For "defenseMen", posSorted "1" = RD and "2" = LD.
+const EA_POSITIONS = {
+  // Numeric codes (legacy / fallback)
+  '0': 'G', '1': 'C', '2': 'LW', '3': 'RW', '4': 'LD', '5': 'RD',
+  // String names sent by current EA API
+  'goalie':     'G',
+  'center':     'C',
+  'leftWing':   'LW',
+  'rightWing':  'RW',
+  // defenseMen is resolved using posSorted below — no entry here
+};
 
 function mapResult(r) {
   if (r === '1' || r === 1) return 'W';
@@ -480,8 +491,17 @@ function mapEAPlayer(p) {
   const passPct   = passPctRaw != null ? parseFloat(passPctRaw) : null;
   const passComp  = passPct !== null ? Math.round(passAtt * passPct / 100) : 0;
 
-  const posRaw = eaField(p, 'position');
-  const position = EA_POSITIONS[String(posRaw)] || String(posRaw || '');
+  // Resolve position: defenseMen needs posSorted to distinguish LD (2) from RD (1)
+  const posRaw    = eaField(p, 'position');
+  const posSorted = p.posSorted !== undefined ? String(p.posSorted) : null;
+  let position;
+  if (String(posRaw) === 'defenseMen') {
+    if (posSorted === '2')      position = 'LD';
+    else if (posSorted === '1') position = 'RD';
+    else                        position = 'D';   // posSorted absent — generic defenseman
+  } else {
+    position = EA_POSITIONS[String(posRaw)] || String(posRaw || '');
+  }
 
   return {
     name:             typeof nameRaw === 'string' ? nameRaw : (nameRaw ?? 'Unknown'),
@@ -727,9 +747,17 @@ app.get('/api/players/profile/:name', (req, res) => {
       ht.id AS home_team_id, ht.name AS home_team_name, ht.logo_url AS home_logo,
       at.id AS away_team_id, at.name AS away_team_name, at.logo_url AS away_logo,
       gps.team_id AS player_team_id, gps.position,
-      gps.goals, gps.assists, gps.shots, gps.hits, gps.plus_minus, gps.toi,
-      gps.saves, gps.goals_against, gps.shots_against, gps.goalie_wins, gps.goalie_losses,
       gps.offensive_rating, gps.defensive_rating, gps.team_play_rating,
+      gps.goals, gps.assists, gps.shots, gps.shot_attempts, gps.hits, gps.plus_minus,
+      gps.pim, gps.blocked_shots, gps.takeaways, gps.giveaways,
+      gps.pp_goals, gps.sh_goals, gps.gwg, gps.penalties_drawn,
+      gps.faceoff_wins, gps.faceoff_losses,
+      gps.deflections, gps.interceptions, gps.pass_attempts, gps.pass_completions,
+      gps.hat_tricks, gps.possession_secs, gps.toi,
+      gps.saves, gps.goals_against, gps.shots_against,
+      gps.goalie_wins, gps.goalie_losses, gps.goalie_otw, gps.goalie_otl,
+      gps.shutouts, gps.penalty_shot_attempts, gps.penalty_shot_ga,
+      gps.breakaway_shots, gps.breakaway_saves,
       COALESCE(s.league_type,'') AS league_type,
       CASE WHEN g.playoff_series_id IS NOT NULL THEN 1 ELSE 0 END AS is_playoff
     FROM game_player_stats gps

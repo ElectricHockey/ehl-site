@@ -120,7 +120,7 @@ async function loadStatsLeaders(seasonId) {
         <div style="text-align:right;margin-top:0.4rem;"><a href="stats.html" style="font-size:0.78rem;color:#58a6ff;">All Stats →</a></div>
       </div>`);
       sections.push(`<div class="home-leader-section">
-        <div class="home-leader-title">🥅 Goals Leaders</div>
+        <div class="home-leader-title">Goals Leaders</div>
         ${goals.map(p => leaderRow(p, 'goals')).join('')}
       </div>`);
       sections.push(`<div class="home-leader-section">

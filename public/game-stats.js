@@ -273,8 +273,8 @@
         ${logoHtml}
         ${nameHtml}
       </div>
-      ${skaters.length ? `<p class="stats-section-label">⛸️ Skaters</p>${renderSkaterTable(skaters)}` : ''}
-      ${goalies.length  ? `<p class="stats-section-label">🥅 Goalies</p>${renderGoalieTable(goalies)}`   : ''}
+      ${skaters.length ? `<p class="stats-section-label">Skaters</p>${renderSkaterTable(skaters)}` : ''}
+      ${goalies.length  ? `<p class="stats-section-label">Goalies</p>${renderGoalieTable(goalies)}`   : ''}
       ${!skaters.length && !goalies.length
           ? '<p class="no-stats">No player stats recorded for this team.</p>' : ''}
     </div>`;

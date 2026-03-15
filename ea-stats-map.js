@@ -31,7 +31,8 @@ module.exports = {
   // ── Player identity ────────────────────────────────────────────────────────
   playername:             'playerName',   // display name (primary field)
   name:                   'playerName',   // fallback if 'playername' is absent
-  position:               'position',     // raw code: 0=G 1=C 2=LW 3=RW 4=LD 5=RD
+  position:               'position',     // string: goalie|center|leftWing|rightWing|defenseMen
+  // posSorted: "1"=RD, "2"=LD for defenseMen — read directly in mapEAPlayer, not via eaField
 
   // ── Ratings ───────────────────────────────────────────────────────────────
   skrating:               'overallRating',

@@ -261,39 +261,90 @@ function renderLastGames(lastGames, name, isGoalie) {
     const ovr = computeOvr(g);
     const ovrCell = `<td style="text-align:center;${ovrStyle(ovr)}">${ovr ?? '–'}</td>`;
     const gameLink = `<a href="game.html?id=${g.game_id}" class="player-link">${score}</a>`;
+    const offr = g.offensive_rating || 0;
+    const dr   = g.defensive_rating || 0;
+    const tpr  = g.team_play_rating  || 0;
+    const ratingCells = `
+      <td style="text-align:center;${ratingStyle(offr)}">${offr || '–'}</td>
+      <td style="text-align:center;${ratingStyle(dr)}">${dr || '–'}</td>
+      <td style="text-align:center;${ratingStyle(tpr)}">${tpr || '–'}</td>`;
 
     if (isGoalie) {
       const svp = g.shots_against > 0 ? (g.saves / g.shots_against).toFixed(3).replace(/^0(?=\.)/, '') : '–';
+      const bksvp = g.breakaway_shots > 0 ? (g.breakaway_saves / g.breakaway_shots).toFixed(3).replace(/^0(?=\.)/, '') : '–';
       return `<tr>
         <td>${date}</td><td>${result}</td><td>${gameLink}</td><td>${opponent}</td>
-        ${ovrCell}
+        ${ovrCell}${ratingCells}
+        <td>${g.goals || 0}</td><td>${g.assists || 0}</td>
         <td>${g.shots_against || 0}</td><td>${g.goals_against || 0}</td>
         <td><strong>${svp}</strong></td>
+        <td>${g.shutouts || 0}</td>
+        <td>${g.penalty_shot_attempts || 0}</td><td>${g.penalty_shot_ga || 0}</td>
+        <td>${g.breakaway_shots || 0}</td><td>${g.breakaway_saves || 0}</td>
+        <td>${bksvp}</td>
         <td>${formatToi(g.toi)}</td>
       </tr>`;
     } else {
+      const fow_pct = g.faceoff_wins !== null && (g.faceoff_wins + (g.faceoff_losses || 0)) > 0
+        ? ((g.faceoff_wins / (g.faceoff_wins + g.faceoff_losses)) * 100).toFixed(1) + '%' : '–';
+      const pass_pct = g.pass_attempts > 0
+        ? ((g.pass_completions / g.pass_attempts) * 100).toFixed(1) + '%' : '–';
+      const shot_pct = g.shots > 0
+        ? ((g.goals / g.shots) * 100).toFixed(1) + '%' : '–';
       return `<tr>
         <td>${date}</td><td>${result}</td><td>${gameLink}</td><td>${opponent}</td>
-        ${ovrCell}
+        ${ovrCell}${ratingCells}
         <td>${g.goals || 0}</td><td>${g.assists || 0}</td>
         <td><strong>${(g.goals || 0) + (g.assists || 0)}</strong></td>
         <td>${(g.plus_minus || 0) >= 0 ? '+' : ''}${g.plus_minus || 0}</td>
-        <td>${g.shots || 0}</td><td>${g.hits || 0}</td>
+        <td>${g.shots || 0}</td><td>${g.shot_attempts || 0}</td><td>${shot_pct}</td>
+        <td>${g.hits || 0}</td><td>${g.blocked_shots || 0}</td>
+        <td>${g.takeaways || 0}</td><td>${g.giveaways || 0}</td>
+        <td>${g.pim || 0}</td><td>${g.penalties_drawn || 0}</td>
+        <td>${g.pp_goals || 0}</td><td>${g.sh_goals || 0}</td><td>${g.gwg || 0}</td>
+        <td>${g.faceoff_wins || 0}</td><td>${g.faceoff_losses || 0}</td><td>${fow_pct}</td>
+        <td>${g.deflections || 0}</td><td>${g.interceptions || 0}</td>
+        <td>${g.pass_attempts || 0}</td><td>${g.pass_completions || 0}</td><td>${pass_pct}</td>
+        <td>${g.hat_tricks || 0}</td>
+        <td>${formatToi(g.possession_secs)}</td>
         <td>${formatToi(g.toi)}</td>
       </tr>`;
     }
   }).join('');
 
-  const skaterHead = `<th data-tip="Goals">G</th><th data-tip="Assists">A</th><th data-tip="Points">PTS</th>
-    <th data-tip="Plus / Minus">+/-</th><th data-tip="Shots on Goal">SOG</th>
-    <th data-tip="Hits">HITS</th><th data-tip="Time on Ice">TOI</th>`;
-  const goalieHead = `<th data-tip="Shots Against">SA</th><th data-tip="Goals Against">GA</th>
-    <th data-tip="Save Percentage">SV%</th><th data-tip="Time on Ice">TOI</th>`;
+  const ratingHead = `
+    <th data-tip="Offense Rating">OFFR</th>
+    <th data-tip="Defense Rating">DR</th>
+    <th data-tip="Team Play Rating">TPR</th>`;
+
+  const skaterHead = `${ratingHead}
+    <th data-tip="Goals">G</th><th data-tip="Assists">A</th><th data-tip="Points">PTS</th>
+    <th data-tip="Plus / Minus">+/-</th>
+    <th data-tip="Shots on Goal">SOG</th><th data-tip="Shot Attempts">SAT</th><th data-tip="Shooting %">S%</th>
+    <th data-tip="Hits">HIT</th><th data-tip="Blocked Shots">BS</th>
+    <th data-tip="Takeaways">TKA</th><th data-tip="Giveaways">GVA</th>
+    <th data-tip="Penalty Minutes">PIM</th><th data-tip="Penalties Drawn">PD</th>
+    <th data-tip="Power Play Goals">PPG</th><th data-tip="Short-Hand Goals">SHG</th><th data-tip="Game-Winning Goals">GWG</th>
+    <th data-tip="Faceoff Wins">FOW</th><th data-tip="Faceoff Losses">FOL</th><th data-tip="Faceoff Win %">FOW%</th>
+    <th data-tip="Deflections">DLF</th><th data-tip="Interceptions">INT</th>
+    <th data-tip="Pass Attempts">PA</th><th data-tip="Pass Completions">PC</th><th data-tip="Pass Completion %">PC%</th>
+    <th data-tip="Hat Tricks">HT</th>
+    <th data-tip="Avg Puck Possession">POSS</th>
+    <th data-tip="Time on Ice">TOI</th>`;
+
+  const goalieHead = `${ratingHead}
+    <th data-tip="Goals">G</th><th data-tip="Assists">A</th>
+    <th data-tip="Shots Against">SA</th><th data-tip="Goals Against">GA</th>
+    <th data-tip="Save Percentage">SV%</th><th data-tip="Shutouts">SO</th>
+    <th data-tip="Penalty Shot Attempts">PSA</th><th data-tip="Penalty Shot Goals Against">PSGA</th>
+    <th data-tip="Breakaway Shots Against">BKSA</th><th data-tip="Breakaway Saves">BKSV</th>
+    <th data-tip="Breakaway Save %">BKS%</th>
+    <th data-tip="Time on Ice">TOI</th>`;
 
   return `<div style="overflow-x:auto;"><table class="last-games-table">
     <thead><tr>
       <th>Date</th><th></th><th>Score</th><th>Opponent</th>
-      <th data-tip="Overall Rating (avg. of OR + DR + TPR)">OVR</th>
+      <th data-tip="Overall Rating (avg. of OFFR + DR + TPR)">OVR</th>
       ${isGoalie ? goalieHead : skaterHead}
     </tr></thead>
     <tbody>${rows}</tbody>
@@ -384,7 +435,7 @@ async function loadPlayer() {
         <div class="player-info">
           <h1 class="player-name">${name}</h1>
           <div class="player-meta">
-            <span class="player-badge-pos">${isGoalie ? '🥅 Goalie' : `⛸️ ${pos}`}</span>
+            <span class="player-badge-pos">${isGoalie ? 'Goalie' : pos}</span>
             ${teamBadge}
             ${platformLabel}
             ${discordLabel}
