@@ -471,62 +471,60 @@ function eaField(p, ehlCol) {
 }
 
 function mapEAPlayer(p) {
-  const m = EA_STATS_MAP; // short alias for ea-stats-map.js
-
-  const nameRaw   = eaField(p, m.playerName);
-  const goals     = Number(eaField(p, m.goals))   || 0;
-  const assists   = Number(eaField(p, m.assists))  || 0;
-  const shots     = Number(eaField(p, m.shots))    || 0;
-  const passAtt   = Number(eaField(p, m.passAttempts)) || 0;
-  const passPctRaw = eaField(p, m.passPct);
+  const nameRaw   = eaField(p, 'playerName');
+  const goals     = Number(eaField(p, 'goals'))        || 0;
+  const assists   = Number(eaField(p, 'assists'))       || 0;
+  const shots     = Number(eaField(p, 'shots'))         || 0;
+  const passAtt   = Number(eaField(p, 'passAttempts'))  || 0;
+  const passPctRaw = eaField(p, 'passPct');
   const passPct   = passPctRaw != null ? parseFloat(passPctRaw) : null;
   const passComp  = passPct !== null ? Math.round(passAtt * passPct / 100) : 0;
 
-  const posRaw = eaField(p, m.position);
+  const posRaw = eaField(p, 'position');
   const position = EA_POSITIONS[String(posRaw)] || String(posRaw || '');
 
   return {
     name:             typeof nameRaw === 'string' ? nameRaw : (nameRaw ?? 'Unknown'),
     position,
-    overallRating:    Number(eaField(p, m.overallRating))   || 0,
-    defensiveRating:  Number(eaField(p, m.defensiveRating)) || 0,
-    teamPlayRating:   Number(eaField(p, m.teamPlayRating))  || 0,
+    overallRating:    Number(eaField(p, 'overallRating'))   || 0,
+    defensiveRating:  Number(eaField(p, 'defensiveRating')) || 0,
+    teamPlayRating:   Number(eaField(p, 'teamPlayRating'))  || 0,
     goals, assists,   points: goals + assists,
     shots,
-    hits:             Number(eaField(p, m.hits))          || 0,
-    plusMinus:        Number(eaField(p, m.plusMinus))     || 0,
-    pim:              Number(eaField(p, m.pim))           || 0,
-    blockedShots:     Number(eaField(p, m.blockedShots))  || 0,
-    takeaways:        Number(eaField(p, m.takeaways))     || 0,
-    giveaways:        Number(eaField(p, m.giveaways))     || 0,
-    possessionSecs:   Number(eaField(p, m.possessionSecs))|| 0,
+    hits:             Number(eaField(p, 'hits'))           || 0,
+    plusMinus:        Number(eaField(p, 'plusMinus'))      || 0,
+    pim:              Number(eaField(p, 'pim'))            || 0,
+    blockedShots:     Number(eaField(p, 'blockedShots'))   || 0,
+    takeaways:        Number(eaField(p, 'takeaways'))      || 0,
+    giveaways:        Number(eaField(p, 'giveaways'))      || 0,
+    possessionSecs:   Number(eaField(p, 'possessionSecs')) || 0,
     passAttempts:     passAtt,
     passCompletions:  passComp,
     passPct,
-    faceoffWins:      Number(eaField(p, m.faceoffWins))   || 0,
-    faceoffLosses:    Number(eaField(p, m.faceoffLosses)) || 0,
-    ppGoals:          Number(eaField(p, m.ppGoals))       || 0,
-    shGoals:          Number(eaField(p, m.shGoals))       || 0,
-    gwg:              Number(eaField(p, m.gwg))           || 0,
-    penaltiesDrawn:   Number(eaField(p, m.penaltiesDrawn))|| 0,
-    deflections:      Number(eaField(p, m.deflections))   || 0,
-    interceptions:    Number(eaField(p, m.interceptions)) || 0,
-    hatTricks:        Number(eaField(p, m.hatTricks))     || 0,
-    toi:              Number(eaField(p, m.toi))           || 0,
+    faceoffWins:      Number(eaField(p, 'faceoffWins'))    || 0,
+    faceoffLosses:    Number(eaField(p, 'faceoffLosses'))  || 0,
+    ppGoals:          Number(eaField(p, 'ppGoals'))        || 0,
+    shGoals:          Number(eaField(p, 'shGoals'))        || 0,
+    gwg:              Number(eaField(p, 'gwg'))            || 0,
+    penaltiesDrawn:   Number(eaField(p, 'penaltiesDrawn')) || 0,
+    deflections:      Number(eaField(p, 'deflections'))    || 0,
+    interceptions:    Number(eaField(p, 'interceptions'))  || 0,
+    hatTricks:        Number(eaField(p, 'hatTricks'))      || 0,
+    toi:              Number(eaField(p, 'toi'))            || 0,
     // Goalie
-    saves:               Number(eaField(p, m.saves))               || 0,
-    savesPct:            eaField(p, m.savesPct) != null ? parseFloat(eaField(p, m.savesPct)) : null,
-    goalsAgainst:        Number(eaField(p, m.goalsAgainst))        || 0,
-    shotsAgainst:        Number(eaField(p, m.shotsAgainst))        || 0,
-    goalieWins:          Number(eaField(p, m.goalieWins))          || 0,
-    goalieLosses:        Number(eaField(p, m.goalieLosses))        || 0,
-    goalieOtw:           Number(eaField(p, m.goalieOtw))           || 0,
-    goalieOtl:           Number(eaField(p, m.goalieOtl))           || 0,
-    shutouts:            Number(eaField(p, m.shutouts))            || 0,
-    penaltyShotAttempts: Number(eaField(p, m.penaltyShotAttempts)) || 0,
-    penaltyShotGa:       Number(eaField(p, m.penaltyShotGa))       || 0,
-    breakawayShots:      Number(eaField(p, m.breakawayShots))      || 0,
-    breakawaySaves:      Number(eaField(p, m.breakawaySaves))      || 0,
+    saves:               Number(eaField(p, 'saves'))               || 0,
+    savesPct:            eaField(p, 'savesPct') != null ? parseFloat(eaField(p, 'savesPct')) : null,
+    goalsAgainst:        Number(eaField(p, 'goalsAgainst'))        || 0,
+    shotsAgainst:        Number(eaField(p, 'shotsAgainst'))        || 0,
+    goalieWins:          Number(eaField(p, 'goalieWins'))          || 0,
+    goalieLosses:        Number(eaField(p, 'goalieLosses'))        || 0,
+    goalieOtw:           Number(eaField(p, 'goalieOtw'))           || 0,
+    goalieOtl:           Number(eaField(p, 'goalieOtl'))           || 0,
+    shutouts:            Number(eaField(p, 'shutouts'))            || 0,
+    penaltyShotAttempts: Number(eaField(p, 'penaltyShotAttempts')) || 0,
+    penaltyShotGa:       Number(eaField(p, 'penaltyShotGa'))       || 0,
+    breakawayShots:      Number(eaField(p, 'breakawayShots'))      || 0,
+    breakawaySaves:      Number(eaField(p, 'breakawaySaves'))      || 0,
   };
 }
 
