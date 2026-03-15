@@ -13,7 +13,7 @@ function fmtPct(v) { return v !== null && v !== undefined ? Number(v).toFixed(1)
 
 // Compute a single OVR from the three EA sub-ratings (ignores zeros/nulls)
 function computeOvr(p) {
-  const vals = [p.overall_rating, p.defensive_rating, p.team_play_rating]
+  const vals = [p.offensive_rating, p.defensive_rating, p.team_play_rating]
     .map(Number).filter(v => v > 0);
   return vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null;
 }
@@ -21,7 +21,7 @@ function computeOvr(p) {
 // Returns an inline style string that colour-codes a rating value 0-100
 function ratingStyle(v) {
   if (!v || v <= 0) return 'color:#484f58;';
-  if (v >= 90) return 'background:rgba(255,215,0,0.22);color:#ffd700;font-weight:700;';
+  if (v >= 90) return 'background:rgba(35,134,54,0.35);color:#2ea043;font-weight:700;';
   if (v >= 80) return 'background:rgba(35,134,54,0.28);color:#3fb950;font-weight:700;';
   if (v >= 70) return 'background:rgba(46,160,67,0.18);color:#56d364;font-weight:600;';
   if (v >= 60) return 'background:rgba(158,106,3,0.22);color:#e3b341;font-weight:600;';

@@ -729,7 +729,7 @@ app.get('/api/players/profile/:name', (req, res) => {
       gps.team_id AS player_team_id, gps.position,
       gps.goals, gps.assists, gps.shots, gps.hits, gps.plus_minus, gps.toi,
       gps.saves, gps.goals_against, gps.shots_against, gps.goalie_wins, gps.goalie_losses,
-      gps.overall_rating, gps.defensive_rating, gps.team_play_rating,
+      gps.offensive_rating, gps.defensive_rating, gps.team_play_rating,
       COALESCE(s.league_type,'') AS league_type,
       CASE WHEN g.playoff_series_id IS NOT NULL THEN 1 ELSE 0 END AS is_playoff
     FROM game_player_stats gps
@@ -845,6 +845,7 @@ app.patch('/api/games/:id', requireAdmin, (req, res) => {
   const status = req.body.status !== undefined ? req.body.status : game.status;
   const season_id = req.body.season_id !== undefined ? req.body.season_id : game.season_id;
   const is_overtime = req.body.is_overtime !== undefined ? (req.body.is_overtime ? 1 : 0) : (game.is_overtime || 0);
+  const date = req.body.date !== undefined ? req.body.date : game.date;
   if (req.body.home_score !== undefined) {
     home_score = parseInt(req.body.home_score, 10);
     if (isNaN(home_score) || home_score < 0 || home_score > 99) return res.status(400).json({ error: 'home_score must be 0–99' });
@@ -853,8 +854,8 @@ app.patch('/api/games/:id', requireAdmin, (req, res) => {
     away_score = parseInt(req.body.away_score, 10);
     if (isNaN(away_score) || away_score < 0 || away_score > 99) return res.status(400).json({ error: 'away_score must be 0–99' });
   }
-  db.prepare('UPDATE games SET home_score=?, away_score=?, ea_match_id=?, status=?, season_id=?, is_overtime=? WHERE id=?')
-    .run(home_score, away_score, ea_match_id, status, season_id, is_overtime, req.params.id);
+  db.prepare('UPDATE games SET home_score=?, away_score=?, ea_match_id=?, status=?, season_id=?, is_overtime=?, date=? WHERE id=?')
+    .run(home_score, away_score, ea_match_id, status, season_id, is_overtime, date, req.params.id);
 
   if (req.body.player_stats) {
     const { home_players, away_players } = req.body.player_stats;
