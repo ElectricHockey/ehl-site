@@ -45,7 +45,7 @@ function formatToi(s) {
 }
 
 function computeOvr(p) {
-  const vals = [p.overall_rating, p.defensive_rating, p.team_play_rating]
+  const vals = [p.overall_rating, p.offensive_rating, p.defensive_rating, p.team_play_rating]
     .map(Number).filter(v => v > 0);
   return vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null;
 }
@@ -69,10 +69,11 @@ function ovrStyle(v) {
 
 const SKATER_COLS = [
   // ── Ratings ─────────────────────────────────────────────────────────────
-  { key: '_ovr',            label: 'OVR',  tip: 'Overall Rating (avg. of OR + DR + TPR)', fmt: p => p._ovr ?? '–',                                                            style: p => 'text-align:center;' + ovrStyle(p._ovr) },
-  { key: 'overall_rating',  label: 'OR',   tip: 'Offense Rating',                          fmt: p => p.overall_rating || '–',                                                  style: p => 'text-align:center;' + ratingStyle(p.overall_rating) },
-  { key: 'defensive_rating',label: 'DR',   tip: 'Defense Rating',                          fmt: p => p.defensive_rating || '–',                                                style: p => 'text-align:center;' + ratingStyle(p.defensive_rating) },
-  { key: 'team_play_rating',label: 'TPR',  tip: 'Team Play Rating',                        fmt: p => p.team_play_rating || '–',                                                style: p => 'text-align:center;' + ratingStyle(p.team_play_rating) },
+  { key: '_ovr',             label: 'OVR',  tip: 'Overall Rating (avg. of OFFR + SKR + DR + TPR)', fmt: p => p._ovr ?? '–',                                                            style: p => 'text-align:center;' + ovrStyle(p._ovr) },
+  { key: 'offensive_rating', label: 'OFFR', tip: 'Offense Rating',                                 fmt: p => p.offensive_rating || '–',                                                style: p => 'text-align:center;' + ratingStyle(p.offensive_rating) },
+  { key: 'overall_rating',   label: 'SKR',  tip: 'Skill Rating (EA overall skill score)',          fmt: p => p.overall_rating || '–',                                                  style: p => 'text-align:center;' + ratingStyle(p.overall_rating) },
+  { key: 'defensive_rating', label: 'DR',   tip: 'Defense Rating',                                 fmt: p => p.defensive_rating || '–',                                                style: p => 'text-align:center;' + ratingStyle(p.defensive_rating) },
+  { key: 'team_play_rating', label: 'TPR',  tip: 'Team Play Rating',                               fmt: p => p.team_play_rating || '–',                                                style: p => 'text-align:center;' + ratingStyle(p.team_play_rating) },
   // ── Games ────────────────────────────────────────────────────────────────
   { key: 'gp',              label: 'GP',   tip: 'Games Played',                            fmt: p => p.gp },
   // ── Scoring ──────────────────────────────────────────────────────────────
@@ -82,6 +83,7 @@ const SKATER_COLS = [
   { key: 'plus_minus',      label: '+/-',  tip: 'Plus / Minus',                            fmt: p => `${(p.plus_minus || 0) >= 0 ? '+' : ''}${p.plus_minus || 0}` },
   // ── Skating / Physical ───────────────────────────────────────────────────
   { key: 'shots',           label: 'SOG',  tip: 'Shots on Goal',                           fmt: p => p.shots || 0 },
+  { key: 'shot_attempts',   label: 'SA',   tip: 'Shot Attempts',                           fmt: p => p.shot_attempts || 0 },
   { key: 'hits',            label: 'HITS', tip: 'Hits',                                   fmt: p => p.hits || 0 },
   { key: 'blocked_shots',   label: 'BS',   tip: 'Blocked Shots',                           fmt: p => p.blocked_shots || 0 },
   { key: 'takeaways',       label: 'TKA',  tip: 'Takeaways',                               fmt: p => p.takeaways || 0 },
@@ -114,10 +116,11 @@ const SKATER_COLS = [
 
 const GOALIE_COLS = [
   // ── Ratings ─────────────────────────────────────────────────────────────
-  { key: '_ovr',                 label: 'OVR',  tip: 'Overall Rating (avg. of OR + DR + TPR)', fmt: p => p._ovr ?? '–',                                       style: p => 'text-align:center;' + ovrStyle(p._ovr) },
-  { key: 'overall_rating',       label: 'OR',   tip: 'Offense Rating',                          fmt: p => p.overall_rating || '–',                             style: p => 'text-align:center;' + ratingStyle(p.overall_rating) },
-  { key: 'defensive_rating',     label: 'DR',   tip: 'Defense Rating',                          fmt: p => p.defensive_rating || '–',                           style: p => 'text-align:center;' + ratingStyle(p.defensive_rating) },
-  { key: 'team_play_rating',     label: 'TPR',  tip: 'Team Play Rating',                        fmt: p => p.team_play_rating || '–',                           style: p => 'text-align:center;' + ratingStyle(p.team_play_rating) },
+  { key: '_ovr',                 label: 'OVR',  tip: 'Overall Rating (avg. of OFFR + SKR + DR + TPR)', fmt: p => p._ovr ?? '–',                                       style: p => 'text-align:center;' + ovrStyle(p._ovr) },
+  { key: 'offensive_rating',     label: 'OFFR', tip: 'Offense Rating',                                 fmt: p => p.offensive_rating || '–',                           style: p => 'text-align:center;' + ratingStyle(p.offensive_rating) },
+  { key: 'overall_rating',       label: 'SKR',  tip: 'Skill Rating (EA overall skill score)',          fmt: p => p.overall_rating || '–',                             style: p => 'text-align:center;' + ratingStyle(p.overall_rating) },
+  { key: 'defensive_rating',     label: 'DR',   tip: 'Defense Rating',                                 fmt: p => p.defensive_rating || '–',                           style: p => 'text-align:center;' + ratingStyle(p.defensive_rating) },
+  { key: 'team_play_rating',     label: 'TPR',  tip: 'Team Play Rating',                               fmt: p => p.team_play_rating || '–',                           style: p => 'text-align:center;' + ratingStyle(p.team_play_rating) },
   // ── Games ────────────────────────────────────────────────────────────────
   { key: 'gp',                   label: 'GP',   tip: 'Games Played',                            fmt: p => p.gp },
   // ── Scoring ──────────────────────────────────────────────────────────────

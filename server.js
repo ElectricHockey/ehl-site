@@ -486,11 +486,13 @@ function mapEAPlayer(p) {
   return {
     name:             typeof nameRaw === 'string' ? nameRaw : (nameRaw ?? 'Unknown'),
     position,
-    overallRating:    Number(eaField(p, 'overallRating'))   || 0,
-    defensiveRating:  Number(eaField(p, 'defensiveRating')) || 0,
-    teamPlayRating:   Number(eaField(p, 'teamPlayRating'))  || 0,
+    overallRating:    Number(eaField(p, 'overallRating'))    || 0,
+    offensiveRating:  Number(eaField(p, 'offensiveRating'))  || 0,
+    defensiveRating:  Number(eaField(p, 'defensiveRating'))  || 0,
+    teamPlayRating:   Number(eaField(p, 'teamPlayRating'))   || 0,
     goals, assists,   points: goals + assists,
     shots,
+    shotAttempts:     Number(eaField(p, 'shotAttempts'))     || 0,
     hits:             Number(eaField(p, 'hits'))           || 0,
     plusMinus:        Number(eaField(p, 'plusMinus'))      || 0,
     pim:              Number(eaField(p, 'pim'))            || 0,
@@ -511,16 +513,11 @@ function mapEAPlayer(p) {
     interceptions:    Number(eaField(p, 'interceptions'))  || 0,
     hatTricks:        Number(eaField(p, 'hatTricks'))      || 0,
     toi:              Number(eaField(p, 'toi'))            || 0,
-    // Goalie
+    // Goalie — W/L/OTW/OTL/SO are calculated from game outcome in saveList, not from EA
     saves:               Number(eaField(p, 'saves'))               || 0,
     savesPct:            eaField(p, 'savesPct') != null ? parseFloat(eaField(p, 'savesPct')) : null,
     goalsAgainst:        Number(eaField(p, 'goalsAgainst'))        || 0,
     shotsAgainst:        Number(eaField(p, 'shotsAgainst'))        || 0,
-    goalieWins:          Number(eaField(p, 'goalieWins'))          || 0,
-    goalieLosses:        Number(eaField(p, 'goalieLosses'))        || 0,
-    goalieOtw:           Number(eaField(p, 'goalieOtw'))           || 0,
-    goalieOtl:           Number(eaField(p, 'goalieOtl'))           || 0,
-    shutouts:            Number(eaField(p, 'shutouts'))            || 0,
     penaltyShotAttempts: Number(eaField(p, 'penaltyShotAttempts')) || 0,
     penaltyShotGa:       Number(eaField(p, 'penaltyShotGa'))       || 0,
     breakawayShots:      Number(eaField(p, 'breakawayShots'))      || 0,
@@ -545,13 +542,14 @@ const SKATER_SELECT = `
   gps.player_name AS name, t.name AS team_name, t.logo_url AS team_logo,
   t.color1 AS team_color1, t.color2 AS team_color2, gps.position,
   COUNT(DISTINCT gps.game_id) AS gp,
-  ROUND(AVG(NULLIF(gps.overall_rating,0)),0)   AS overall_rating,
-  ROUND(AVG(NULLIF(gps.defensive_rating,0)),0) AS defensive_rating,
-  ROUND(AVG(NULLIF(gps.team_play_rating,0)),0) AS team_play_rating,
+  ROUND(AVG(NULLIF(gps.overall_rating,0)),0)    AS overall_rating,
+  ROUND(AVG(NULLIF(gps.offensive_rating,0)),0)  AS offensive_rating,
+  ROUND(AVG(NULLIF(gps.defensive_rating,0)),0)  AS defensive_rating,
+  ROUND(AVG(NULLIF(gps.team_play_rating,0)),0)  AS team_play_rating,
   SUM(gps.goals) AS goals, SUM(gps.assists) AS assists,
   SUM(gps.goals + gps.assists) AS points,
   SUM(gps.plus_minus) AS plus_minus,
-  SUM(gps.shots) AS shots, SUM(gps.hits) AS hits,
+  SUM(gps.shots) AS shots, SUM(gps.shot_attempts) AS shot_attempts, SUM(gps.hits) AS hits,
   SUM(gps.pim) AS pim, SUM(gps.pp_goals) AS pp_goals,
   SUM(gps.sh_goals) AS sh_goals, SUM(gps.gwg) AS gwg,
   SUM(gps.toi) AS toi,
@@ -603,9 +601,10 @@ const GOALIE_SELECT = `
   SUM(gps.goalie_losses) AS goalie_losses,
   SUM(gps.goalie_otw) AS goalie_otw,
   SUM(gps.goalie_otl) AS goalie_otl,
-  ROUND(AVG(NULLIF(gps.overall_rating,0)),0)   AS overall_rating,
-  ROUND(AVG(NULLIF(gps.defensive_rating,0)),0) AS defensive_rating,
-  ROUND(AVG(NULLIF(gps.team_play_rating,0)),0) AS team_play_rating`;
+  ROUND(AVG(NULLIF(gps.overall_rating,0)),0)    AS overall_rating,
+  ROUND(AVG(NULLIF(gps.offensive_rating,0)),0)  AS offensive_rating,
+  ROUND(AVG(NULLIF(gps.defensive_rating,0)),0)  AS defensive_rating,
+  ROUND(AVG(NULLIF(gps.team_play_rating,0)),0)  AS team_play_rating`;
 
 // ── Team season stats ──────────────────────────────────────────────────────
 
@@ -862,36 +861,49 @@ app.patch('/api/games/:id', requireAdmin, (req, res) => {
     db.prepare('DELETE FROM game_player_stats WHERE game_id = ?').run(req.params.id);
     const ins = db.prepare(`INSERT INTO game_player_stats
       (game_id,team_id,player_name,position,
-       overall_rating,defensive_rating,team_play_rating,
-       goals,assists,shots,hits,plus_minus,pim,blocked_shots,takeaways,giveaways,
+       overall_rating,offensive_rating,defensive_rating,team_play_rating,
+       goals,assists,shots,shot_attempts,hits,plus_minus,pim,blocked_shots,takeaways,giveaways,
        possession_secs,pass_attempts,pass_completions,pass_pct,
        faceoff_wins,faceoff_losses,pp_goals,sh_goals,gwg,penalties_drawn,
        deflections,interceptions,hat_tricks,toi,
        saves,save_pct,goals_against,shots_against,
        goalie_wins,goalie_losses,goalie_otw,goalie_otl,
        shutouts,penalty_shot_attempts,penalty_shot_ga,breakaway_shots,breakaway_saves)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `);
-    const saveList = (players, teamId) => {
+    // Goalie W/L/OTW/OTL/SO are derived from the game outcome, not the EA API
+    const homeWon = home_score > away_score;
+    const awayWon = away_score > home_score;
+    const saveList = (players, teamId, teamWon) => {
       for (const p of (players || [])) {
+        const isGoalie = (p.position || '').toUpperCase() === 'G';
+        let goalieWins = 0, goalieLosses = 0, goalieOtw = 0, goalieOtl = 0, shutouts = 0;
+        if (isGoalie) {
+          shutouts = (p.goalsAgainst || 0) === 0 ? 1 : 0;
+          if (teamWon) {
+            if (is_overtime) { goalieOtw = 1; } else { goalieWins = 1; }
+          } else {
+            if (is_overtime) { goalieOtl = 1; } else { goalieLosses = 1; }
+          }
+        }
         ins.run(
           req.params.id, teamId, p.name, p.position,
-          p.overallRating||0, p.defensiveRating||0, p.teamPlayRating||0,
-          p.goals||0, p.assists||0, p.shots||0, p.hits||0, p.plusMinus||0, p.pim||0,
+          p.overallRating||0, p.offensiveRating||0, p.defensiveRating||0, p.teamPlayRating||0,
+          p.goals||0, p.assists||0, p.shots||0, p.shotAttempts||0, p.hits||0, p.plusMinus||0, p.pim||0,
           p.blockedShots||0, p.takeaways||0, p.giveaways||0,
           p.possessionSecs||0, p.passAttempts||0, p.passCompletions||0, p.passPct||null,
           p.faceoffWins||0, p.faceoffLosses||0,
           p.ppGoals||0, p.shGoals||0, p.gwg||0, p.penaltiesDrawn||0,
           p.deflections||0, p.interceptions||0, p.hatTricks||0, p.toi||0,
           p.saves||0, p.savesPct||null, p.goalsAgainst||0, p.shotsAgainst||0,
-          p.goalieWins||0, p.goalieLosses||0, p.goalieOtw||0, p.goalieOtl||0,
-          p.shutouts||0, p.penaltyShotAttempts||0, p.penaltyShotGa||0,
+          goalieWins, goalieLosses, goalieOtw, goalieOtl,
+          shutouts, p.penaltyShotAttempts||0, p.penaltyShotGa||0,
           p.breakawayShots||0, p.breakawaySaves||0
         );
       }
     };
-    saveList(home_players, game.home_team_id);
-    saveList(away_players, game.away_team_id);
+    saveList(home_players, game.home_team_id, homeWon);
+    saveList(away_players, game.away_team_id, awayWon);
   }
   if (req.body.ea_match_id === null && !req.body.player_stats) {
     db.prepare('DELETE FROM game_player_stats WHERE game_id = ?').run(req.params.id);
@@ -1021,9 +1033,10 @@ app.get('/api/stats/leaders', (req, res) => {
       SUM(gps.goalie_losses) AS goalie_losses,
       SUM(gps.goalie_otw) AS goalie_otw,
       SUM(gps.goalie_otl) AS goalie_otl,
-      ROUND(AVG(NULLIF(gps.overall_rating,0)),0)   AS overall_rating,
-      ROUND(AVG(NULLIF(gps.defensive_rating,0)),0) AS defensive_rating,
-      ROUND(AVG(NULLIF(gps.team_play_rating,0)),0) AS team_play_rating
+      ROUND(AVG(NULLIF(gps.overall_rating,0)),0)    AS overall_rating,
+      ROUND(AVG(NULLIF(gps.offensive_rating,0)),0)  AS offensive_rating,
+      ROUND(AVG(NULLIF(gps.defensive_rating,0)),0)  AS defensive_rating,
+      ROUND(AVG(NULLIF(gps.team_play_rating,0)),0)  AS team_play_rating
     FROM game_player_stats gps
     JOIN games g ON gps.game_id = g.id
     LEFT JOIN ${rosterSub} ON rp.name = gps.player_name

@@ -22,7 +22,7 @@ function pct3(v) {
   return frac.toFixed(3).replace(/^0(?=\.)/, '');
 }
 function computeOvr(p) {
-  const vals = [p.overall_rating, p.defensive_rating, p.team_play_rating]
+  const vals = [p.overall_rating, p.offensive_rating, p.defensive_rating, p.team_play_rating]
     .map(Number).filter(v => v > 0);
   return vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null;
 }
@@ -46,12 +46,12 @@ function sumSkaterRows(rows) {
   const tot = {
     name: 'Career Total', team_name: '', team_logo: null,
     gp: 0, goals: 0, assists: 0, points: 0, plus_minus: 0,
-    shots: 0, hits: 0, blocked_shots: 0, takeaways: 0, giveaways: 0,
+    shots: 0, shot_attempts: 0, hits: 0, blocked_shots: 0, takeaways: 0, giveaways: 0,
     pp_goals: 0, sh_goals: 0, gwg: 0, pim: 0, penalties_drawn: 0,
     faceoff_wins: 0, faceoff_total: 0, deflections: 0, interceptions: 0,
     pass_attempts: 0, pass_completions: 0, hat_tricks: 0, toi: 0,
     _apt_sum: 0, _apt_gp: 0,
-    _or_sum: 0, _dr_sum: 0, _tpr_sum: 0, _r_count: 0,
+    _or_sum: 0, _offr_sum: 0, _dr_sum: 0, _tpr_sum: 0, _r_count: 0,
   };
   for (const r of rows) {
     tot.gp += r.gp || 0;
@@ -60,6 +60,7 @@ function sumSkaterRows(rows) {
     tot.points += r.points || 0;
     tot.plus_minus += r.plus_minus || 0;
     tot.shots += r.shots || 0;
+    tot.shot_attempts += r.shot_attempts || 0;
     tot.hits += r.hits || 0;
     tot.blocked_shots += r.blocked_shots || 0;
     tot.takeaways += r.takeaways || 0;
@@ -78,14 +79,16 @@ function sumSkaterRows(rows) {
     tot.hat_tricks += r.hat_tricks || 0;
     if (r.apt) { tot._apt_sum += r.apt * (r.gp || 1); tot._apt_gp += r.gp || 1; }
     tot.toi += r.toi || 0;
-    if (r.overall_rating > 0) { tot._or_sum += r.overall_rating; tot._r_count++; }
-    if (r.defensive_rating > 0) tot._dr_sum += r.defensive_rating;
-    if (r.team_play_rating > 0) tot._tpr_sum += r.team_play_rating;
+    if (r.overall_rating > 0)    { tot._or_sum   += r.overall_rating;   tot._r_count++; }
+    if (r.offensive_rating > 0)    tot._offr_sum += r.offensive_rating;
+    if (r.defensive_rating > 0)    tot._dr_sum   += r.defensive_rating;
+    if (r.team_play_rating > 0)    tot._tpr_sum  += r.team_play_rating;
   }
   const n = tot._r_count || 1;
-  tot.overall_rating = tot._r_count ? Math.round(tot._or_sum / n) : 0;
-  tot.defensive_rating = tot._r_count ? Math.round(tot._dr_sum / n) : 0;
-  tot.team_play_rating = tot._r_count ? Math.round(tot._tpr_sum / n) : 0;
+  tot.overall_rating    = tot._r_count ? Math.round(tot._or_sum   / n) : 0;
+  tot.offensive_rating  = tot._r_count ? Math.round(tot._offr_sum / n) : 0;
+  tot.defensive_rating  = tot._r_count ? Math.round(tot._dr_sum   / n) : 0;
+  tot.team_play_rating  = tot._r_count ? Math.round(tot._tpr_sum  / n) : 0;
   tot.fow_pct = tot.faceoff_total > 0 ? Math.round(tot.faceoff_wins * 100 / tot.faceoff_total * 10) / 10 : null;
   tot.shot_pct = tot.shots > 0 ? Math.round(tot.goals * 100 / tot.shots * 10) / 10 : null;
   tot.pass_pct_calc = tot.pass_attempts > 0 ? Math.round(tot.pass_completions * 100 / tot.pass_attempts * 10) / 10 : null;
@@ -101,7 +104,7 @@ function sumGoalieRows(rows) {
     shutouts: 0, penalty_shot_attempts: 0, penalty_shot_ga: 0,
     breakaway_shots: 0, breakaway_saves: 0,
     goalie_wins: 0, goalie_losses: 0, goalie_otw: 0, goalie_otl: 0,
-    _or_sum: 0, _dr_sum: 0, _tpr_sum: 0, _r_count: 0,
+    _or_sum: 0, _offr_sum: 0, _dr_sum: 0, _tpr_sum: 0, _r_count: 0,
   };
   for (const r of rows) {
     tot.gp += r.gp || 0;
@@ -120,14 +123,16 @@ function sumGoalieRows(rows) {
     tot.goalie_losses += r.goalie_losses || 0;
     tot.goalie_otw += r.goalie_otw || 0;
     tot.goalie_otl += r.goalie_otl || 0;
-    if (r.overall_rating > 0) { tot._or_sum += r.overall_rating; tot._r_count++; }
-    if (r.defensive_rating > 0) tot._dr_sum += r.defensive_rating;
-    if (r.team_play_rating > 0) tot._tpr_sum += r.team_play_rating;
+    if (r.overall_rating > 0)  { tot._or_sum   += r.overall_rating;   tot._r_count++; }
+    if (r.offensive_rating > 0)  tot._offr_sum += r.offensive_rating;
+    if (r.defensive_rating > 0)  tot._dr_sum   += r.defensive_rating;
+    if (r.team_play_rating > 0)  tot._tpr_sum  += r.team_play_rating;
   }
   const n = tot._r_count || 1;
-  tot.overall_rating = tot._r_count ? Math.round(tot._or_sum / n) : 0;
-  tot.defensive_rating = tot._r_count ? Math.round(tot._dr_sum / n) : 0;
-  tot.team_play_rating = tot._r_count ? Math.round(tot._tpr_sum / n) : 0;
+  tot.overall_rating    = tot._r_count ? Math.round(tot._or_sum   / n) : 0;
+  tot.offensive_rating  = tot._r_count ? Math.round(tot._offr_sum / n) : 0;
+  tot.defensive_rating  = tot._r_count ? Math.round(tot._dr_sum   / n) : 0;
+  tot.team_play_rating  = tot._r_count ? Math.round(tot._tpr_sum  / n) : 0;
   tot.save_pct = tot.shots_against > 0 ? tot.saves / tot.shots_against : null;
   tot.gaa = tot.toi > 0 ? Math.round(tot.goals_against * 3600 / tot.toi * 100) / 100 : null;
   return tot;

@@ -27,7 +27,7 @@
   // ── Rating colour helpers ───────────────────────────────────────────────
 
   function computeOvr(p) {
-    const vals = [p.overall_rating, p.defensive_rating, p.team_play_rating]
+    const vals = [p.overall_rating, p.offensive_rating, p.defensive_rating, p.team_play_rating]
       .map(Number).filter(v => v > 0);
     return vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null;
   }
@@ -83,15 +83,17 @@
     return {
       name:     p.player_name || p.name,
       position: p.position,
-      overall_rating:   v('overall_rating',   'overallRating'),
-      defensive_rating: v('defensive_rating',  'defensiveRating'),
-      team_play_rating: v('team_play_rating',  'teamPlayRating'),
+      overall_rating:    v('overall_rating',    'overallRating'),
+      offensive_rating:  v('offensive_rating',  'offensiveRating'),
+      defensive_rating:  v('defensive_rating',  'defensiveRating'),
+      team_play_rating:  v('team_play_rating',  'teamPlayRating'),
       // skater
       goals,
       assists:        v('assists',         'assists'),
       points:         goals + v('assists', 'assists'),
       plus_minus:     v('plus_minus',      'plusMinus'),
       shots,
+      shot_attempts:  v('shot_attempts',   'shotAttempts'),
       hits:           v('hits',            'hits'),
       blocked_shots:  v('blocked_shots',   'blockedShots'),
       takeaways:      v('takeaways',       'takeaways'),
@@ -137,8 +139,9 @@
     return `<div class="stats-scroll-wrap"><table class="game-stats-table">
       <thead><tr>
         <th>Pos</th><th>Player</th>
-        <th data-tip="Overall Rating (avg. of OR + DR + TPR)">OVR</th>
-        <th data-tip="Offense Rating">OR</th>
+        <th data-tip="Overall Rating (avg. of OFFR + SKR + DR + TPR)">OVR</th>
+        <th data-tip="Offense Rating">OFFR</th>
+        <th data-tip="Skill Rating (EA overall skill score)">SKR</th>
         <th data-tip="Defense Rating">DR</th>
         <th data-tip="Team Play Rating">TPR</th>
         <th data-tip="Goals">G</th>
@@ -146,6 +149,7 @@
         <th data-tip="Points">PTS</th>
         <th data-tip="Plus / Minus">+/-</th>
         <th data-tip="Shots on Goal">SOG</th>
+        <th data-tip="Shot Attempts">SA</th>
         <th data-tip="Hits">HITS</th>
         <th data-tip="Blocked Shots">BS</th>
         <th data-tip="Takeaways">TKA</th>
@@ -173,6 +177,7 @@
           <td>${p.position || '–'}</td>
           <td><a href="player.html?name=${encodeURIComponent(p.name)}" class="player-link">${p.name}</a></td>
           <td class="gs-rating" style="${ovrStyle(ovr)}">${ovr ?? '–'}</td>
+          <td class="gs-rating" style="${ratingStyle(p.offensive_rating)}">${p.offensive_rating || '–'}</td>
           <td class="gs-rating" style="${ratingStyle(p.overall_rating)}">${p.overall_rating || '–'}</td>
           <td class="gs-rating" style="${ratingStyle(p.defensive_rating)}">${p.defensive_rating || '–'}</td>
           <td class="gs-rating" style="${ratingStyle(p.team_play_rating)}">${p.team_play_rating || '–'}</td>
@@ -181,6 +186,7 @@
           <td><strong>${p.points}</strong></td>
           <td>${p.plus_minus >= 0 ? '+' : ''}${p.plus_minus}</td>
           <td>${p.shots}</td>
+          <td>${p.shot_attempts}</td>
           <td>${p.hits}</td>
           <td>${p.blocked_shots}</td>
           <td>${p.takeaways}</td>
@@ -213,8 +219,9 @@
     return `<div class="stats-scroll-wrap"><table class="game-stats-table">
       <thead><tr>
         <th>Player</th>
-        <th data-tip="Overall Rating (avg. of OR + DR + TPR)">OVR</th>
-        <th data-tip="Offense Rating">OR</th>
+        <th data-tip="Overall Rating (avg. of OFFR + SKR + DR + TPR)">OVR</th>
+        <th data-tip="Offense Rating">OFFR</th>
+        <th data-tip="Skill Rating (EA overall skill score)">SKR</th>
         <th data-tip="Defense Rating">DR</th>
         <th data-tip="Team Play Rating">TPR</th>
         <th data-tip="Shots Against">SA</th>
@@ -222,21 +229,17 @@
         <th data-tip="Save Percentage">SV%</th>
         <th data-tip="Goals Against Average">GAA</th>
         <th data-tip="Time on Ice">TOI</th>
-        <th data-tip="Shutouts">SO</th>
         <th data-tip="Penalty Shot Attempts Against">PSA</th>
         <th data-tip="Penalty Shot Goals Against">PSGA</th>
         <th data-tip="Breakaway Shots Against">BKSA</th>
         <th data-tip="Breakaway Saves">BKSV</th>
-        <th data-tip="Wins">W</th>
-        <th data-tip="Losses">L</th>
-        <th data-tip="Overtime Wins">OTW</th>
-        <th data-tip="Overtime Losses">OTL</th>
       </tr></thead>
       <tbody>${players.map(p => {
         const ovr = computeOvr(p);
         return `<tr>
           <td><a href="player.html?name=${encodeURIComponent(p.name)}" class="player-link">${p.name}</a></td>
           <td class="gs-rating" style="${ovrStyle(ovr)}">${ovr ?? '–'}</td>
+          <td class="gs-rating" style="${ratingStyle(p.offensive_rating)}">${p.offensive_rating || '–'}</td>
           <td class="gs-rating" style="${ratingStyle(p.overall_rating)}">${p.overall_rating || '–'}</td>
           <td class="gs-rating" style="${ratingStyle(p.defensive_rating)}">${p.defensive_rating || '–'}</td>
           <td class="gs-rating" style="${ratingStyle(p.team_play_rating)}">${p.team_play_rating || '–'}</td>
@@ -245,15 +248,10 @@
           <td><strong>${pct3(p.save_pct)}</strong></td>
           <td>${p.gaa !== null ? p.gaa.toFixed(2) : '–'}</td>
           <td>${formatToi(p.toi)}</td>
-          <td>${p.shutouts}</td>
           <td>${p.penalty_shot_attempts}</td>
           <td>${p.penalty_shot_ga}</td>
           <td>${p.breakaway_shots}</td>
           <td>${p.breakaway_saves}</td>
-          <td>${p.goalie_wins}</td>
-          <td>${p.goalie_losses}</td>
-          <td>${p.goalie_otw}</td>
-          <td>${p.goalie_otl}</td>
         </tr>`;
       }).join('')}</tbody>
     </table></div>`;

@@ -35,10 +35,9 @@ module.exports = {
 
   // ── Ratings ───────────────────────────────────────────────────────────────
   skrating:               'overallRating',
-  skdefrating:            'defensiveRating',
-  skdefensiverating:      'defensiveRating',   // fallback alternate field name
-  sktprrating:            'teamPlayRating',
-  sktpr:                  'teamPlayRating',     // fallback alternate field name
+  ratingOffense:          'offensiveRating',  // offense rating
+  ratingDefense:          'defensiveRating',
+  ratingTeamplay:         'teamPlayRating',
 
   // ── Skater: Scoring ───────────────────────────────────────────────────────
   skgoals:                'goals',
@@ -47,6 +46,7 @@ module.exports = {
 
   // ── Skater: Shooting ──────────────────────────────────────────────────────
   skshots:                'shots',
+  skshotattempts:         'shotAttempts',   // shot attempts (corsi)
 
   // ── Skater: Physical ──────────────────────────────────────────────────────
   skhits:                 'hits',
@@ -66,14 +66,12 @@ module.exports = {
   skpasspct:              'passPct',        // pass completion %; used to derive passCompletions
 
   // ── Skater: Faceoffs ──────────────────────────────────────────────────────
-  skfaceoffwins:          'faceoffWins',
-  skfaceoffloss:          'faceoffLosses',
+  skfow:                  'faceoffWins',
+  skfol:                  'faceoffLosses',
 
   // ── Skater: Special Teams ─────────────────────────────────────────────────
-  skpowerplaygoals:       'ppGoals',        // power play goals (primary)
-  skppg:                  'ppGoals',        // fallback alternate field name
-  skshorthandedgoals:     'shGoals',        // short-handed goals (primary)
-  skshg:                  'shGoals',        // fallback alternate field name
+  skppg:                  'ppGoals',        // power play goals
+  skshg:                  'shGoals',        // short-handed goals
   skgwg:                  'gwg',            // game-winning goals
 
   // ── Skater: Discipline ────────────────────────────────────────────────────
@@ -95,25 +93,14 @@ module.exports = {
   glshots:                'shotsAgainst',
 
   // ── Goalie: Win/Loss ──────────────────────────────────────────────────────
-  glwins:                 'goalieWins',
-  gllosses:               'goalieLosses',
-  glotw:                  'goalieOtw',      // overtime wins (primary)
-  glotwin:                'goalieOtw',      // fallback alternate field name
-  glotlosses:             'goalieOtl',      // overtime losses (primary)
-  glotl:                  'goalieOtl',      // fallback alternate field name
-  glsoperiod:             'shutouts',       // shutouts (primary)
-  glshuts:                'shutouts',       // fallback alternate field name
-  glso:                   'shutouts',       // fallback alternate field name
+  // NOTE: goalieWins, goalieLosses, goalieOtw, goalieOtl, and shutouts are
+  // calculated server-side from the game outcome — NOT imported from EA.
 
   // ── Goalie: Penalty Shots ─────────────────────────────────────────────────
-  glpenshotatt:           'penaltyShotAttempts', // penalty shot attempts against (primary)
-  glpenshot:              'penaltyShotAttempts', // fallback alternate field name
-  glpengoalsa:            'penaltyShotGa',       // penalty shot goals against (primary)
-  glpenshotga:            'penaltyShotGa',       // fallback alternate field name
+  glpenshots:             'penaltyShotAttempts', // penalty shot attempts against
+  glpensaves:             'penaltyShotGa',       // penalty shot goals against (EA field is named glpensaves)
 
   // ── Goalie: Breakaways ────────────────────────────────────────────────────
-  glbkshotatt:            'breakawayShots', // breakaway shots against (primary)
-  glbkshotsag:            'breakawayShots', // fallback alternate field name
-  glbksaves:              'breakawaySaves', // breakaway saves (primary)
-  glbksvs:                'breakawaySaves', // fallback alternate field name
+  glbrkshots:             'breakawayShots', // breakaway shots against
+  glbrksaves:             'breakawaySaves', // breakaway saves
 };

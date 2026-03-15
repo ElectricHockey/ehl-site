@@ -113,11 +113,13 @@ db.exec(`
     player_name TEXT NOT NULL,
     position TEXT,
     overall_rating INTEGER DEFAULT 0,
+    offensive_rating INTEGER DEFAULT 0,
     defensive_rating INTEGER DEFAULT 0,
     team_play_rating INTEGER DEFAULT 0,
     goals INTEGER DEFAULT 0,
     assists INTEGER DEFAULT 0,
     shots INTEGER DEFAULT 0,
+    shot_attempts INTEGER DEFAULT 0,
     hits INTEGER DEFAULT 0,
     plus_minus INTEGER DEFAULT 0,
     pim INTEGER DEFAULT 0,
@@ -173,6 +175,7 @@ try { db.exec('ALTER TABLE players ADD COLUMN user_id INTEGER'); } catch (_) {}
 try { db.exec('ALTER TABLE players ADD COLUMN is_rostered INTEGER DEFAULT 1'); } catch (_) {}
 // New game_player_stats columns
 try { db.exec('ALTER TABLE game_player_stats ADD COLUMN overall_rating INTEGER DEFAULT 0'); } catch (_) {}
+try { db.exec('ALTER TABLE game_player_stats ADD COLUMN offensive_rating INTEGER DEFAULT 0'); } catch (_) {}
 try { db.exec('ALTER TABLE game_player_stats ADD COLUMN defensive_rating INTEGER DEFAULT 0'); } catch (_) {}
 try { db.exec('ALTER TABLE game_player_stats ADD COLUMN team_play_rating INTEGER DEFAULT 0'); } catch (_) {}
 try { db.exec('ALTER TABLE game_player_stats ADD COLUMN gwg INTEGER DEFAULT 0'); } catch (_) {}
@@ -181,6 +184,7 @@ try { db.exec('ALTER TABLE game_player_stats ADD COLUMN deflections INTEGER DEFA
 try { db.exec('ALTER TABLE game_player_stats ADD COLUMN interceptions INTEGER DEFAULT 0'); } catch (_) {}
 try { db.exec('ALTER TABLE game_player_stats ADD COLUMN hat_tricks INTEGER DEFAULT 0'); } catch (_) {}
 try { db.exec('ALTER TABLE game_player_stats ADD COLUMN pass_completions INTEGER DEFAULT 0'); } catch (_) {}
+try { db.exec('ALTER TABLE game_player_stats ADD COLUMN shot_attempts INTEGER DEFAULT 0'); } catch (_) {}
 try { db.exec('ALTER TABLE game_player_stats ADD COLUMN goalie_wins INTEGER DEFAULT 0'); } catch (_) {}
 try { db.exec('ALTER TABLE game_player_stats ADD COLUMN goalie_losses INTEGER DEFAULT 0'); } catch (_) {}
 try { db.exec('ALTER TABLE game_player_stats ADD COLUMN goalie_otw INTEGER DEFAULT 0'); } catch (_) {}
