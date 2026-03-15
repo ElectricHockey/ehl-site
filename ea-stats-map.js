@@ -2,98 +2,118 @@
 // EA PRO CLUBS API → EHL STATS FIELD MAPPING
 // ══════════════════════════════════════════════════════════════════════════
 //
-// This file controls which EA API fields are used to fill each EHL stat.
-// Edit it any time EA changes their API, or if you want to remap a stat
-// to a different source field.
+// Each line maps one EA API field name (left) to an EHL database column (right).
 //
-// HOW TO SEE WHAT FIELDS EA RETURNS FOR YOUR CLUB:
-//   Open this URL in your browser (replace the clubId number):
-//   https://proclubs.ea.com/api/nhl/clubs/matches?matchType=club_private&platform=common-gen5&clubIds=6021
+// HOW TO CHECK / UPDATE A FIELD:
+//   1. Open the EA API URL in your browser:
+//      https://proclubs.ea.com/api/nhl/clubs/matches?matchType=club_private&platform=common-gen5&clubIds=6021
+//   2. In the JSON, look under: [0].players.<playerName>
+//      The property names shown there are the EA field names used on the LEFT below.
+//   3. Find the line you want to change and update the EA field name on the left,
+//      or the EHL column name on the right.
 //
-//   Inside the JSON, navigate to:
-//     [0].players.<playerName>.*
-//   Those keys are the available EA field names you can use here.
+// MULTIPLE EA FIELDS FOR THE SAME STAT:
+//   EA sometimes renames fields between game versions. When two lines share the
+//   same EHL column name, the first one found in the API response is used —
+//   the others act as fallbacks.
+//   Example: both 'skdefrating' and 'skdefensiverating' map to 'defensiveRating'.
 //
-// HOW TO EDIT:
-//   • Each entry is:  ehlStat: 'ea_field_name'
-//   • For fallback fields (try first, fall back if missing/zero):
-//     ehlStat: ['primary_ea_field', 'fallback_ea_field', ...]
-//   • To stop tracking a stat, set its value to null:
-//     gwg: null
+// TO DISABLE A STAT:
+//   Comment out its line(s) with //
 //
 // ══════════════════════════════════════════════════════════════════════════
+//
+//  EA API field name          EHL column name
+//  ─────────────────────────  ────────────────────────────────────────────
 
 module.exports = {
 
   // ── Player identity ────────────────────────────────────────────────────────
-  playerName: ['playername', 'name'],      // Display name
-  position:   'position',                  // Raw code; converted via EA_POSITIONS in server.js
+  playername:             'playerName',   // display name (primary field)
+  name:                   'playerName',   // fallback if 'playername' is absent
+  position:               'position',     // raw code: 0=G 1=C 2=LW 3=RW 4=LD 5=RD
 
   // ── Ratings ───────────────────────────────────────────────────────────────
-  overallRating:   'skrating',
-  defensiveRating: ['skdefrating', 'skdefensiverating'],
-  teamPlayRating:  ['sktprrating', 'sktpr'],
+  skrating:               'overallRating',
+  skdefrating:            'defensiveRating',
+  skdefensiverating:      'defensiveRating',   // fallback alternate field name
+  sktprrating:            'teamPlayRating',
+  sktpr:                  'teamPlayRating',     // fallback alternate field name
 
   // ── Skater: Scoring ───────────────────────────────────────────────────────
-  goals:   'skgoals',
-  assists: 'skassists',
+  skgoals:                'goals',
+  skassists:              'assists',
   // points is auto-calculated as goals + assists — no EA field needed
 
   // ── Skater: Shooting ──────────────────────────────────────────────────────
-  shots: 'skshots',
+  skshots:                'shots',
 
   // ── Skater: Physical ──────────────────────────────────────────────────────
-  hits:         'skhits',
-  plusMinus:    'skplusmin',
-  pim:          'skpim',          // Penalty minutes
-  blockedShots: 'skbs',
-  takeaways:    'sktakeaways',
-  giveaways:    'skgiveaways',
+  skhits:                 'hits',
+  skplusmin:              'plusMinus',
+  skpim:                  'pim',            // penalty minutes
+  skbs:                   'blockedShots',
+  sktakeaways:            'takeaways',
+  skgiveaways:            'giveaways',
 
   // ── Skater: Time / Possession ─────────────────────────────────────────────
-  toi:            ['toiseconds', 'skToi'],   // Time on ice (seconds)
-  possessionSecs: 'skpossession',            // Puck possession (seconds)
+  toiseconds:             'toi',            // time on ice in seconds (primary)
+  skToi:                  'toi',            // fallback alternate field name
+  skpossession:           'possessionSecs', // puck possession in seconds
 
   // ── Skater: Passing ───────────────────────────────────────────────────────
-  passAttempts: 'skpassattempts',
-  // passPct is used to compute passCompletions = passAttempts * passPct / 100
-  passPct:      'skpasspct',
+  skpassattempts:         'passAttempts',
+  skpasspct:              'passPct',        // pass completion %; used to derive passCompletions
 
   // ── Skater: Faceoffs ──────────────────────────────────────────────────────
-  faceoffWins:   'skfaceoffwins',
-  faceoffLosses: 'skfaceoffloss',
+  skfaceoffwins:          'faceoffWins',
+  skfaceoffloss:          'faceoffLosses',
 
   // ── Skater: Special Teams ─────────────────────────────────────────────────
-  ppGoals: ['skpowerplaygoals', 'skppg'],    // Power play goals
-  shGoals: ['skshorthandedgoals', 'skshg'], // Short-handed goals
-  gwg:     'skgwg',                          // Game-winning goals
+  skpowerplaygoals:       'ppGoals',        // power play goals (primary)
+  skppg:                  'ppGoals',        // fallback alternate field name
+  skshorthandedgoals:     'shGoals',        // short-handed goals (primary)
+  skshg:                  'shGoals',        // fallback alternate field name
+  skgwg:                  'gwg',            // game-winning goals
 
   // ── Skater: Discipline ────────────────────────────────────────────────────
-  penaltiesDrawn: ['skpenaltiesdrawn', 'skpd'],
+  skpenaltiesdrawn:       'penaltiesDrawn', // penalties drawn (primary)
+  skpd:                   'penaltiesDrawn', // fallback alternate field name
 
   // ── Skater: Advanced ──────────────────────────────────────────────────────
-  deflections:   ['skdeflections', 'skdfl'],
-  interceptions: ['skinterceptions', 'skint'],
-  hatTricks:     ['skhattricks', 'skht'],
+  skdeflections:          'deflections',    // (primary)
+  skdfl:                  'deflections',    // fallback alternate field name
+  skinterceptions:        'interceptions',  // (primary)
+  skint:                  'interceptions',  // fallback alternate field name
+  skhattricks:            'hatTricks',      // (primary)
+  skht:                   'hatTricks',      // fallback alternate field name
 
   // ── Goalie: Core ──────────────────────────────────────────────────────────
-  saves:        'glsaves',
-  savesPct:     'glsavePct',     // Save percentage (used as fallback; SV% is recalculated from saves/shotsAgainst)
-  goalsAgainst: 'glga',
-  shotsAgainst: 'glshots',
+  glsaves:                'saves',
+  glsavePct:              'savesPct',       // raw SV%; server recalculates from saves/shotsAgainst
+  glga:                   'goalsAgainst',
+  glshots:                'shotsAgainst',
 
   // ── Goalie: Win/Loss ──────────────────────────────────────────────────────
-  goalieWins:   'glwins',
-  goalieLosses: 'gllosses',
-  goalieOtw:    ['glotw', 'glotwin'],
-  goalieOtl:    ['glotlosses', 'glotl'],
-  shutouts:     ['glsoperiod', 'glshuts', 'glso'],
+  glwins:                 'goalieWins',
+  gllosses:               'goalieLosses',
+  glotw:                  'goalieOtw',      // overtime wins (primary)
+  glotwin:                'goalieOtw',      // fallback alternate field name
+  glotlosses:             'goalieOtl',      // overtime losses (primary)
+  glotl:                  'goalieOtl',      // fallback alternate field name
+  glsoperiod:             'shutouts',       // shutouts (primary)
+  glshuts:                'shutouts',       // fallback alternate field name
+  glso:                   'shutouts',       // fallback alternate field name
 
   // ── Goalie: Penalty Shots ─────────────────────────────────────────────────
-  penaltyShotAttempts: ['glpenshotatt', 'glpenshot'],
-  penaltyShotGa:       ['glpengoalsa', 'glpenshotga'],
+  glpenshotatt:           'penaltyShotAttempts', // penalty shot attempts against (primary)
+  glpenshot:              'penaltyShotAttempts', // fallback alternate field name
+  glpengoalsa:            'penaltyShotGa',       // penalty shot goals against (primary)
+  glpenshotga:            'penaltyShotGa',       // fallback alternate field name
 
   // ── Goalie: Breakaways ────────────────────────────────────────────────────
-  breakawayShots: ['glbkshotatt', 'glbkshotsag'],
-  breakawaySaves: ['glbksaves', 'glbksvs'],
+  glbkshotatt:            'breakawayShots', // breakaway shots against (primary)
+  glbkshotsag:            'breakawayShots', // fallback alternate field name
+  glbksaves:              'breakawaySaves', // breakaway saves (primary)
+  glbksvs:                'breakawaySaves', // fallback alternate field name
 };

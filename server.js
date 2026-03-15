@@ -451,13 +451,20 @@ function mapResult(r) {
   return '?';
 }
 
-// Returns the value of the first EA field found in the player object.
-// `fields` can be a single string or an array of fallback strings.
-// Returns undefined when the mapping is null (stat disabled) or no field matches.
-function eaField(p, fields) {
-  if (fields === null || fields === undefined) return undefined;
-  const keys = Array.isArray(fields) ? fields : [fields];
-  for (const k of keys) {
+// Build reverse lookup: ehlColumn → [eaField1, eaField2, ...] (priority = insertion order)
+// This lets mapEAPlayer look up by EHL column name while ea-stats-map.js stays keyed by EA field name.
+const EA_REVERSE_MAP = {};
+for (const [eaKey, ehlCol] of Object.entries(EA_STATS_MAP)) {
+  if (!EA_REVERSE_MAP[ehlCol]) EA_REVERSE_MAP[ehlCol] = [];
+  EA_REVERSE_MAP[ehlCol].push(eaKey);
+}
+
+// Returns the value of the first EA field that is present on the player object
+// for the given EHL column name. Returns undefined if none found.
+function eaField(p, ehlCol) {
+  const candidates = EA_REVERSE_MAP[ehlCol];
+  if (!candidates) return undefined;
+  for (const k of candidates) {
     if (p[k] !== undefined) return p[k];
   }
   return undefined;
