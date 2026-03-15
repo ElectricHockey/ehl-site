@@ -776,13 +776,20 @@ app.patch('/api/players/:id', requireAdmin, (req, res) => {
 
 app.get('/api/games', (req, res) => {
   const seasonId = req.query.season_id ? Number(req.query.season_id) : null;
-  const filter = seasonId ? 'WHERE g.season_id = ?' : '';
+  const status   = req.query.status   || null;
+  const limit    = req.query.limit    ? Math.min(Number(req.query.limit), 100) : null;
+  const conditions = [];
+  const params = [];
+  if (seasonId) { conditions.push('g.season_id = ?'); params.push(seasonId); }
+  if (status)   { conditions.push('g.status = ?');    params.push(status); }
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const limitClause = limit ? `LIMIT ${limit}` : '';
   const games = db.prepare(`
     SELECT g.*, ht.name AS home_team_name, ht.logo_url AS home_logo,
       at.name AS away_team_name, at.logo_url AS away_logo
     FROM games g JOIN teams ht ON g.home_team_id = ht.id JOIN teams at ON g.away_team_id = at.id
-    ${filter} ORDER BY g.date DESC
-  `).all(...(seasonId ? [seasonId] : []));
+    ${where} ORDER BY g.date DESC ${limitClause}
+  `).all(...params);
   res.json(games);
 });
 
@@ -1082,6 +1089,26 @@ function calcStandings(seasonId) {
 app.get('/api/standings', (req, res) => {
   const seasonId = req.query.season_id ? Number(req.query.season_id) : null;
   res.json(calcStandings(seasonId));
+});
+
+// ── Transactions (recent accepted signings) ──────────────────────────────
+
+app.get('/api/transactions', (req, res) => {
+  const limit = Math.min(Number(req.query.limit) || 25, 100);
+  const rows = db.prepare(`
+    SELECT so.id, so.status, so.created_at,
+           u.username  AS player_name,
+           t.id        AS team_id,
+           t.name      AS team_name,
+           t.logo_url  AS team_logo
+      FROM signing_offers so
+      JOIN users u ON so.user_id = u.id
+      JOIN teams t ON so.team_id = t.id
+     WHERE so.status = 'accepted'
+     ORDER BY so.created_at DESC
+     LIMIT ?
+  `).all(limit);
+  res.json(rows);
 });
 
 // ── Playoffs ────────────────────────────────────────────────────────────────

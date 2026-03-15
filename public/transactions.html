@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>EA Matches – EHL</title>
+  <title>Transactions – EHL</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -24,26 +24,17 @@
     <a href="stats.html">Stats</a>
     <a href="players.html">Players</a>
     <a href="admin.html">Admin</a>
+    <a href="register.html" class="nav-portal">Player Portal</a>
   </nav>
 
   <div class="container">
-    <h1>EA Matches</h1>
-    <p style="color:#8b949e;margin-bottom:1rem;">Load EA match results for a club.</p>
-
-    <div class="form-section" style="max-width:420px;">
-      <form id="ea-search-form">
-        <div class="form-group">
-          <label for="ea-club">Club Name</label>
-          <input type="text" id="ea-club" placeholder="e.g. EHL Falcons" required />
-        </div>
-        <button type="submit">Load Matches</button>
-      </form>
-    </div>
-
-    <div id="ea-results"></div>
+    <h1>📋 Transactions</h1>
+    <p style="color:#8b949e;margin-bottom:1.5rem;">Recent player signings across the league.</p>
+    <div id="transactions-root"><p class="loading">Loading transactions…</p></div>
   </div>
 
-  <script src="ea-matches.js"></script>
+  <script src="transactions.js"></script>
+  <script src="notifications.js"></script>
   <script src="nav.js"></script>
 </body>
 </html>

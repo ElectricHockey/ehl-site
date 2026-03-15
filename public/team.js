@@ -281,11 +281,31 @@ async function loadTeamPage() {
     if (roster.length === 0) {
       html += '<p class="no-stats">No rostered players.</p>';
     } else {
-      html += `<div style="display:flex;flex-wrap:wrap;gap:0.4rem;margin-bottom:0.75rem;">
-        ${roster.map(p => `<span style="font-size:0.82rem;background:#21262d;border-radius:6px;padding:0.2rem 0.55rem;color:#c9d1d9;">
-          ${p.name}${p.position ? ` <small style="color:#8b949e;">${p.position}</small>` : ''}
-          ${p.platform ? ` <small style="color:#58a6ff;">${p.platform}</small>` : ''}
-        </span>`).join('')}</div>`;
+      // Sort roster: Forwards first (C, LW, RW), then Defence (LD, RD), then Goalies (G)
+      const posOrder = { C: 0, LW: 1, RW: 2, LD: 3, RD: 4, G: 5 };
+      const sorted = [...roster].sort((a, b) => {
+        const pa = posOrder[a.position] ?? 6;
+        const pb = posOrder[b.position] ?? 6;
+        return pa !== pb ? pa - pb : (a.name || '').localeCompare(b.name || '');
+      });
+      html += `<div style="overflow-x:auto;margin-bottom:1rem;">
+        <table style="width:100%;border-collapse:collapse;font-size:0.88rem;">
+          <thead><tr style="font-size:0.75rem;color:#8b949e;border-bottom:2px solid #30363d;">
+            <th style="padding:0.3rem 0.5rem;text-align:left;">#</th>
+            <th style="padding:0.3rem 0.5rem;text-align:left;">Player</th>
+            <th style="padding:0.3rem 0.5rem;text-align:left;">Position</th>
+            <th style="padding:0.3rem 0.5rem;text-align:left;">Platform</th>
+          </tr></thead>
+          <tbody>
+            ${sorted.map(p => `<tr style="border-bottom:1px solid #21262d;">
+              <td style="padding:0.35rem 0.5rem;color:#8b949e;">${p.number != null && p.number !== '' ? '#' + p.number : '—'}</td>
+              <td style="padding:0.35rem 0.5rem;"><a href="player.html?name=${encodeURIComponent(p.name)}" class="player-link">${p.name}</a></td>
+              <td style="padding:0.35rem 0.5rem;">${p.position ? `<span style="font-size:0.75rem;background:#1f2d3d;color:#58a6ff;border-radius:4px;padding:0.1rem 0.4rem;border:1px solid #388bfd44;">${p.position}</span>` : '<span style="color:#484f58;">—</span>'}</td>
+              <td style="padding:0.35rem 0.5rem;color:#8b949e;font-size:0.8rem;">${p.platform || '—'}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
     }
 
     // Stats

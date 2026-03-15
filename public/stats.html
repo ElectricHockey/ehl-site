@@ -43,6 +43,7 @@
       </div>
     </div>
     <a href="stats.html" class="active">Stats</a>
+    <a href="players.html">Players</a>
     <a href="admin.html">Admin</a>
     <a href="register.html" class="nav-portal">Player Portal</a>
   </nav>
@@ -56,6 +57,12 @@
     <div class="tab-bar">
       <button class="tab-btn active" data-tab="skaters" onclick="switchStatsTab('skaters')">⛸️ Skaters</button>
       <button class="tab-btn"        data-tab="goalies" onclick="switchStatsTab('goalies')">🥅 Goalies</button>
+    </div>
+
+    <div style="margin-bottom:1rem;">
+      <input type="text" id="stats-search" placeholder="🔍 Filter by player name…"
+        style="background:#161b22;border:1px solid #30363d;border-radius:6px;color:#e6edf3;padding:0.45rem 0.75rem;font-size:0.9rem;width:260px;max-width:100%;"
+        oninput="onStatsSearch(this.value)" />
     </div>
 
     <div id="tab-skaters" class="tab-section active">

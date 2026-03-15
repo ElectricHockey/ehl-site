@@ -77,6 +77,15 @@ const leagueSort = {
   sixes:  { skater: { key: 'points', dir: 'desc' }, goalie: { key: 'save_pct', dir: 'desc' } },
 };
 
+let statsSearchFilter = '';
+
+function onStatsSearch(val) {
+  statsSearchFilter = val.toLowerCase().trim();
+  const league = (typeof SeasonSelector !== 'undefined' ? SeasonSelector.getSelectedLeagueType() : null) || 'threes';
+  renderSkaters(league);
+  renderGoalies(league);
+}
+
 function switchStatsTab(tab) {
   ['skaters', 'goalies'].forEach(t => {
     const sec = document.getElementById(`tab-${t}`);
@@ -105,7 +114,10 @@ function renderSkaters(league) {
   const data = leagueData[league].skaters;
   if (data.length === 0) { root.innerHTML = '<p style="color:#8b949e">No skater stats yet for this season.</p>'; return; }
   data.forEach(p => { p._ovr = computeOvr(p); });
-  const sorted = sortData(data, leagueSort[league].skater.key, leagueSort[league].skater.dir);
+  const filtered = statsSearchFilter
+    ? data.filter(p => (p.name || '').toLowerCase().includes(statsSearchFilter))
+    : data;
+  const sorted = sortData(filtered, leagueSort[league].skater.key, leagueSort[league].skater.dir);
   const s = k => thClass(k, leagueSort[league].skater);
   const L = JSON.stringify(league); // safe string for onclick
   root.innerHTML = `<div style="overflow-x:auto;"><table id="skaters-table">
@@ -177,7 +189,10 @@ function renderGoalies(league) {
   const data = leagueData[league].goalies;
   if (data.length === 0) { root.innerHTML = '<p style="color:#8b949e">No goalie stats yet for this season.</p>'; return; }
   data.forEach(p => { p._ovr = computeOvr(p); });
-  const sorted = sortData(data, leagueSort[league].goalie.key, leagueSort[league].goalie.dir);
+  const filtered = statsSearchFilter
+    ? data.filter(p => (p.name || '').toLowerCase().includes(statsSearchFilter))
+    : data;
+  const sorted = sortData(filtered, leagueSort[league].goalie.key, leagueSort[league].goalie.dir);
   const s = k => thClass(k, leagueSort[league].goalie);
   const L = JSON.stringify(league);
   root.innerHTML = `<div style="overflow-x:auto;"><table id="goalies-table">

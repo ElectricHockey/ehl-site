@@ -22,11 +22,12 @@
       </div>
     </div>
     <a href="stats.html">Stats</a>
+    <a href="players.html">Players</a>
     <a href="admin.html">Admin</a>
     <a href="register.html" class="nav-portal">Player Portal</a>
   </nav>
 
-  <div class="hero">
+  <div class="hero hero-compact">
     <h1>⚡ Electric Hockey League</h1>
     <p>Your hub for league standings, stats, and administration.</p>
 
@@ -47,13 +48,52 @@
         <span class="icon">📊</span>
         <span>Stats</span>
       </a>
-      <a class="nav-card" href="admin.html">
-        <span class="icon">⚙️</span>
-        <span>Admin</span>
+      <a class="nav-card" href="players.html">
+        <span class="icon">👤</span>
+        <span>Players</span>
+      </a>
+      <a class="nav-card" href="transactions.html">
+        <span class="icon">📋</span>
+        <span>Transactions</span>
       </a>
     </div>
   </div>
+
+  <div class="container">
+    <div class="home-panels">
+
+      <!-- Recent Scores -->
+      <div class="home-panel">
+        <div class="home-panel-header">
+          <span>🏒 Recent Scores</span>
+          <a href="recent-scores.html" class="home-panel-more">All Scores →</a>
+        </div>
+        <div id="home-recent-scores"><p class="loading">Loading…</p></div>
+      </div>
+
+      <!-- Standings -->
+      <div class="home-panel">
+        <div class="home-panel-header">
+          <span>🏆 Standings</span>
+          <a href="standings.html" class="home-panel-more">Full Table →</a>
+        </div>
+        <div id="home-standings"><p class="loading">Loading…</p></div>
+      </div>
+
+      <!-- Stats Leaders -->
+      <div class="home-panel home-panel-wide">
+        <div class="home-panel-header">
+          <span>📊 Stats Leaders</span>
+          <a href="stats.html" class="home-panel-more">All Stats →</a>
+        </div>
+        <div id="home-leaders"><p class="loading">Loading…</p></div>
+      </div>
+
+    </div>
+  </div>
+
   <script src="notifications.js"></script>
   <script src="nav.js"></script>
+  <script src="index.js"></script>
 </body>
 </html>
