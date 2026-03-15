@@ -106,6 +106,11 @@ db.exec(`
     FOREIGN KEY (winner_id) REFERENCES teams(id)
   );
 
+  CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL DEFAULT ''
+  );
+
   CREATE TABLE IF NOT EXISTS game_player_stats (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     game_id INTEGER NOT NULL,

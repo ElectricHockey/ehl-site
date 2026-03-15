@@ -28,8 +28,8 @@
 <body>
   <nav>
     <a href="index.html" class="brand">
-      <img src="logo.svg" alt="EHL" class="brand-logo" />
-      <span class="brand-text">EHL</span>
+      <img src="/api/site-logo" alt="EHL" class="brand-logo" />
+
     </a>
     <a href="index.html">Home</a>
     <a href="schedule.html">Schedule</a>
@@ -73,6 +73,7 @@
         <button class="admin-tab-btn" data-tab="players" onclick="showAdminTab('players')">🎮 Players</button>
         <button class="admin-tab-btn" data-tab="games" onclick="showAdminTab('games')">📅 Games</button>
         <button class="admin-tab-btn" data-tab="playoffs" onclick="showAdminTab('playoffs')">🏆 Playoffs</button>
+        <button class="admin-tab-btn" data-tab="site-logo" onclick="showAdminTab('site-logo')">🖼 Logo</button>
       </div>
 
       <div id="status-msg" style="display:none;padding:0.5rem 1rem;border-radius:6px;margin-bottom:1rem;font-size:0.88rem;"></div>
@@ -265,6 +266,33 @@
 
         <!-- Existing playoffs list -->
         <div id="playoffs-list" style="margin-top:1.5rem;"></div>
+      </div>
+
+      <!-- ── Site Logo tab ────────────────────────────────── -->
+      <div id="admin-tab-site-logo" class="admin-section">
+        <h2>Site Logo</h2>
+        <div class="form-section" style="max-width:420px;">
+          <p style="color:#8b949e;font-size:0.9rem;margin-bottom:1rem;">
+            Upload a custom image to use as the league logo in the top-left nav.
+            Supported formats: PNG, JPG, GIF, WebP, SVG (max 2 MB).
+          </p>
+          <div style="margin-bottom:1rem;">
+            <p style="font-size:0.85rem;color:#8b949e;margin-bottom:0.4rem;">Current logo:</p>
+            <img id="current-site-logo-preview" src="/api/site-logo" alt="Current logo"
+              style="max-height:80px;max-width:200px;object-fit:contain;background:#21262d;border-radius:6px;padding:6px;display:block;" />
+          </div>
+          <form id="site-logo-form">
+            <div class="form-group" style="flex-direction:column;margin-bottom:0.75rem;">
+              <label for="site-logo-file">New Logo Image</label>
+              <input type="file" id="site-logo-file" accept="image/*" required
+                onchange="previewSiteLogo(this)" style="color:#c9d1d9;" />
+              <img id="site-logo-preview-new" alt="preview"
+                style="max-height:80px;max-width:200px;object-fit:contain;background:#21262d;border-radius:6px;padding:6px;margin-top:0.4rem;display:none;" />
+            </div>
+            <button type="submit">Upload Logo</button>
+            <span id="site-logo-msg" style="margin-left:0.75rem;font-size:0.85rem;"></span>
+          </form>
+        </div>
       </div>
 
       <!-- ── Edit Player Modal (shared, not inside any tab) ─── -->

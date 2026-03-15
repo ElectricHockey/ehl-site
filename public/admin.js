@@ -986,3 +986,54 @@ document.getElementById('playoff-form').addEventListener('submit', async e => {
 // ── Init ──────────────────────────────────────────────────────────────────
 
 checkAuth();
+
+// ── Site Logo ─────────────────────────────────────────────────────────────
+
+function previewSiteLogo(input) {
+  const img = document.getElementById('site-logo-preview-new');
+  if (img._objectUrl) { URL.revokeObjectURL(img._objectUrl); img._objectUrl = null; }
+  if (input.files && input.files[0]) {
+    img._objectUrl = URL.createObjectURL(input.files[0]);
+    img.src = img._objectUrl;
+    img.style.display = 'block';
+  } else {
+    img.style.display = 'none';
+  }
+}
+
+document.getElementById('site-logo-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const file = document.getElementById('site-logo-file').files[0];
+  const msg  = document.getElementById('site-logo-msg');
+  if (!file) return;
+  msg.style.color = '#8b949e';
+  msg.textContent = 'Uploading…';
+  const fd = new FormData();
+  fd.append('logo', file);
+  try {
+    const res = await fetch(`${API}/admin/site-logo`, {
+      method: 'POST',
+      headers: { 'x-admin-token': localStorage.getItem('adminToken') || '' },
+      body: fd,
+    });
+    if (res.ok) {
+      msg.style.color = '#3fb950';
+      msg.textContent = 'Logo updated!';
+      // Refresh previews with cache-bust so the new image shows immediately
+      const bust = `?v=${Date.now()}`;
+      document.getElementById('current-site-logo-preview').src = `/api/site-logo${bust}`;
+      // Refresh the nav logo on this page too
+      const navLogo = document.querySelector('nav .brand-logo');
+      if (navLogo) navLogo.src = `/api/site-logo${bust}`;
+      document.getElementById('site-logo-file').value = '';
+      document.getElementById('site-logo-preview-new').style.display = 'none';
+    } else {
+      const err = await res.json();
+      msg.style.color = '#f85149';
+      msg.textContent = err.error || 'Upload failed';
+    }
+  } catch {
+    msg.style.color = '#f85149';
+    msg.textContent = 'Network error';
+  }
+});

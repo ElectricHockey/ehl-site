@@ -248,6 +248,31 @@ app.delete('/api/seasons/:id', requireAdmin, (req, res) => {
   res.json({ deleted: true });
 });
 
+// ── Site Logo ──────────────────────────────────────────────────────────────
+
+// GET /api/site-logo  – redirect to the current site logo file
+app.get('/api/site-logo', (_req, res) => {
+  const row = db.prepare("SELECT value FROM settings WHERE key = 'site_logo_url'").get();
+  const url = (row && row.value) ? row.value : '/logo.svg';
+  res.redirect(302, url);
+});
+
+// POST /api/admin/site-logo  – upload a new site logo (admin only)
+app.post('/api/admin/site-logo', requireAdmin, logoUpload.single('logo'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No image file provided' });
+  const newUrl = `/uploads/${req.file.filename}`;
+  // Delete old custom logo synchronously before updating DB, so we don't
+  // leave orphaned files if the DB write fails (and vice-versa).
+  const row = db.prepare("SELECT value FROM settings WHERE key = 'site_logo_url'").get();
+  if (row && row.value && row.value.startsWith('/uploads/')) {
+    const old = path.join(__dirname, 'public', row.value);
+    try { fs.unlinkSync(old); } catch (err) { if (err.code !== 'ENOENT') console.warn('site-logo unlink:', err.message); }
+  }
+  db.prepare("INSERT INTO settings (key, value) VALUES ('site_logo_url', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+    .run(newUrl);
+  res.json({ url: newUrl });
+});
+
 // ── Teams ──────────────────────────────────────────────────────────────────
 
 app.get('/api/teams', (_req, res) => {
