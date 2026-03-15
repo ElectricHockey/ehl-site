@@ -22,19 +22,13 @@ function thClass(key, cur) {
 }
 
 // ── Global sort callbacks (called from onclick in rendered HTML) ───────────
-const SKATER_SORT_KEYS = new Set([
-  '_ovr','overall_rating','defensive_rating','team_play_rating',
-  'gp','goals','assists','points','plus_minus','shots','hits','blocked_shots',
-  'takeaways','giveaways','pp_goals','sh_goals','gwg','pim','penalties_drawn',
-  'faceoff_wins','faceoff_total','fow_pct','shot_pct','deflections','interceptions',
-  'pass_attempts','pass_pct_calc','hat_tricks','apt','toi',
-]);
-const GOALIE_SORT_KEYS = new Set([
-  '_ovr','overall_rating','defensive_rating','team_play_rating',
-  'gp','goals','assists','shots_against','goals_against','save_pct','gaa','toi',
-  'shutouts','penalty_shot_attempts','penalty_shot_ga','breakaway_shots','breakaway_saves',
-  'goalie_wins','goalie_losses','goalie_otw','goalie_otl',
-]);
+// Keys are derived from stats-config.js so they stay in sync automatically.
+const SKATER_SORT_KEYS = new Set(
+  (typeof SKATER_COLS !== 'undefined' ? SKATER_COLS : []).map(c => c.key)
+);
+const GOALIE_SORT_KEYS = new Set(
+  (typeof GOALIE_COLS !== 'undefined' ? GOALIE_COLS : []).map(c => c.key)
+);
 
 function sortTeamSkaters(key) {
   if (!SKATER_SORT_KEYS.has(key)) return;
@@ -101,60 +95,13 @@ function renderSkaterTable(players) {
   return `<div style="overflow-x:auto;"><table class="season-stats-table">
     <thead><tr>
       <th>Pos</th><th>Player</th>
-      <th data-tip="Overall Rating (avg. of OR + DR + TPR)" class="${s('_ovr')}" onclick="sortTeamSkaters('_ovr')">OVR</th>
-      <th data-tip="Offense Rating" class="${s('overall_rating')}" onclick="sortTeamSkaters('overall_rating')">OR</th>
-      <th data-tip="Defense Rating" class="${s('defensive_rating')}" onclick="sortTeamSkaters('defensive_rating')">DR</th>
-      <th data-tip="Team Play Rating" class="${s('team_play_rating')}" onclick="sortTeamSkaters('team_play_rating')">TPR</th>
-      <th data-tip="Games Played" class="${s('gp')}" onclick="sortTeamSkaters('gp')">GP</th>
-      <th data-tip="Goals" class="${s('goals')}" onclick="sortTeamSkaters('goals')">G</th>
-      <th data-tip="Assists" class="${s('assists')}" onclick="sortTeamSkaters('assists')">A</th>
-      <th data-tip="Points" class="${s('points')}" onclick="sortTeamSkaters('points')">PTS</th>
-      <th data-tip="Plus / Minus" class="${s('plus_minus')}" onclick="sortTeamSkaters('plus_minus')">+/-</th>
-      <th data-tip="Shots on Goal" class="${s('shots')}" onclick="sortTeamSkaters('shots')">SOG</th>
-      <th data-tip="Hits" class="${s('hits')}" onclick="sortTeamSkaters('hits')">HITS</th>
-      <th data-tip="Blocked Shots" class="${s('blocked_shots')}" onclick="sortTeamSkaters('blocked_shots')">BS</th>
-      <th data-tip="Takeaways" class="${s('takeaways')}" onclick="sortTeamSkaters('takeaways')">TKA</th>
-      <th data-tip="Giveaways" class="${s('giveaways')}" onclick="sortTeamSkaters('giveaways')">GVA</th>
-      <th data-tip="Power Play Goals" class="${s('pp_goals')}" onclick="sortTeamSkaters('pp_goals')">PPG</th>
-      <th data-tip="Short-Hand Goals" class="${s('sh_goals')}" onclick="sortTeamSkaters('sh_goals')">SHG</th>
-      <th data-tip="Game-Winning Goals" class="${s('gwg')}" onclick="sortTeamSkaters('gwg')">GWG</th>
-      <th data-tip="Penalty Minutes" class="${s('pim')}" onclick="sortTeamSkaters('pim')">PIM</th>
-      <th data-tip="Penalties Drawn" class="${s('penalties_drawn')}" onclick="sortTeamSkaters('penalties_drawn')">PD</th>
-      <th data-tip="Faceoff Wins" class="${s('faceoff_wins')}" onclick="sortTeamSkaters('faceoff_wins')">FOW</th>
-      <th data-tip="Faceoff Total" class="${s('faceoff_total')}" onclick="sortTeamSkaters('faceoff_total')">FOT</th>
-      <th data-tip="Faceoff Win %" class="${s('fow_pct')}" onclick="sortTeamSkaters('fow_pct')">FOW%</th>
-      <th data-tip="Shooting %" class="${s('shot_pct')}" onclick="sortTeamSkaters('shot_pct')">S%</th>
-      <th data-tip="Deflections" class="${s('deflections')}" onclick="sortTeamSkaters('deflections')">DLF</th>
-      <th data-tip="Interceptions" class="${s('interceptions')}" onclick="sortTeamSkaters('interceptions')">INT</th>
-      <th data-tip="Pass Attempts" class="${s('pass_attempts')}" onclick="sortTeamSkaters('pass_attempts')">PA</th>
-      <th data-tip="Pass Completion %" class="${s('pass_pct_calc')}" onclick="sortTeamSkaters('pass_pct_calc')">PC%</th>
-      <th data-tip="Hat Tricks" class="${s('hat_tricks')}" onclick="sortTeamSkaters('hat_tricks')">HT</th>
-      <th data-tip="Avg. Puck Possession (sec/game)" class="${s('apt')}" onclick="sortTeamSkaters('apt')">APT</th>
-      <th data-tip="Time on Ice" class="${s('toi')}" onclick="sortTeamSkaters('toi')">TOI</th>
+      ${SKATER_COLS.map(c => `<th data-tip="${c.tip}" class="${s(c.key)}" onclick="sortTeamSkaters('${c.key}')">${c.label}</th>`).join('')}
     </tr></thead>
-    <tbody>${sorted.map(p => {
-      return `<tr${attrs}>
-      <td>${p.position||'–'}</td>
+    <tbody>${sorted.map(p => `<tr${attrs}>
+      <td>${p.position || '–'}</td>
       <td><a href="player.html?name=${encodeURIComponent(p.name)}" class="player-link">${p.name}</a></td>
-      <td style="text-align:center;${ovrStyle(p._ovr)}">${p._ovr ?? '–'}</td>
-      <td style="text-align:center;${ratingStyle(p.overall_rating)}">${p.overall_rating||'–'}</td>
-      <td style="text-align:center;${ratingStyle(p.defensive_rating)}">${p.defensive_rating||'–'}</td>
-      <td style="text-align:center;${ratingStyle(p.team_play_rating)}">${p.team_play_rating||'–'}</td>
-      <td>${p.gp}</td><td>${p.goals}</td><td>${p.assists}</td>
-      <td><strong>${p.points}</strong></td>
-      <td>${p.plus_minus >= 0 ? '+' : ''}${p.plus_minus}</td>
-      <td>${p.shots}</td><td>${p.hits}</td><td>${p.blocked_shots}</td>
-      <td>${p.takeaways}</td><td>${p.giveaways}</td>
-      <td>${p.pp_goals}</td><td>${p.sh_goals}</td><td>${p.gwg||0}</td>
-      <td>${p.pim}</td><td>${p.penalties_drawn||0}</td>
-      <td>${p.faceoff_wins||0}</td><td>${p.faceoff_total||0}</td>
-      <td>${fmtPct(p.fow_pct)}</td><td>${fmtPct(p.shot_pct)}</td>
-      <td>${p.deflections||0}</td><td>${p.interceptions||0}</td>
-      <td>${p.pass_attempts||0}</td><td>${p.pass_pct_calc !== null && p.pass_pct_calc !== undefined ? fmt1(p.pass_pct_calc)+'%' : '–'}</td>
-      <td>${p.hat_tricks||0}</td>
-      <td>${formatToi(p.apt)}</td><td>${formatToi(p.toi)}</td>
-    </tr>`;
-    }).join('')}</tbody>
+      ${SKATER_COLS.map(c => `<td style="${c.style ? c.style(p) : ''}">${c.fmt(p)}</td>`).join('')}
+    </tr>`).join('')}</tbody>
   </table></div>`;
 }
 
@@ -167,49 +114,12 @@ function renderGoalieTable(players) {
   return `<div style="overflow-x:auto;"><table class="season-stats-table">
     <thead><tr>
       <th>Player</th>
-      <th data-tip="Overall Rating (avg. of OR + DR + TPR)" class="${s('_ovr')}" onclick="sortTeamGoalies('_ovr')">OVR</th>
-      <th data-tip="Offense Rating" class="${s('overall_rating')}" onclick="sortTeamGoalies('overall_rating')">OR</th>
-      <th data-tip="Defense Rating" class="${s('defensive_rating')}" onclick="sortTeamGoalies('defensive_rating')">DR</th>
-      <th data-tip="Team Play Rating" class="${s('team_play_rating')}" onclick="sortTeamGoalies('team_play_rating')">TPR</th>
-      <th data-tip="Games Played" class="${s('gp')}" onclick="sortTeamGoalies('gp')">GP</th>
-      <th data-tip="Goals" class="${s('goals')}" onclick="sortTeamGoalies('goals')">G</th>
-      <th data-tip="Assists" class="${s('assists')}" onclick="sortTeamGoalies('assists')">A</th>
-      <th data-tip="Shots Against" class="${s('shots_against')}" onclick="sortTeamGoalies('shots_against')">SA</th>
-      <th data-tip="Goals Against" class="${s('goals_against')}" onclick="sortTeamGoalies('goals_against')">GA</th>
-      <th data-tip="Save Percentage" class="${s('save_pct')}" onclick="sortTeamGoalies('save_pct')">SV%</th>
-      <th data-tip="Goals Against Average" class="${s('gaa')}" onclick="sortTeamGoalies('gaa')">GAA</th>
-      <th data-tip="Time on Ice" class="${s('toi')}" onclick="sortTeamGoalies('toi')">TOI</th>
-      <th data-tip="Shutouts" class="${s('shutouts')}" onclick="sortTeamGoalies('shutouts')">SO</th>
-      <th data-tip="Penalty Shot Attempts Against" class="${s('penalty_shot_attempts')}" onclick="sortTeamGoalies('penalty_shot_attempts')">PSA</th>
-      <th data-tip="Penalty Shot Goals Against" class="${s('penalty_shot_ga')}" onclick="sortTeamGoalies('penalty_shot_ga')">PSGA</th>
-      <th data-tip="Breakaway Shots Against" class="${s('breakaway_shots')}" onclick="sortTeamGoalies('breakaway_shots')">BKSA</th>
-      <th data-tip="Breakaway Saves" class="${s('breakaway_saves')}" onclick="sortTeamGoalies('breakaway_saves')">BKSV</th>
-      <th data-tip="Wins" class="${s('goalie_wins')}" onclick="sortTeamGoalies('goalie_wins')">W</th>
-      <th data-tip="Losses" class="${s('goalie_losses')}" onclick="sortTeamGoalies('goalie_losses')">L</th>
-      <th data-tip="Overtime Wins" class="${s('goalie_otw')}" onclick="sortTeamGoalies('goalie_otw')">OTW</th>
-      <th data-tip="Overtime Losses" class="${s('goalie_otl')}" onclick="sortTeamGoalies('goalie_otl')">OTL</th>
+      ${GOALIE_COLS.map(c => `<th data-tip="${c.tip}" class="${s(c.key)}" onclick="sortTeamGoalies('${c.key}')">${c.label}</th>`).join('')}
     </tr></thead>
-    <tbody>${sorted.map(p => {
-      return `<tr${attrs}>
+    <tbody>${sorted.map(p => `<tr${attrs}>
       <td><a href="player.html?name=${encodeURIComponent(p.name)}" class="player-link">${p.name}</a></td>
-      <td style="text-align:center;${ovrStyle(p._ovr)}">${p._ovr ?? '–'}</td>
-      <td style="text-align:center;${ratingStyle(p.overall_rating)}">${p.overall_rating||'–'}</td>
-      <td style="text-align:center;${ratingStyle(p.defensive_rating)}">${p.defensive_rating||'–'}</td>
-      <td style="text-align:center;${ratingStyle(p.team_play_rating)}">${p.team_play_rating||'–'}</td>
-      <td>${p.gp}</td><td>${p.goals||0}</td><td>${p.assists||0}</td>
-      <td>${p.shots_against}</td><td>${p.goals_against}</td>
-      <td><strong>${pct3(p.save_pct)}</strong></td>
-      <td>${p.gaa !== null && p.gaa !== undefined ? Number(p.gaa).toFixed(2) : '–'}</td>
-      <td>${formatToi(p.toi)}</td>
-      <td>${p.shutouts||0}</td>
-      <td>${p.penalty_shot_attempts||0}</td>
-      <td>${p.penalty_shot_ga||0}</td>
-      <td>${p.breakaway_shots||0}</td>
-      <td>${p.breakaway_saves||0}</td>
-      <td>${p.goalie_wins||0}</td><td>${p.goalie_losses||0}</td>
-      <td>${p.goalie_otw||0}</td><td>${p.goalie_otl||0}</td>
-    </tr>`;
-    }).join('')}</tbody>
+      ${GOALIE_COLS.map(c => `<td style="${c.style ? c.style(p) : ''}">${c.fmt(p)}</td>`).join('')}
+    </tr>`).join('')}</tbody>
   </table></div>`;
 }
 

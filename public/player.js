@@ -137,49 +137,19 @@ function sumGoalieRows(rows) {
 
 function skaterRow(p, trClass = '') {
   const ovr = computeOvr(p);
+  p._ovr = ovr;
   return `<tr class="${trClass}">
     <td>${logoImg(p.team_logo, p.team_name)}${p.team_name || '—'}</td>
-    <td style="text-align:center;${ovrStyle(ovr)}">${ovr ?? '–'}</td>
-    <td style="text-align:center;${ratingStyle(p.overall_rating)}">${p.overall_rating || '–'}</td>
-    <td style="text-align:center;${ratingStyle(p.defensive_rating)}">${p.defensive_rating || '–'}</td>
-    <td style="text-align:center;${ratingStyle(p.team_play_rating)}">${p.team_play_rating || '–'}</td>
-    <td>${p.gp}</td>
-    <td>${p.goals}</td><td>${p.assists}</td>
-    <td><strong>${p.points}</strong></td>
-    <td>${(p.plus_minus || 0) >= 0 ? '+' : ''}${p.plus_minus || 0}</td>
-    <td>${p.shots || 0}</td><td>${p.hits || 0}</td><td>${p.blocked_shots || 0}</td>
-    <td>${p.takeaways || 0}</td><td>${p.giveaways || 0}</td>
-    <td>${p.pp_goals || 0}</td><td>${p.sh_goals || 0}</td><td>${p.gwg || 0}</td>
-    <td>${p.pim || 0}</td><td>${p.penalties_drawn || 0}</td>
-    <td>${p.faceoff_wins || 0}</td><td>${p.faceoff_total || 0}</td>
-    <td>${p.fow_pct !== null && p.fow_pct !== undefined ? fmt1(p.fow_pct) + '%' : '–'}</td>
-    <td>${p.shot_pct !== null && p.shot_pct !== undefined ? fmt1(p.shot_pct) + '%' : '–'}</td>
-    <td>${p.deflections || 0}</td><td>${p.interceptions || 0}</td>
-    <td>${p.pass_attempts || 0}</td>
-    <td>${p.pass_pct_calc !== null && p.pass_pct_calc !== undefined ? fmt1(p.pass_pct_calc) + '%' : '–'}</td>
-    <td>${p.hat_tricks || 0}</td>
-    <td>${formatToi(p.apt)}</td><td>${formatToi(p.toi)}</td>
+    ${SKATER_COLS.map(c => `<td style="${c.style ? c.style(p) : ''}">${c.fmt(p)}</td>`).join('')}
   </tr>`;
 }
 
 function goalieRow(p, trClass = '') {
   const ovr = computeOvr(p);
+  p._ovr = ovr;
   return `<tr class="${trClass}">
     <td>${logoImg(p.team_logo, p.team_name)}${p.team_name || '—'}</td>
-    <td style="text-align:center;${ovrStyle(ovr)}">${ovr ?? '–'}</td>
-    <td style="text-align:center;${ratingStyle(p.overall_rating)}">${p.overall_rating || '–'}</td>
-    <td style="text-align:center;${ratingStyle(p.defensive_rating)}">${p.defensive_rating || '–'}</td>
-    <td style="text-align:center;${ratingStyle(p.team_play_rating)}">${p.team_play_rating || '–'}</td>
-    <td>${p.gp}</td>
-    <td>${p.shots_against || 0}</td><td>${p.goals_against || 0}</td>
-    <td><strong>${pct3(p.save_pct)}</strong></td>
-    <td>${p.gaa !== null && p.gaa !== undefined ? Number(p.gaa).toFixed(2) : '–'}</td>
-    <td>${formatToi(p.toi)}</td>
-    <td>${p.shutouts || 0}</td>
-    <td>${p.penalty_shot_attempts || 0}</td><td>${p.penalty_shot_ga || 0}</td>
-    <td>${p.breakaway_shots || 0}</td><td>${p.breakaway_saves || 0}</td>
-    <td>${p.goalie_wins || 0}</td><td>${p.goalie_losses || 0}</td>
-    <td>${p.goalie_otw || 0}</td><td>${p.goalie_otl || 0}</td>
+    ${GOALIE_COLS.map(c => `<td style="${c.style ? c.style(p) : ''}">${c.fmt(p)}</td>`).join('')}
   </tr>`;
 }
 
@@ -188,40 +158,14 @@ function goalieRow(p, trClass = '') {
 function skaterThead() {
   return `<thead><tr>
     <th>Team</th>
-    <th data-tip="Overall Rating (avg. of OR + DR + TPR)">OVR</th>
-    <th data-tip="Offense Rating">OR</th>
-    <th data-tip="Defense Rating">DR</th>
-    <th data-tip="Team Play Rating">TPR</th>
-    <th data-tip="Games Played">GP</th>
-    <th data-tip="Goals">G</th><th data-tip="Assists">A</th><th data-tip="Points">PTS</th>
-    <th data-tip="Plus / Minus">+/-</th>
-    <th data-tip="Shots on Goal">SOG</th><th data-tip="Hits">HITS</th><th data-tip="Blocked Shots">BS</th>
-    <th data-tip="Takeaways">TKA</th><th data-tip="Giveaways">GVA</th>
-    <th data-tip="Power Play Goals">PPG</th><th data-tip="Short-Hand Goals">SHG</th><th data-tip="Game-Winning Goals">GWG</th>
-    <th data-tip="Penalty Minutes">PIM</th><th data-tip="Penalties Drawn">PD</th>
-    <th data-tip="Faceoff Wins">FOW</th><th data-tip="Faceoff Total">FOT</th>
-    <th data-tip="Faceoff Win %">FOW%</th><th data-tip="Shooting %">S%</th>
-    <th data-tip="Deflections">DLF</th><th data-tip="Interceptions">INT</th>
-    <th data-tip="Pass Attempts">PA</th><th data-tip="Pass Completion %">PC%</th><th data-tip="Hat Tricks">HT</th>
-    <th data-tip="Avg. Puck Possession (sec/game)">APT</th><th data-tip="Time on Ice">TOI</th>
+    ${SKATER_COLS.map(c => `<th data-tip="${c.tip}">${c.label}</th>`).join('')}
   </tr></thead>`;
 }
 
 function goalieThead() {
   return `<thead><tr>
     <th>Team</th>
-    <th data-tip="Overall Rating (avg. of OR + DR + TPR)">OVR</th>
-    <th data-tip="Offense Rating">OR</th>
-    <th data-tip="Defense Rating">DR</th>
-    <th data-tip="Team Play Rating">TPR</th>
-    <th data-tip="Games Played">GP</th>
-    <th data-tip="Shots Against">SA</th><th data-tip="Goals Against">GA</th>
-    <th data-tip="Save Percentage">SV%</th><th data-tip="Goals Against Average">GAA</th>
-    <th data-tip="Time on Ice">TOI</th><th data-tip="Shutouts">SO</th>
-    <th data-tip="Penalty Shot Attempts Against">PSA</th><th data-tip="Penalty Shot Goals Against">PSGA</th>
-    <th data-tip="Breakaway Shots Against">BKSA</th><th data-tip="Breakaway Saves">BKSV</th>
-    <th data-tip="Wins">W</th><th data-tip="Losses">L</th>
-    <th data-tip="Overtime Wins">OTW</th><th data-tip="Overtime Losses">OTL</th>
+    ${GOALIE_COLS.map(c => `<th data-tip="${c.tip}">${c.label}</th>`).join('')}
   </tr></thead>`;
 }
 

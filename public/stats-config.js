@@ -105,8 +105,8 @@ const SKATER_COLS = [
   { key: 'pass_attempts',   label: 'PA',   tip: 'Pass Attempts',                           fmt: p => p.pass_attempts || 0 },
   { key: 'pass_pct_calc',   label: 'PC%',  tip: 'Pass Completion %',                       fmt: p => p.pass_pct_calc != null ? fmt1(p.pass_pct_calc) + '%' : '–' },
   { key: 'hat_tricks',      label: 'HT',   tip: 'Hat Tricks',                              fmt: p => p.hat_tricks || 0 },
-  { key: 'apt',             label: 'APT',  tip: 'Avg. Puck Possession (sec/game)',          fmt: p => formatToi(p.apt) },
-  { key: 'toi',             label: 'TOI',  tip: 'Time on Ice',                              fmt: p => formatToi(p.toi) },
+  { key: 'apt',             label: 'APT',  tip: 'Avg. Puck Possession (sec/game)',         fmt: p => formatToi(p.apt) },
+  { key: 'toi',             label: 'TOI',  tip: 'Time on Ice',                             fmt: p => formatToi(p.toi) },
 ];
 
 // ── Goalie column definitions ──────────────────────────────────────────────
@@ -128,7 +128,7 @@ const GOALIE_COLS = [
   { key: 'goals_against',        label: 'GA',   tip: 'Goals Against',                           fmt: p => p.goals_against || 0 },
   { key: 'save_pct',             label: 'SV%',  tip: 'Save Percentage',                         fmt: p => `<strong>${pct3(p.save_pct)}</strong>` },
   { key: 'gaa',                  label: 'GAA',  tip: 'Goals Against Average',                   fmt: p => p.gaa != null ? Number(p.gaa).toFixed(2) : '–' },
-  { key: 'toi',                  label: 'TOI',  tip: 'Time on Ice',                              fmt: p => formatToi(p.toi) },
+  { key: 'toi',                  label: 'TOI',  tip: 'Time on Ice',                             fmt: p => formatToi(p.toi) },
   { key: 'shutouts',             label: 'SO',   tip: 'Shutouts',                                fmt: p => p.shutouts || 0 },
   // ── Penalty Shots ────────────────────────────────────────────────────────
   { key: 'penalty_shot_attempts',label: 'PSA',  tip: 'Penalty Shot Attempts Against',           fmt: p => p.penalty_shot_attempts || 0 },
@@ -137,7 +137,7 @@ const GOALIE_COLS = [
   { key: 'breakaway_shots',      label: 'BKSA', tip: 'Breakaway Shots Against',                 fmt: p => p.breakaway_shots || 0 },
   { key: 'breakaway_saves',      label: 'BKSV', tip: 'Breakaway Saves',                         fmt: p => p.breakaway_saves || 0 },
   // ── Win/Loss ─────────────────────────────────────────────────────────────
-  { key: 'goalie_wins',          label: 'W',    tip: 'Wins',                                   fmt: p => p.goalie_wins || 0 },
+  { key: 'goalie_wins',          label: 'W',    tip: 'Wins',                                  fmt: p => p.goalie_wins || 0 },
   { key: 'goalie_losses',        label: 'L',    tip: 'Losses',                                  fmt: p => p.goalie_losses || 0 },
   { key: 'goalie_otw',           label: 'OTW',  tip: 'Overtime Wins',                           fmt: p => p.goalie_otw || 0 },
   { key: 'goalie_otl',           label: 'OTL',  tip: 'Overtime Losses',                         fmt: p => p.goalie_otl || 0 },
