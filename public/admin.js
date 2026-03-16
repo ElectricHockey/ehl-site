@@ -1,6 +1,7 @@
 const API = '/api';
 
 function getAdminToken() { return localStorage.getItem('ehl_admin_token') || ''; }
+function getAdminRole() { return localStorage.getItem('ehl_admin_role') || ''; }
 function adminHeaders() { return { 'X-Admin-Token': getAdminToken() }; }
 function adminJsonHeaders() { return { 'Content-Type': 'application/json', 'X-Admin-Token': getAdminToken() }; }
 
@@ -38,7 +39,16 @@ async function checkAuth() {
   try {
     const res = await fetch(`${API}/auth/status`, { headers: { 'X-Admin-Token': token } });
     const data = await res.json();
-    if (data.isAdmin) { showAdminPanel(); } else { localStorage.removeItem('ehl_admin_token'); showLoginForm(); }
+    if (data.loggedIn) {
+      localStorage.setItem('ehl_admin_role', data.role);
+      localStorage.setItem('ehl_admin_username', data.username);
+      showAdminPanel(data.role, data.username);
+    } else {
+      localStorage.removeItem('ehl_admin_token');
+      localStorage.removeItem('ehl_admin_role');
+      localStorage.removeItem('ehl_admin_username');
+      showLoginForm();
+    }
   } catch { showLoginForm(); }
 }
 
@@ -47,16 +57,37 @@ function showLoginForm() {
   document.getElementById('admin-panel').style.display = 'none';
 }
 
-function showAdminPanel() {
+function showAdminPanel(role, username) {
+  role = role || getAdminRole() || '';
+  username = username || localStorage.getItem('ehl_admin_username') || '';
+  if (!role) { showLoginForm(); return; } // no role = not an admin
   document.getElementById('login-section').style.display = 'none';
   document.getElementById('admin-panel').style.display = '';
-  showAdminTab('seasons');
-  loadSeasons();
+
+  // Update logged-in bar
+  const roleLabel = role === 'owner' ? '👑 Owner' : '🎮 Game Admin';
+  document.getElementById('logged-in-name').textContent = `${roleLabel}: ${username}`;
+
+  // Show/hide owner-only tabs
+  document.querySelectorAll('.admin-tab-btn[data-owner-only]').forEach(btn => {
+    btn.style.display = role === 'owner' ? '' : 'none';
+  });
+
+  // Load data and navigate to the appropriate starting tab
   loadTeams();
-  loadPlayers();
+  loadSeasons();
   loadGames();
-  loadRegPlayers();
-  loadAdminPlayoffs();
+
+  if (role === 'owner') {
+    loadPlayers();
+    loadRegPlayers();
+    loadAdminPlayoffs();
+    loadGameAdmins();
+    showAdminTab('seasons');
+  } else {
+    // game_admin: land directly on Games
+    showAdminTab('games');
+  }
 }
 
 function showAdminTab(name) {
@@ -70,22 +101,115 @@ function showAdminTab(name) {
 
 document.getElementById('login-form').addEventListener('submit', async e => {
   e.preventDefault();
+  const username = document.getElementById('admin-username').value.trim();
   const password = document.getElementById('admin-password').value;
   const errEl = document.getElementById('login-error');
   errEl.style.display = 'none';
   try {
-    const res = await fetch(`${API}/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) });
+    const res = await fetch(`${API}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
     if (!res.ok) { errEl.style.display = ''; return; }
     const data = await res.json();
     localStorage.setItem('ehl_admin_token', data.token);
-    showAdminPanel();
+    localStorage.setItem('ehl_admin_role', data.role);
+    localStorage.setItem('ehl_admin_username', data.username);
+    showAdminPanel(data.role, data.username);
   } catch { errEl.style.display = ''; }
 });
 
 async function adminLogout() {
   await fetch(`${API}/auth/logout`, { method: 'POST', headers: adminHeaders() }).catch(() => {});
   localStorage.removeItem('ehl_admin_token');
+  localStorage.removeItem('ehl_admin_role');
+  localStorage.removeItem('ehl_admin_username');
   showLoginForm();
+}
+
+// ── Game Admin Management ─────────────────────────────────────────────────
+
+async function loadGameAdmins() {
+  const container = document.getElementById('game-admins-list');
+  if (!container) return;
+  try {
+    const res = await fetch(`${API}/admin/game-admins`, { headers: adminHeaders() });
+    const admins = await res.json();
+    if (!admins.length) {
+      container.innerHTML = '<p style="color:#8b949e;font-size:0.88rem;">No game admins yet. Search for a user above to add one.</p>';
+      return;
+    }
+    container.innerHTML = `<table style="width:100%;max-width:500px;border-collapse:collapse;">
+      <thead><tr style="color:#8b949e;font-size:0.82rem;">
+        <th style="text-align:left;padding:0.35rem 0.5rem;">Gamertag</th>
+        <th style="text-align:left;padding:0.35rem 0.5rem;">Discord</th>
+        <th style="padding:0.35rem 0.5rem;"></th>
+      </tr></thead>
+      <tbody>${admins.map(a => `
+        <tr style="border-top:1px solid #21262d;">
+          <td style="padding:0.4rem 0.5rem;">${escAttr(a.username)}</td>
+          <td style="padding:0.4rem 0.5rem;color:#8b949e;">${escAttr(a.discord || '—')}</td>
+          <td style="padding:0.4rem 0.5rem;text-align:right;">
+            <button onclick="demoteGameAdmin(${a.id},'${escAttr(a.username)}')"
+              style="background:#4b1f1f;color:#f85149;border:1px solid #f85149;border-radius:4px;padding:0.2rem 0.6rem;font-size:0.8rem;cursor:pointer;">
+              Remove
+            </button>
+          </td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+  } catch { container.innerHTML = '<p style="color:#f85149;font-size:0.88rem;">Failed to load game admins.</p>'; }
+}
+
+let _searchTimeout = null;
+async function searchUsersForAdmin() {
+  clearTimeout(_searchTimeout);
+  _searchTimeout = setTimeout(async () => {
+    const q = document.getElementById('game-admin-search').value.trim();
+    const resultsEl = document.getElementById('game-admin-search-results');
+    if (!q) { resultsEl.innerHTML = ''; return; }
+    try {
+      const res = await fetch(`${API}/admin/users/search?q=${encodeURIComponent(q)}`, { headers: adminHeaders() });
+      const users = await res.json();
+      if (!users.length) { resultsEl.innerHTML = '<p style="color:#8b949e;font-size:0.85rem;">No users found.</p>'; return; }
+      resultsEl.innerHTML = users.map(u => {
+        const isAdmin = u.role === 'game_admin';
+        const btnLabel = isAdmin ? 'Already admin' : 'Add as game admin';
+        const btnStyle = isAdmin
+          ? 'background:#21262d;color:#8b949e;border:1px solid #30363d;cursor:default;'
+          : 'background:#1f4b2f;color:#3fb950;border:1px solid #3fb950;cursor:pointer;';
+        return `<div style="display:flex;align-items:center;gap:0.5rem;padding:0.3rem 0;border-bottom:1px solid #21262d;">
+          <span style="flex:1;font-size:0.9rem;">${escAttr(u.username)}</span>
+          <span style="color:#8b949e;font-size:0.82rem;">${escAttr(u.discord || '')}</span>
+          <button style="${btnStyle}border-radius:4px;padding:0.2rem 0.6rem;font-size:0.8rem;"
+            ${isAdmin ? 'disabled' : `onclick="promoteGameAdmin(${u.id},'${escAttr(u.username)}')"`}>
+            ${btnLabel}
+          </button>
+        </div>`;
+      }).join('');
+    } catch { resultsEl.innerHTML = '<p style="color:#f85149;font-size:0.85rem;">Search failed.</p>'; }
+  }, 300);
+}
+
+async function promoteGameAdmin(userId, username) {
+  if (!confirm(`Make "${username}" a game admin? They will be able to log in and enter game results.`)) return;
+  const res = await fetch(`${API}/admin/game-admins/${userId}`, { method: 'POST', headers: adminHeaders() });
+  if (res.ok) {
+    document.getElementById('game-admin-search').value = '';
+    document.getElementById('game-admin-search-results').innerHTML = '';
+    await loadGameAdmins();
+  } else {
+    const err = await res.json().catch(() => ({}));
+    alert(err.error || 'Failed to promote user');
+  }
+}
+
+async function demoteGameAdmin(userId, username) {
+  if (!confirm(`Remove "${username}" as game admin?`)) return;
+  const res = await fetch(`${API}/admin/game-admins/${userId}`, { method: 'DELETE', headers: adminHeaders() });
+  if (res.ok) { await loadGameAdmins(); }
+  else { const err = await res.json().catch(() => ({})); alert(err.error || 'Failed to remove game admin'); }
 }
 
 // ── Seasons ───────────────────────────────────────────────────────────────

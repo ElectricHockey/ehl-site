@@ -47,33 +47,38 @@
 
   <div id="login-section">
     <h2>🔑 Admin Login</h2>
-    <p style="color:#8b949e;font-size:0.9rem;margin-bottom:1rem;">Enter the admin password to manage the league.</p>
+    <p style="color:#8b949e;font-size:0.9rem;margin-bottom:1rem;">Sign in with your league account credentials.</p>
     <form id="login-form">
       <div class="form-group" style="flex-direction:column;margin-bottom:0.75rem;">
+        <label for="admin-username">Gamertag</label>
+        <input type="text" id="admin-username" placeholder="Your gamertag" required style="width:100%;min-width:unset;" autocomplete="username" />
+      </div>
+      <div class="form-group" style="flex-direction:column;margin-bottom:0.75rem;">
         <label for="admin-password">Password</label>
-        <input type="password" id="admin-password" placeholder="Admin password" required style="width:100%;min-width:unset;" />
+        <input type="password" id="admin-password" placeholder="Your password" required style="width:100%;min-width:unset;" autocomplete="current-password" />
       </div>
       <button type="submit" style="width:100%;margin-top:0.5rem;">Login</button>
-      <div id="login-error">Incorrect password. Please try again.</div>
+      <div id="login-error">Invalid credentials or access denied.</div>
     </form>
   </div>
 
   <div id="admin-panel" style="display:none;">
     <div class="container">
-      <div class="logged-in-bar">🔑 Logged in as Admin <button onclick="adminLogout()">Logout</button></div>
+      <div class="logged-in-bar">🔑 <span id="logged-in-name">Admin</span> <button onclick="adminLogout()">Logout</button></div>
 
       <h1 style="margin-bottom:1rem;">Admin Panel</h1>
 
       <!-- ── Tab bar ──────────────────────────────────────── -->
       <div class="admin-tab-bar">
-        <button class="admin-tab-btn active" data-tab="seasons" onclick="showAdminTab('seasons')">🗓 Seasons</button>
-        <button class="admin-tab-btn" data-tab="teams" onclick="showAdminTab('teams')">🏒 Teams</button>
-        <button class="admin-tab-btn" data-tab="roster" onclick="showAdminTab('roster')">📋 Rosters</button>
-        <button class="admin-tab-btn" data-tab="reg-players" onclick="showAdminTab('reg-players')">👤 Registered Players</button>
-        <button class="admin-tab-btn" data-tab="players" onclick="showAdminTab('players')">🎮 Players</button>
+        <button class="admin-tab-btn active" data-tab="seasons" data-owner-only onclick="showAdminTab('seasons')">🗓 Seasons</button>
+        <button class="admin-tab-btn" data-tab="teams" data-owner-only onclick="showAdminTab('teams')">🏒 Teams</button>
+        <button class="admin-tab-btn" data-tab="roster" data-owner-only onclick="showAdminTab('roster')">📋 Rosters</button>
+        <button class="admin-tab-btn" data-tab="reg-players" data-owner-only onclick="showAdminTab('reg-players')">👤 Registered Players</button>
+        <button class="admin-tab-btn" data-tab="players" data-owner-only onclick="showAdminTab('players')">🎮 Players</button>
         <button class="admin-tab-btn" data-tab="games" onclick="showAdminTab('games')">📅 Games</button>
-        <button class="admin-tab-btn" data-tab="playoffs" onclick="showAdminTab('playoffs')">🏆 Playoffs</button>
-        <button class="admin-tab-btn" data-tab="site-logo" onclick="showAdminTab('site-logo')">🖼 Logo</button>
+        <button class="admin-tab-btn" data-tab="playoffs" data-owner-only onclick="showAdminTab('playoffs')">🏆 Playoffs</button>
+        <button class="admin-tab-btn" data-tab="site-logo" data-owner-only onclick="showAdminTab('site-logo')">🖼 Logo</button>
+        <button class="admin-tab-btn" data-tab="game-admins" data-owner-only onclick="showAdminTab('game-admins')">👥 Game Admins</button>
       </div>
 
       <div id="status-msg" style="display:none;padding:0.5rem 1rem;border-radius:6px;margin-bottom:1rem;font-size:0.88rem;"></div>
@@ -295,6 +300,29 @@
             <span id="site-logo-msg" style="margin-left:0.75rem;font-size:0.85rem;"></span>
           </form>
         </div>
+      </div>
+
+      <!-- ── Game Admins tab ────────────────────────────────── -->
+      <div id="admin-tab-game-admins" class="admin-section">
+        <h2>Game Admins</h2>
+        <p style="color:#8b949e;font-size:0.9rem;margin-bottom:1rem;">
+          Game admins can log in and enter game results and scores.
+          They cannot manage teams, players, seasons, or site settings.
+        </p>
+
+        <!-- Add game admin form -->
+        <div class="form-section" style="max-width:420px;margin-bottom:1.5rem;">
+          <h3 style="margin-bottom:0.75rem;font-size:1rem;">Add Game Admin</h3>
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+            <input type="text" id="game-admin-search" placeholder="Search by gamertag…"
+              style="flex:1;min-width:160px;" oninput="searchUsersForAdmin()" />
+          </div>
+          <div id="game-admin-search-results" style="margin-top:0.5rem;"></div>
+        </div>
+
+        <!-- Current game admins list -->
+        <h3 style="font-size:1rem;margin-bottom:0.5rem;">Current Game Admins</h3>
+        <div id="game-admins-list"><p style="color:#8b949e;font-size:0.88rem;">Loading…</p></div>
       </div>
 
       <!-- ── Edit Player Modal (shared, not inside any tab) ─── -->

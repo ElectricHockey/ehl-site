@@ -65,15 +65,20 @@ app.use(express.static(path.join(__dirname, 'public')));
 // The secret is derived from ADMIN_PASSWORD at startup (set below), so we
 // define the helper after the constant is declared.
 function hashIp(ip) {
-  const secret = process.env.IP_HMAC_SECRET || process.env.ADMIN_PASSWORD || 'ehl-ip-secret';
+  const secret = process.env.IP_HMAC_SECRET || 'ehl-ip-secret';
   return crypto.createHmac('sha256', secret).update(ip || '').digest('hex');
 }
 
 // ── Admin Auth ─────────────────────────────────────────────────────────────
 
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'ehl-admin';
-const adminSessions = new Set();
+const OWNER_USERNAME = process.env.OWNER_USERNAME || 'txEnaek';
+const adminSessions = new Map(); // token → { userId, username, role }
 const playerSessions = new Map(); // token -> userId
+
+/** Returns true if the given user record is the league owner. */
+function isOwnerUser(user) {
+  return user && user.username.toLowerCase() === OWNER_USERNAME.toLowerCase();
+}
 
 // ── Discord OAuth2 ─────────────────────────────────────────────────────────
 const DISCORD_CLIENT_ID     = process.env.DISCORD_CLIENT_ID     || '1379545091927965767';
@@ -93,7 +98,18 @@ setInterval(() => {
 
 function requireAdmin(req, res, next) {
   const token = req.headers['x-admin-token'];
-  if (!token || !adminSessions.has(token)) return res.status(401).json({ error: 'Admin access required' });
+  const session = token && adminSessions.get(token);
+  if (!session) return res.status(401).json({ error: 'Admin access required' });
+  req.adminSession = session;
+  next();
+}
+
+function requireOwner(req, res, next) {
+  const token = req.headers['x-admin-token'];
+  const session = token && adminSessions.get(token);
+  if (!session || session.role !== 'owner')
+    return res.status(403).json({ error: 'Owner access required' });
+  req.adminSession = session;
   next();
 }
 
@@ -119,12 +135,20 @@ function requireTeamRole(roles) {
 
 // ── Admin login / logout ───────────────────────────────────────────────────
 
-app.post('/api/auth/login', (req, res) => {
-  const { password } = req.body;
-  if (password !== ADMIN_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
+app.post('/api/auth/login', async (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
+  const user = db.prepare('SELECT * FROM users WHERE username = ? COLLATE NOCASE').get(username.trim());
+  if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+  let ok;
+  try { ok = await verifyPassword(password, user.password_hash); } catch { ok = false; }
+  if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
+  const isOwner = isOwnerUser(user);
+  const role = isOwner ? 'owner' : (user.role === 'game_admin' ? 'game_admin' : null);
+  if (!role) return res.status(403).json({ error: 'Access denied – not an admin account' });
   const token = crypto.randomBytes(24).toString('hex');
-  adminSessions.add(token);
-  res.json({ token });
+  adminSessions.set(token, { userId: user.id, username: user.username, role });
+  res.json({ token, role, username: user.username });
 });
 
 app.post('/api/auth/logout', (req, res) => {
@@ -135,7 +159,9 @@ app.post('/api/auth/logout', (req, res) => {
 
 app.get('/api/auth/status', (req, res) => {
   const token = req.headers['x-admin-token'];
-  res.json({ isAdmin: !!(token && adminSessions.has(token)) });
+  const session = token && adminSessions.get(token);
+  if (!session) return res.json({ loggedIn: false });
+  res.json({ loggedIn: true, role: session.role, username: session.username });
 });
 
 // ── Player registration & login ────────────────────────────────────────────
@@ -208,7 +234,7 @@ app.get('/api/players/me', requirePlayer, (req, res) => {
 });
 
 // Admin edits a registered user's profile
-app.patch('/api/users/:id', requireAdmin, (req, res) => {
+app.patch('/api/users/:id', requireOwner, (req, res) => {
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
   if (!user) return res.status(404).json({ error: 'User not found' });
   const username = req.body.username !== undefined ? req.body.username.trim() : user.username;
@@ -240,7 +266,7 @@ app.get('/api/seasons', (req, res) => {
   res.json(seasons);
 });
 
-app.post('/api/seasons', requireAdmin, (req, res) => {
+app.post('/api/seasons', requireOwner, (req, res) => {
   const { name, make_active, league_type } = req.body;
   if (!name || !name.trim()) return res.status(400).json({ error: 'Season name is required' });
   if (make_active) db.prepare('UPDATE seasons SET is_active = 0').run();
@@ -249,7 +275,7 @@ app.post('/api/seasons', requireAdmin, (req, res) => {
   res.status(201).json({ id: result.lastInsertRowid, name: name.trim(), is_active: make_active ? 1 : 0, league_type: lt });
 });
 
-app.patch('/api/seasons/:id', requireAdmin, (req, res) => {
+app.patch('/api/seasons/:id', requireOwner, (req, res) => {
   const season = db.prepare('SELECT * FROM seasons WHERE id = ?').get(req.params.id);
   if (!season) return res.status(404).json({ error: 'Season not found' });
   const name = req.body.name !== undefined ? req.body.name.trim() : season.name;
@@ -260,7 +286,7 @@ app.patch('/api/seasons/:id', requireAdmin, (req, res) => {
   res.json({ updated: true });
 });
 
-app.delete('/api/seasons/:id', requireAdmin, (req, res) => {
+app.delete('/api/seasons/:id', requireOwner, (req, res) => {
   db.prepare('UPDATE games SET season_id = NULL WHERE season_id = ?').run(req.params.id);
   const result = db.prepare('DELETE FROM seasons WHERE id = ?').run(req.params.id);
   if (result.changes === 0) return res.status(404).json({ error: 'Season not found' });
@@ -276,8 +302,8 @@ app.get('/api/site-logo', (_req, res) => {
   res.redirect(302, url);
 });
 
-// POST /api/admin/site-logo  – upload a new site logo (admin only)
-app.post('/api/admin/site-logo', requireAdmin, logoUpload.single('logo'), (req, res) => {
+// POST /api/admin/site-logo  – upload a new site logo (owner only)
+app.post('/api/admin/site-logo', requireOwner, logoUpload.single('logo'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No image file provided' });
   const newUrl = `/uploads/${req.file.filename}`;
   // Delete old custom logo synchronously before updating DB, so we don't
@@ -298,7 +324,7 @@ app.get('/api/teams', (_req, res) => {
   res.json(db.prepare('SELECT * FROM teams ORDER BY name').all());
 });
 
-app.post('/api/teams', requireAdmin, logoUpload.single('logo'), (req, res) => {
+app.post('/api/teams', requireOwner, logoUpload.single('logo'), (req, res) => {
   const body = req.body;
   const name = (body.name || '').trim();
   if (!name) return res.status(400).json({ error: 'name is required' });
@@ -315,7 +341,7 @@ app.post('/api/teams', requireAdmin, logoUpload.single('logo'), (req, res) => {
   res.status(201).json({ id: result.lastInsertRowid, name, conference, division, ea_club_id, logo_url, color1, color2, league_type });
 });
 
-app.patch('/api/teams/:id', requireAdmin, logoUpload.single('logo'), (req, res) => {
+app.patch('/api/teams/:id', requireOwner, logoUpload.single('logo'), (req, res) => {
   const team = db.prepare('SELECT * FROM teams WHERE id = ?').get(req.params.id);
   if (!team) return res.status(404).json({ error: 'Team not found' });
   const body = req.body;
@@ -341,7 +367,7 @@ app.patch('/api/teams/:id', requireAdmin, logoUpload.single('logo'), (req, res) 
   res.json({ updated: true });
 });
 
-app.delete('/api/teams/:id', requireAdmin, (req, res) => {
+app.delete('/api/teams/:id', requireOwner, (req, res) => {
   const team = db.prepare('SELECT * FROM teams WHERE id = ?').get(req.params.id);
   if (!team) return res.status(404).json({ error: 'Team not found' });
   if (team.logo_url) {
@@ -359,7 +385,7 @@ app.delete('/api/teams/:id', requireAdmin, (req, res) => {
 // ── Team owner / GM management ─────────────────────────────────────────────
 
 // Admin assigns team owner
-app.post('/api/teams/:id/owner', requireAdmin, (req, res) => {
+app.post('/api/teams/:id/owner', requireOwner, (req, res) => {
   const { user_id } = req.body;
   if (!user_id) return res.status(400).json({ error: 'user_id is required' });
   const team = db.prepare('SELECT * FROM teams WHERE id = ?').get(req.params.id);
@@ -373,7 +399,7 @@ app.post('/api/teams/:id/owner', requireAdmin, (req, res) => {
 });
 
 // Admin removes team owner
-app.delete('/api/teams/:id/owner', requireAdmin, (req, res) => {
+app.delete('/api/teams/:id/owner', requireOwner, (req, res) => {
   db.prepare("DELETE FROM team_staff WHERE team_id = ? AND role = 'owner'").run(req.params.id);
   res.json({ ok: true });
 });
@@ -821,7 +847,7 @@ app.get('/api/players/profile/:name', (req, res) => {
 });
 
 // List all registered users (for admin to pick an owner / for GMs to sign players)
-app.get('/api/users', requireAdmin, (_req, res) => {
+app.get('/api/users', requireOwner, (_req, res) => {
   const users = db.prepare(`
     SELECT u.id, u.username, u.platform, u.email, u.position, u.discord, u.created_at,
       p.team_id, t.name AS team_name, p.is_rostered
@@ -843,7 +869,7 @@ app.get('/api/users/free-agents', requirePlayer, (_req, res) => {
   res.json(fa);
 });
 
-app.post('/api/players', requireAdmin, (req, res) => {
+app.post('/api/players', requireOwner, (req, res) => {
   const { name, team_id, position, number, discord, discord_id } = req.body;
   if (!name) return res.status(400).json({ error: 'name is required' });
   const result = db.prepare('INSERT INTO players (name, team_id, position, number, is_rostered, discord, discord_id) VALUES (?, ?, ?, ?, ?, ?, ?)')
@@ -851,13 +877,13 @@ app.post('/api/players', requireAdmin, (req, res) => {
   res.status(201).json({ id: result.lastInsertRowid, name, team_id, position, number, discord, discord_id });
 });
 
-app.delete('/api/players/:id', requireAdmin, (req, res) => {
+app.delete('/api/players/:id', requireOwner, (req, res) => {
   const result = db.prepare('DELETE FROM players WHERE id = ?').run(req.params.id);
   if (result.changes === 0) return res.status(404).json({ error: 'Player not found' });
   res.json({ deleted: true });
 });
 
-app.patch('/api/players/:id', requireAdmin, (req, res) => {
+app.patch('/api/players/:id', requireOwner, (req, res) => {
   const player = db.prepare('SELECT * FROM players WHERE id = ?').get(req.params.id);
   if (!player) return res.status(404).json({ error: 'Player not found' });
   const name       = req.body.name       !== undefined ? (req.body.name || player.name)        : player.name;
@@ -1126,7 +1152,7 @@ app.get('/api/stats/leaders', (req, res) => {
 
 // ── Admin: unrostered stats alert ──────────────────────────────────────────
 
-app.get('/api/admin/unrostered-stats', requireAdmin, (req, res) => {
+app.get('/api/admin/unrostered-stats', requireOwner, (req, res) => {
   const rows = db.prepare(`
     SELECT DISTINCT gps.player_name, t.name AS team_name, t.id AS team_id,
       COUNT(DISTINCT gps.game_id) AS game_count
@@ -1268,7 +1294,7 @@ app.get('/api/playoffs/by-season/:seasonId', (req, res) => {
 });
 
 // POST /api/playoffs – create bracket from season standings
-app.post('/api/playoffs', requireAdmin, (req, res) => {
+app.post('/api/playoffs', requireOwner, (req, res) => {
   const { season_id, teams_qualify, min_games_played, series_length } = req.body;
   if (!season_id || !teams_qualify || teams_qualify < 2) {
     return res.status(400).json({ error: 'season_id and teams_qualify (min 2) are required' });
@@ -1317,7 +1343,7 @@ app.post('/api/playoffs', requireAdmin, (req, res) => {
 });
 
 // POST /api/playoffs/:id/advance-round – create next-round matchups from current-round winners
-app.post('/api/playoffs/:id/advance-round', requireAdmin, (req, res) => {
+app.post('/api/playoffs/:id/advance-round', requireOwner, (req, res) => {
   const playoff = db.prepare('SELECT * FROM playoffs WHERE id = ?').get(req.params.id);
   if (!playoff) return res.status(404).json({ error: 'Playoff not found' });
 
@@ -1389,7 +1415,7 @@ app.get('/api/playoff-series/:id/games', (req, res) => {
 });
 
 // DELETE /api/playoffs/:id
-app.delete('/api/playoffs/:id', requireAdmin, (req, res) => {
+app.delete('/api/playoffs/:id', requireOwner, (req, res) => {
   const playoff = db.prepare('SELECT * FROM playoffs WHERE id = ?').get(req.params.id);
   if (!playoff) return res.status(404).json({ error: 'Playoff not found' });
   // Unlink games
@@ -1517,6 +1543,48 @@ app.get('/api/discord/pending', (req, res) => {
   res.json({ discord_id: pending.discord_id, discord: pending.discord });
 });
 
+// ── Game admin management (owner only) ────────────────────────────────────
+
+// List users who are game admins
+app.get('/api/admin/game-admins', requireOwner, (_req, res) => {
+  const admins = db.prepare(
+    "SELECT id, username, discord FROM users WHERE role = 'game_admin' ORDER BY username COLLATE NOCASE"
+  ).all();
+  res.json(admins);
+});
+
+// Search registered users by username prefix (owner only, used when adding game admins)
+app.get('/api/admin/users/search', requireOwner, (req, res) => {
+  const q = (req.query.q || '').trim();
+  if (!q) return res.json([]);
+  const users = db.prepare(
+    "SELECT id, username, discord, role FROM users WHERE username LIKE ? COLLATE NOCASE ORDER BY username LIMIT 20"
+  ).all(`${q}%`);
+  res.json(users);
+});
+
+// Promote a user to game admin
+app.post('/api/admin/game-admins/:userId', requireOwner, (req, res) => {
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.userId);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  if (isOwnerUser(user))
+    return res.status(400).json({ error: "Cannot change the owner's role" });
+  db.prepare("UPDATE users SET role = 'game_admin' WHERE id = ?").run(user.id);
+  res.json({ ok: true });
+});
+
+// Demote a game admin back to regular user
+app.delete('/api/admin/game-admins/:userId', requireOwner, (req, res) => {
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.userId);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  db.prepare('UPDATE users SET role = NULL WHERE id = ?').run(user.id);
+  // Invalidate any active admin session for this user
+  for (const [token, session] of adminSessions) {
+    if (session.userId === user.id) adminSessions.delete(token);
+  }
+  res.json({ ok: true });
+});
+
 // ── Global error handler ───────────────────────────────────────────────────
 // Catches multer errors (file too large, wrong type) and returns JSON so the
 // browser never sees a connection-reset "network error".
@@ -1536,5 +1604,5 @@ app.use((err, req, res, next) => {
 
 app.listen(PORT, () => {
   console.log(`EHL server running at http://localhost:${PORT}`);
-  console.log(`Admin password: ${ADMIN_PASSWORD}`);
+  console.log(`Owner account: ${OWNER_USERNAME}`);
 });
