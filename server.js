@@ -71,13 +71,15 @@ function hashIp(ip) {
 
 // ── Admin Auth ─────────────────────────────────────────────────────────────
 
-const OWNER_USERNAME = process.env.OWNER_USERNAME || 'txEnaek';
+// The league owner is identified by their Discord user ID.
+// This can be overridden with the OWNER_DISCORD_ID environment variable.
+const OWNER_DISCORD_ID = process.env.OWNER_DISCORD_ID || '363915181765427200';
 const adminSessions = new Map(); // token → { userId, username, role }
 const playerSessions = new Map(); // token -> userId
 
 /** Returns true if the given user record is the league owner. */
 function isOwnerUser(user) {
-  return user && user.username.toLowerCase() === OWNER_USERNAME.toLowerCase();
+  return user && user.discord_id === OWNER_DISCORD_ID;
 }
 
 // ── Discord OAuth2 ─────────────────────────────────────────────────────────
@@ -135,17 +137,20 @@ function requireTeamRole(roles) {
 
 // ── Admin login / logout ───────────────────────────────────────────────────
 
-app.post('/api/auth/login', async (req, res) => {
-  const { username, password } = req.body;
-  if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
-  const user = db.prepare('SELECT * FROM users WHERE username = ? COLLATE NOCASE').get(username.trim());
-  if (!user) return res.status(401).json({ error: 'Invalid credentials' });
-  let ok;
-  try { ok = await verifyPassword(password, user.password_hash); } catch { ok = false; }
-  if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
+// Admin access is derived from the player's existing session.
+// The player must be logged in (X-Player-Token header) and either:
+//   • have Discord ID matching OWNER_DISCORD_ID  → role 'owner'
+//   • have role = 'game_admin' in the users table → role 'game_admin'
+// No separate admin password is required.
+app.post('/api/auth/login', (req, res) => {
+  const playerToken = req.headers['x-player-token'];
+  const userId = playerToken && playerSessions.get(playerToken);
+  if (!userId) return res.status(401).json({ error: 'Player login required' });
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+  if (!user) return res.status(401).json({ error: 'User not found' });
   const isOwner = isOwnerUser(user);
   const role = isOwner ? 'owner' : (user.role === 'game_admin' ? 'game_admin' : null);
-  if (!role) return res.status(403).json({ error: 'Access denied – not an admin account' });
+  if (!role) return res.status(403).json({ error: 'Access denied' });
   const token = crypto.randomBytes(24).toString('hex');
   adminSessions.set(token, { userId: user.id, username: user.username, role });
   res.json({ token, role, username: user.username });
@@ -1604,5 +1609,5 @@ app.use((err, req, res, next) => {
 
 app.listen(PORT, () => {
   console.log(`EHL server running at http://localhost:${PORT}`);
-  console.log(`Owner account: ${OWNER_USERNAME}`);
+  console.log(`Owner Discord ID: ${OWNER_DISCORD_ID}`);
 });

@@ -45,21 +45,19 @@
     <a href="admin.html" class="active">Admin</a>
   </nav>
 
+  <!-- Admin access is granted automatically when the site owner or a promoted
+       game admin is logged in as a player. No separate login form is shown;
+       if access is denied the panel simply does not appear. -->
   <div id="login-section">
-    <h2>🔑 Admin Login</h2>
-    <p style="color:#8b949e;font-size:0.9rem;margin-bottom:1rem;">Sign in with your league account credentials.</p>
-    <form id="login-form">
-      <div class="form-group" style="flex-direction:column;margin-bottom:0.75rem;">
-        <label for="admin-username">Gamertag</label>
-        <input type="text" id="admin-username" placeholder="Your gamertag" required style="width:100%;min-width:unset;" autocomplete="username" />
+    <div style="text-align:center;padding:3rem 1rem;color:#8b949e;">
+      <div id="access-checking" style="font-size:0.95rem;">Checking access…</div>
+      <div id="access-denied" style="display:none;">
+        <p style="font-size:1.5rem;margin-bottom:0.5rem;">🔒</p>
+        <p style="font-size:1rem;color:#c9d1d9;margin-bottom:0.5rem;">Access denied.</p>
+        <p style="font-size:0.88rem;">This panel is only available to the site owner and promoted admins.<br>
+        Make sure you are <a href="register.html" style="color:#58a6ff;">logged in to your player account</a>.</p>
       </div>
-      <div class="form-group" style="flex-direction:column;margin-bottom:0.75rem;">
-        <label for="admin-password">Password</label>
-        <input type="password" id="admin-password" placeholder="Your password" required style="width:100%;min-width:unset;" autocomplete="current-password" />
-      </div>
-      <button type="submit" style="width:100%;margin-top:0.5rem;">Login</button>
-      <div id="login-error">Invalid credentials or access denied.</div>
-    </form>
+    </div>
   </div>
 
   <div id="admin-panel" style="display:none;">

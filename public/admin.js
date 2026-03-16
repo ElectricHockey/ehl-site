@@ -1,5 +1,6 @@
 const API = '/api';
 
+function getPlayerToken() { return localStorage.getItem('ehl_player_token') || ''; }
 function getAdminToken() { return localStorage.getItem('ehl_admin_token') || ''; }
 function getAdminRole() { return localStorage.getItem('ehl_admin_role') || ''; }
 function adminHeaders() { return { 'X-Admin-Token': getAdminToken() }; }
@@ -33,28 +34,58 @@ function previewLogo(input, previewId) {
 
 // ── Auth ──────────────────────────────────────────────────────────────────
 
+// Try the cached admin token first; if stale, exchange the player session for
+// an admin token. If the player has no admin access, show the denied message.
 async function checkAuth() {
-  const token = getAdminToken();
-  if (!token) { showLoginForm(); return; }
-  try {
-    const res = await fetch(`${API}/auth/status`, { headers: { 'X-Admin-Token': token } });
-    const data = await res.json();
-    if (data.loggedIn) {
-      localStorage.setItem('ehl_admin_role', data.role);
-      localStorage.setItem('ehl_admin_username', data.username);
-      showAdminPanel(data.role, data.username);
-    } else {
-      localStorage.removeItem('ehl_admin_token');
-      localStorage.removeItem('ehl_admin_role');
-      localStorage.removeItem('ehl_admin_username');
-      showLoginForm();
-    }
-  } catch { showLoginForm(); }
+  // 1. Validate existing admin token
+  const adminToken = getAdminToken();
+  if (adminToken) {
+    try {
+      const res = await fetch(`${API}/auth/status`, { headers: { 'X-Admin-Token': adminToken } });
+      const data = await res.json();
+      if (data.loggedIn) {
+        localStorage.setItem('ehl_admin_role', data.role);
+        localStorage.setItem('ehl_admin_username', data.username);
+        showAdminPanel(data.role, data.username);
+        return;
+      }
+    } catch { /* fall through */ }
+    // Token is invalid – clear it and try player session below
+    localStorage.removeItem('ehl_admin_token');
+    localStorage.removeItem('ehl_admin_role');
+    localStorage.removeItem('ehl_admin_username');
+  }
+
+  // 2. Try to obtain an admin token from the player session
+  const playerToken = getPlayerToken();
+  if (playerToken) {
+    try {
+      const res = await fetch(`${API}/auth/login`, {
+        method: 'POST',
+        headers: { 'X-Player-Token': playerToken },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        localStorage.setItem('ehl_admin_token', data.token);
+        localStorage.setItem('ehl_admin_role', data.role);
+        localStorage.setItem('ehl_admin_username', data.username);
+        showAdminPanel(data.role, data.username);
+        return;
+      }
+    } catch { /* fall through */ }
+  }
+
+  // 3. No valid session found – show access-denied message
+  showLoginForm();
 }
 
 function showLoginForm() {
   document.getElementById('login-section').style.display = '';
   document.getElementById('admin-panel').style.display = 'none';
+  const checking = document.getElementById('access-checking');
+  const denied   = document.getElementById('access-denied');
+  if (checking) checking.style.display = 'none';
+  if (denied)   denied.style.display   = '';
 }
 
 function showAdminPanel(role, username) {
@@ -98,27 +129,6 @@ function showAdminTab(name) {
   const sec = document.getElementById(`admin-tab-${name}`);
   if (sec) sec.classList.add('active');
 }
-
-document.getElementById('login-form').addEventListener('submit', async e => {
-  e.preventDefault();
-  const username = document.getElementById('admin-username').value.trim();
-  const password = document.getElementById('admin-password').value;
-  const errEl = document.getElementById('login-error');
-  errEl.style.display = 'none';
-  try {
-    const res = await fetch(`${API}/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
-    });
-    if (!res.ok) { errEl.style.display = ''; return; }
-    const data = await res.json();
-    localStorage.setItem('ehl_admin_token', data.token);
-    localStorage.setItem('ehl_admin_role', data.role);
-    localStorage.setItem('ehl_admin_username', data.username);
-    showAdminPanel(data.role, data.username);
-  } catch { errEl.style.display = ''; }
-});
 
 async function adminLogout() {
   await fetch(`${API}/auth/logout`, { method: 'POST', headers: adminHeaders() }).catch(() => {});
