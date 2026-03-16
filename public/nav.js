@@ -17,6 +17,67 @@ document.addEventListener('click', e => {
   }
 });
 
+// ── Admin nav link visibility ──────────────────────────────────────────────
+// The Admin link is hidden by default. Show it only when the visitor has an
+// active admin session (owner Discord ID 363915181765427200 or promoted admin).
+(function () {
+  const link = document.getElementById('nav-admin-link');
+  if (!link) return;
+
+  function showAdminLink() { link.style.display = ''; }
+  function hideAdminLink() { link.style.display = 'none'; }
+
+  async function refreshAdminAccess() {
+    // 1. Validate any cached admin token
+    const adminToken = localStorage.getItem('ehl_admin_token');
+    if (adminToken) {
+      try {
+        const res = await fetch('/api/auth/status', { headers: { 'X-Admin-Token': adminToken } });
+        const data = await res.json();
+        if (data.loggedIn) { showAdminLink(); return; }
+      } catch (e) {
+        // Network error – fall through to player-token refresh
+        console.debug('[nav] admin token validation failed:', e);
+      }
+      // Token is stale – clear it
+      localStorage.removeItem('ehl_admin_token');
+      localStorage.removeItem('ehl_admin_role');
+      localStorage.removeItem('ehl_admin_username');
+    }
+
+    // 2. Try to obtain a fresh admin token from the player session
+    const playerToken = localStorage.getItem('ehl_player_token');
+    if (playerToken) {
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'X-Player-Token': playerToken },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          localStorage.setItem('ehl_admin_token', data.token);
+          localStorage.setItem('ehl_admin_role', data.role);
+          localStorage.setItem('ehl_admin_username', data.username);
+          showAdminLink();
+          return;
+        }
+      } catch (e) {
+        // Network error – not an admin, hide the link
+        console.debug('[nav] admin login via player token failed:', e);
+      }
+    }
+
+    hideAdminLink();
+  }
+
+  // Show immediately from the cached token for a flicker-free experience, then
+  // validate async. Both checks use the same key so behaviour is consistent.
+  if (localStorage.getItem('ehl_admin_token')) {
+    showAdminLink();
+  }
+  refreshAdminAccess();
+}());
+
 // ── JS-driven stat-column tooltips ──────────────────────────────────────────
 // Uses position:fixed so tooltips are NEVER clipped by overflow:auto containers.
 

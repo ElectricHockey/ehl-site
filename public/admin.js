@@ -95,6 +95,10 @@ function showAdminPanel(role, username) {
   document.getElementById('login-section').style.display = 'none';
   document.getElementById('admin-panel').style.display = '';
 
+  // Reveal the admin nav link now that access is confirmed
+  const navLink = document.getElementById('nav-admin-link');
+  if (navLink) navLink.style.display = '';
+
   // Update logged-in bar
   const roleLabel = role === 'owner' ? '👑 Owner' : '🎮 Game Admin';
   document.getElementById('logged-in-name').textContent = `${roleLabel}: ${username}`;
@@ -135,6 +139,9 @@ async function adminLogout() {
   localStorage.removeItem('ehl_admin_token');
   localStorage.removeItem('ehl_admin_role');
   localStorage.removeItem('ehl_admin_username');
+  // Hide the admin nav link immediately so it disappears without a page reload
+  const navLink = document.getElementById('nav-admin-link');
+  if (navLink) navLink.style.display = 'none';
   showLoginForm();
 }
 
