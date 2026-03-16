@@ -204,6 +204,8 @@ try { db.exec('ALTER TABLE users ADD COLUMN ip_hash TEXT'); } catch (_) {}
 try { db.exec('ALTER TABLE users ADD COLUMN discord TEXT'); } catch (_) {}
 try { db.exec('ALTER TABLE users ADD COLUMN discord_id TEXT'); } catch (_) {}
 try { db.exec('ALTER TABLE games ADD COLUMN playoff_series_id INTEGER'); } catch (_) {}
+try { db.exec('ALTER TABLE players ADD COLUMN discord TEXT'); } catch (_) {}
+try { db.exec('ALTER TABLE players ADD COLUMN discord_id TEXT'); } catch (_) {}
 
 // ── Seed teams ──────────────────────────────────────────────────────────────
 // Edit this array to define your league's teams.

@@ -187,11 +187,13 @@
             <div class="form-group"><label for="player-team">Team</label><select id="player-team"><option value="">— No Team —</option></select></div>
             <div class="form-group"><label for="player-position">Position</label><input type="text" id="player-position" placeholder="e.g. C" /></div>
             <div class="form-group"><label for="player-number">#</label><input type="number" id="player-number" placeholder="Jersey #" min="1" max="99" style="width:80px;" /></div>
+            <div class="form-group"><label for="player-discord">Discord</label><input type="text" id="player-discord" placeholder="Discord username" /></div>
+            <div class="form-group"><label for="player-discord-id">Discord ID</label><input type="text" id="player-discord-id" placeholder="e.g. 123456789012345678" /></div>
             <button type="submit">Add Player</button>
           </form>
         </div>
         <table id="players-table">
-          <thead><tr><th>ID</th><th>#</th><th>Name</th><th>Position</th><th>Team</th><th>Action</th></tr></thead>
+          <thead><tr><th>ID</th><th>#</th><th>Name</th><th>Position</th><th>Team</th><th>Discord</th><th>Actions</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
@@ -298,19 +300,27 @@
       <!-- ── Edit Player Modal (shared, not inside any tab) ─── -->
       <div id="edit-player-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:9998;align-items:center;justify-content:center;">
         <div style="background:#161b22;border:1px solid #30363d;border-radius:10px;padding:1.5rem 2rem;min-width:320px;max-width:440px;width:90%;">
-          <h3 style="margin:0 0 1rem;">Edit Player Profile</h3>
+          <h3 id="ep-title" style="margin:0 0 1rem;">Edit Player Profile</h3>
           <input type="hidden" id="ep-id" />
-          <div class="form-group" style="flex-direction:column;margin-bottom:0.6rem;">
+          <input type="hidden" id="ep-type" value="user" />
+          <!-- Custom-player-only fields -->
+          <div id="ep-row-name" class="form-group" style="flex-direction:column;margin-bottom:0.6rem;display:none;">
+            <label for="ep-name">Name</label>
+            <input type="text" id="ep-name" />
+          </div>
+          <!-- Registered-user-only fields -->
+          <div id="ep-row-username" class="form-group" style="flex-direction:column;margin-bottom:0.6rem;">
             <label for="ep-username">Gamertag</label>
             <input type="text" id="ep-username" />
           </div>
-          <div class="form-group" style="flex-direction:column;margin-bottom:0.6rem;">
+          <div id="ep-row-platform" class="form-group" style="flex-direction:column;margin-bottom:0.6rem;">
             <label for="ep-platform">Platform</label>
             <select id="ep-platform" style="background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.35rem 0.6rem;">
               <option value="xbox">Xbox</option>
               <option value="psn">PlayStation (PSN)</option>
             </select>
           </div>
+          <!-- Shared fields -->
           <div class="form-group" style="flex-direction:column;margin-bottom:0.6rem;">
             <label for="ep-position">Position</label>
             <select id="ep-position" style="background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.35rem 0.6rem;">
@@ -323,13 +333,24 @@
               <option value="G">G — Goalie</option>
             </select>
           </div>
-          <div class="form-group" style="flex-direction:column;margin-bottom:0.6rem;">
+          <!-- Registered-user-only -->
+          <div id="ep-row-email" class="form-group" style="flex-direction:column;margin-bottom:0.6rem;">
             <label for="ep-email">Email</label>
             <input type="email" id="ep-email" placeholder="optional" />
           </div>
+          <!-- Shared -->
           <div class="form-group" style="flex-direction:column;margin-bottom:0.6rem;">
             <label for="ep-discord">Discord</label>
             <input type="text" id="ep-discord" placeholder="e.g. username or username#1234" />
+          </div>
+          <!-- Custom-player-only fields -->
+          <div id="ep-row-number" class="form-group" style="flex-direction:column;margin-bottom:0.6rem;display:none;">
+            <label for="ep-number">Jersey #</label>
+            <input type="number" id="ep-number" min="1" max="99" placeholder="optional" />
+          </div>
+          <div id="ep-row-discordid" class="form-group" style="flex-direction:column;margin-bottom:0.6rem;display:none;">
+            <label for="ep-discord-id">Discord ID <span style="color:#8b949e;font-size:0.78rem;">(used to auto-link on registration)</span></label>
+            <input type="text" id="ep-discord-id" placeholder="e.g. 123456789012345678" />
           </div>
           <div id="ep-error" style="color:#f85149;font-size:0.83rem;margin-bottom:0.5rem;display:none;"></div>
           <div style="display:flex;gap:0.5rem;margin-top:0.75rem;">

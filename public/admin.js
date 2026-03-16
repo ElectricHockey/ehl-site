@@ -4,6 +4,11 @@ function getAdminToken() { return localStorage.getItem('ehl_admin_token') || '';
 function adminHeaders() { return { 'X-Admin-Token': getAdminToken() }; }
 function adminJsonHeaders() { return { 'Content-Type': 'application/json', 'X-Admin-Token': getAdminToken() }; }
 
+/** Escape a value for safe use inside an HTML attribute (e.g. data-foo="..."). */
+function escAttr(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 function showStatus(msg, isError = false) {
   const el = document.getElementById('status-msg');
   if (!el) return;
@@ -344,11 +349,23 @@ async function loadPlayers() {
   const players = await res.json();
   const tbody = document.querySelector('#players-table tbody');
   tbody.innerHTML = players.length === 0
-    ? '<tr><td colspan="6" style="color:#8b949e">No players yet.</td></tr>'
+    ? '<tr><td colspan="7" style="color:#8b949e">No players yet.</td></tr>'
     : players.map(p => `<tr>
-        <td>${p.id}</td><td>${p.number ?? '–'}</td><td>${p.name}</td>
+        <td>${p.id}</td><td>${p.number ?? '–'}</td><td>${escAttr(p.name)}</td>
         <td>${p.position ?? '–'}</td><td>${p.team_name ?? '–'}</td>
-        <td><button class="btn-danger" onclick="deletePlayer(${p.id})">Delete</button></td>
+        <td>${p.discord ? `<span style="color:#5865f2;">⊟ ${escAttr(p.discord)}</span>` : '–'}</td>
+        <td style="white-space:nowrap;">
+          <button class="btn-secondary" style="font-size:0.78rem;padding:0.2rem 0.4rem;"
+            data-action="edit-custom-player"
+            data-pid="${p.id}"
+            data-name="${escAttr(p.name)}"
+            data-position="${escAttr(p.position)}"
+            data-number="${escAttr(p.number)}"
+            data-discord="${escAttr(p.discord)}"
+            data-discordid="${escAttr(p.discord_id)}"
+          >Edit</button>
+          <button class="btn-danger" style="font-size:0.78rem;padding:0.2rem 0.4rem;" onclick="deletePlayer(${p.id})">Delete</button>
+        </td>
       </tr>`).join('');
 }
 
@@ -358,7 +375,9 @@ document.getElementById('player-form').addEventListener('submit', async e => {
   const team_id = document.getElementById('player-team').value || null;
   const position = document.getElementById('player-position').value.trim() || null;
   const number = document.getElementById('player-number').value || null;
-  await fetch(`${API}/players`, { method: 'POST', headers: adminJsonHeaders(), body: JSON.stringify({ name, team_id, position, number }) });
+  const discord = document.getElementById('player-discord').value.trim() || null;
+  const discord_id = document.getElementById('player-discord-id').value.trim() || null;
+  await fetch(`${API}/players`, { method: 'POST', headers: adminJsonHeaders(), body: JSON.stringify({ name, team_id, position, number, discord, discord_id }) });
   e.target.reset(); await loadTeams(); await loadPlayers();
 });
 
@@ -763,21 +782,47 @@ document.addEventListener('click', e => {
   const btn = e.target.closest('[data-action="edit-player"]');
   if (!btn) return;
   const { uid, username, platform, position, email, discord } = btn.dataset;
-  openEditModal({ id: Number(uid), username, platform, position, email, discord: discord || '' });
+  openEditModal({ type: 'user', id: Number(uid), username, platform, position, email, discord: discord || '' });
+});
+
+// Delegated handler for edit buttons in the custom players table
+document.addEventListener('click', e => {
+  const btn = e.target.closest('[data-action="edit-custom-player"]');
+  if (!btn) return;
+  const { pid, name, position, number, discord, discordid } = btn.dataset;
+  openEditModal({ type: 'player', id: Number(pid), name, position, number, discord: discord || '', discordId: discordid || '' });
 });
 
 // ── Edit player modal ─────────────────────────────────────────────────────
 
-function openEditModal({ id, username, platform, position, email, discord }) {
+function openEditModal({ type = 'user', id, username, name, platform, position, email, discord, discordId, number }) {
+  const isCustom = type === 'player';
   document.getElementById('ep-id').value = id;
-  document.getElementById('ep-username').value = username;
-  document.getElementById('ep-platform').value = platform;
-  document.getElementById('ep-position').value = position;
-  document.getElementById('ep-email').value = email;
-  document.getElementById('ep-discord').value = discord || '';
+  document.getElementById('ep-type').value = type;
+  document.getElementById('ep-title').textContent = isCustom ? 'Edit Player' : 'Edit Player Profile';
+
+  // Toggle rows
+  document.getElementById('ep-row-name').style.display      = isCustom ? '' : 'none';
+  document.getElementById('ep-row-username').style.display  = isCustom ? 'none' : '';
+  document.getElementById('ep-row-platform').style.display  = isCustom ? 'none' : '';
+  document.getElementById('ep-row-email').style.display     = isCustom ? 'none' : '';
+  document.getElementById('ep-row-number').style.display    = isCustom ? '' : 'none';
+  document.getElementById('ep-row-discordid').style.display = isCustom ? '' : 'none';
+
+  // Populate fields
+  if (isCustom) {
+    document.getElementById('ep-name').value       = name || '';
+    document.getElementById('ep-number').value     = number || '';
+    document.getElementById('ep-discord-id').value = discordId || '';
+  } else {
+    document.getElementById('ep-username').value = username || '';
+    document.getElementById('ep-platform').value = platform || 'xbox';
+    document.getElementById('ep-email').value    = email || '';
+  }
+  document.getElementById('ep-position').value = position || '';
+  document.getElementById('ep-discord').value  = discord || '';
   document.getElementById('ep-error').style.display = 'none';
-  const overlay = document.getElementById('edit-player-overlay');
-  overlay.style.display = 'flex';
+  document.getElementById('edit-player-overlay').style.display = 'flex';
 }
 
 function closeEditModal() {
@@ -785,28 +830,50 @@ function closeEditModal() {
 }
 
 async function savePlayerEdit() {
-  const id       = document.getElementById('ep-id').value;
-  const username = document.getElementById('ep-username').value.trim();
-  const platform = document.getElementById('ep-platform').value;
+  const id      = document.getElementById('ep-id').value;
+  const type    = document.getElementById('ep-type').value;
+  const isCustom = type === 'player';
   const position = document.getElementById('ep-position').value;
-  const email    = document.getElementById('ep-email').value.trim();
   const discord  = document.getElementById('ep-discord').value.trim();
   const errEl    = document.getElementById('ep-error');
   errEl.style.display = 'none';
-  if (!username) { errEl.textContent = 'Gamertag cannot be empty'; errEl.style.display = ''; return; }
-  const res = await fetch(`${API}/users/${id}`, {
-    method: 'PATCH', headers: adminJsonHeaders(),
-    body: JSON.stringify({ username, platform, position: position || null, email: email || null, discord: discord || null }),
-  });
-  if (!res.ok) {
-    const e = await res.json();
-    errEl.textContent = e.error || 'Failed to save';
-    errEl.style.display = '';
-    return;
+
+  if (isCustom) {
+    const name      = document.getElementById('ep-name').value.trim();
+    const number    = document.getElementById('ep-number').value || null;
+    const discordId = document.getElementById('ep-discord-id').value.trim() || null;
+    if (!name) { errEl.textContent = 'Name cannot be empty'; errEl.style.display = ''; return; }
+    const res = await fetch(`${API}/players/${id}`, {
+      method: 'PATCH', headers: adminJsonHeaders(),
+      body: JSON.stringify({ name, position: position || null, number: number ? Number(number) : null, discord: discord || null, discord_id: discordId }),
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      errEl.textContent = e.error || 'Failed to save';
+      errEl.style.display = '';
+      return;
+    }
+    closeEditModal();
+    await loadPlayers();
+  } else {
+    const username = document.getElementById('ep-username').value.trim();
+    const platform = document.getElementById('ep-platform').value;
+    const email    = document.getElementById('ep-email').value.trim();
+    if (!username) { errEl.textContent = 'Gamertag cannot be empty'; errEl.style.display = ''; return; }
+    const res = await fetch(`${API}/users/${id}`, {
+      method: 'PATCH', headers: adminJsonHeaders(),
+      body: JSON.stringify({ username, platform, position: position || null, email: email || null, discord: discord || null }),
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      errEl.textContent = e.error || 'Failed to save';
+      errEl.style.display = '';
+      return;
+    }
+    closeEditModal();
+    await loadRegPlayers();
+    await loadPlayers();
   }
-  closeEditModal();
-  await loadRegPlayers();
-  await loadPlayers(); // refresh the legacy players table too
 }
 
 // Close modal on overlay click

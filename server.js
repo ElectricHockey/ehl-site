@@ -152,12 +152,31 @@ app.post('/api/players/register', async (req, res) => {
   const hash = await hashPassword(password);
   const r = db.prepare('INSERT INTO users (username, platform, password_hash, email, position, discord, discord_id) VALUES (?, ?, ?, ?, ?, ?, ?)')
     .run(username.trim(), plat, hash, email ? email.trim() : null, pos, discord.trim(), discord_id || null);
-  // Also create a player record linked to this user
-  const pr = db.prepare('INSERT INTO players (name, user_id, is_rostered, position) VALUES (?, ?, 0, ?)')
-    .run(username.trim(), r.lastInsertRowid, pos);
+
+  // Try to merge with an existing custom-added player whose discord_id matches.
+  // This links their user account to the existing roster spot instead of creating a fresh record.
+  let playerId;
+  let merged = false;
+  if (discord_id) {
+    const candidate = db.prepare(
+      'SELECT id FROM players WHERE discord_id = ? AND user_id IS NULL LIMIT 1'
+    ).get(discord_id);
+    if (candidate) {
+      db.prepare('UPDATE players SET user_id=?, name=?, position=COALESCE(?,position), discord=COALESCE(?,discord) WHERE id=?')
+        .run(r.lastInsertRowid, username.trim(), pos || null, (discord && discord.trim()) ? discord.trim() : null, candidate.id);
+      playerId = candidate.id;
+      merged = true;
+    }
+  }
+  if (!merged) {
+    const pr = db.prepare('INSERT INTO players (name, user_id, is_rostered, position) VALUES (?, ?, 0, ?)')
+      .run(username.trim(), r.lastInsertRowid, pos);
+    playerId = pr.lastInsertRowid;
+  }
+
   const token = crypto.randomBytes(24).toString('hex');
   playerSessions.set(token, r.lastInsertRowid);
-  res.status(201).json({ token, id: r.lastInsertRowid, username: username.trim(), platform: plat, position: pos, player_id: pr.lastInsertRowid });
+  res.status(201).json({ token, id: r.lastInsertRowid, username: username.trim(), platform: plat, position: pos, player_id: playerId, merged });
 });
 
 app.post('/api/players/login', async (req, res) => {
@@ -825,11 +844,11 @@ app.get('/api/users/free-agents', requirePlayer, (_req, res) => {
 });
 
 app.post('/api/players', requireAdmin, (req, res) => {
-  const { name, team_id, position, number } = req.body;
+  const { name, team_id, position, number, discord, discord_id } = req.body;
   if (!name) return res.status(400).json({ error: 'name is required' });
-  const result = db.prepare('INSERT INTO players (name, team_id, position, number, is_rostered) VALUES (?, ?, ?, ?, ?)')
-    .run(name, team_id || null, position || null, number || null, team_id ? 1 : 0);
-  res.status(201).json({ id: result.lastInsertRowid, name, team_id, position, number });
+  const result = db.prepare('INSERT INTO players (name, team_id, position, number, is_rostered, discord, discord_id) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .run(name, team_id || null, position || null, number || null, team_id ? 1 : 0, discord || null, discord_id || null);
+  res.status(201).json({ id: result.lastInsertRowid, name, team_id, position, number, discord, discord_id });
 });
 
 app.delete('/api/players/:id', requireAdmin, (req, res) => {
@@ -841,12 +860,15 @@ app.delete('/api/players/:id', requireAdmin, (req, res) => {
 app.patch('/api/players/:id', requireAdmin, (req, res) => {
   const player = db.prepare('SELECT * FROM players WHERE id = ?').get(req.params.id);
   if (!player) return res.status(404).json({ error: 'Player not found' });
-  const team_id    = req.body.team_id !== undefined    ? (req.body.team_id || null)    : player.team_id;
-  const is_rostered = req.body.is_rostered !== undefined ? Number(req.body.is_rostered) : player.is_rostered;
-  const position   = req.body.position !== undefined   ? (req.body.position || null)   : player.position;
-  const number     = req.body.number !== undefined     ? (req.body.number || null)     : player.number;
-  db.prepare('UPDATE players SET team_id=?, is_rostered=?, position=?, number=? WHERE id=?')
-    .run(team_id, is_rostered, position, number, req.params.id);
+  const name       = req.body.name       !== undefined ? (req.body.name || player.name)        : player.name;
+  const team_id    = req.body.team_id    !== undefined ? (req.body.team_id || null)             : player.team_id;
+  const is_rostered = req.body.is_rostered !== undefined ? Number(req.body.is_rostered)         : player.is_rostered;
+  const position   = req.body.position   !== undefined ? (req.body.position || null)            : player.position;
+  const number     = req.body.number     !== undefined ? (req.body.number || null)              : player.number;
+  const discord    = req.body.discord    !== undefined ? (req.body.discord || null)             : player.discord;
+  const discord_id = req.body.discord_id !== undefined ? (req.body.discord_id || null)          : player.discord_id;
+  db.prepare('UPDATE players SET name=?, team_id=?, is_rostered=?, position=?, number=?, discord=?, discord_id=? WHERE id=?')
+    .run(name, team_id, is_rostered, position, number, discord, discord_id, req.params.id);
   res.json({ ok: true });
 });
 
