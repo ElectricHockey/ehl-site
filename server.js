@@ -42,7 +42,7 @@ const logoStorage = multer.diskStorage({
 });
 const logoUpload = multer({
   storage: logoStorage,
-  limits: { fileSize: 2 * 1024 * 1024 },
+  limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const ok = /^image\/(jpeg|png|gif|webp|svg\+xml)$/.test(file.mimetype);
     cb(ok ? null : new Error('Only image files are allowed'), ok);
@@ -1515,6 +1515,21 @@ app.get('/api/discord/pending', (req, res) => {
   if (!pending || Date.now() > pending.expires) return res.status(404).json({ error: 'Invalid or expired Discord link token' });
   pendingDiscordLinks.delete(token); // consume — one-time use
   res.json({ discord_id: pending.discord_id, discord: pending.discord });
+});
+
+// ── Global error handler ───────────────────────────────────────────────────
+// Catches multer errors (file too large, wrong type) and returns JSON so the
+// browser never sees a connection-reset "network error".
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  if (err && err.code === 'LIMIT_FILE_SIZE') {
+    return res.status(413).json({ error: 'File too large. Maximum allowed size is 10 MB.' });
+  }
+  if (err && err.message === 'Only image files are allowed') {
+    return res.status(400).json({ error: err.message });
+  }
+  console.error('Unhandled error:', err);
+  res.status(500).json({ error: 'Internal server error' });
 });
 
 // ── Start ──────────────────────────────────────────────────────────────────

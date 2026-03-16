@@ -1095,12 +1095,12 @@ document.getElementById('site-logo-form').addEventListener('submit', async e => 
       document.getElementById('site-logo-file').value = '';
       document.getElementById('site-logo-preview-new').style.display = 'none';
     } else {
-      const err = await res.json();
+      const data = await res.json().catch(() => ({}));
       msg.style.color = '#f85149';
-      msg.textContent = err.error || 'Upload failed';
+      msg.textContent = data.error || `Upload failed (${res.status})`;
     }
   } catch {
     msg.style.color = '#f85149';
-    msg.textContent = 'Network error';
+    msg.textContent = 'Network error – could not reach the server';
   }
 });
