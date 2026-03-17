@@ -1298,6 +1298,35 @@ app.get('/api/playoffs/by-season/:seasonId', (req, res) => {
   res.json(bracket);
 });
 
+// ── Playoff schedule helpers ──────────────────────────────────────────────
+
+/**
+ * Home-ice pattern for a best-of-N series (2-2-1-1-1):
+ *   games 1,2  → high seed hosts (true)
+ *   games 3,4  → low  seed hosts (false)
+ *   game  5    → high seed hosts (true)
+ *   game  6    → low  seed hosts (false)
+ *   game  7    → high seed hosts (true)
+ */
+const SERIES_HOME_PATTERN = [true, true, false, false, true, false, true];
+
+/**
+ * Insert `seriesLength` scheduled game stubs for a newly created playoff_series.
+ * Games are created with status='scheduled', score 0-0, linked to the series.
+ */
+function createSeriesSchedule(seriesId, highSeedTeamId, lowSeedTeamId, seasonId, seriesLength) {
+  const placeholderDate = new Date().toISOString().slice(0, 10);
+  const insertGame = db.prepare(
+    'INSERT INTO games (home_team_id, away_team_id, home_score, away_score, date, status, season_id, is_overtime, playoff_series_id) VALUES (?, ?, 0, 0, ?, ?, ?, 0, ?)'
+  );
+  for (let i = 0; i < seriesLength; i++) {
+    const highSeedHosts = SERIES_HOME_PATTERN[i];
+    const home = highSeedHosts ? highSeedTeamId : lowSeedTeamId;
+    const away = highSeedHosts ? lowSeedTeamId  : highSeedTeamId;
+    insertGame.run(home, away, placeholderDate, 'scheduled', seasonId, seriesId);
+  }
+}
+
 // POST /api/playoffs – create bracket from season standings
 app.post('/api/playoffs', requireOwner, (req, res) => {
   const { season_id, teams_qualify, min_games_played, series_length } = req.body;
@@ -1336,12 +1365,14 @@ app.post('/api/playoffs', requireOwner, (req, res) => {
 
   // Generate round 1 matchups: 1 vs N, 2 vs N-1, …
   const m = Math.floor(effectiveN / 2);
+  const seriesLen = Number(series_length) || 7;
   for (let i = 0; i < m; i++) {
     const hi = qualified[i];
     const lo = qualified[effectiveN - 1 - i];
-    db.prepare(
+    const sr = db.prepare(
       'INSERT INTO playoff_series (playoff_id, round_number, series_number, high_seed_id, low_seed_id, high_seed_num, low_seed_num) VALUES (?, 1, ?, ?, ?, ?, ?)'
     ).run(playoffId, i + 1, hi.id, lo.id, i + 1, effectiveN - i);
+    createSeriesSchedule(sr.lastInsertRowid, hi.id, lo.id, Number(season_id), seriesLen);
   }
 
   res.status(201).json(getPlayoffBracket(playoffId));
@@ -1378,9 +1409,10 @@ app.post('/api/playoffs/:id/advance-round', requireOwner, (req, res) => {
   for (let i = 0; i < m; i++) {
     const hi = winners[i];
     const lo = winners[winners.length - 1 - i];
-    db.prepare(
+    const sr = db.prepare(
       'INSERT INTO playoff_series (playoff_id, round_number, series_number, high_seed_id, low_seed_id, high_seed_num, low_seed_num) VALUES (?, ?, ?, ?, ?, ?, ?)'
     ).run(req.params.id, nextRound, i + 1, hi.team_id, lo.team_id, hi.seed, lo.seed);
+    createSeriesSchedule(sr.lastInsertRowid, hi.team_id, lo.team_id, playoff.season_id, playoff.series_length || 7);
   }
 
   res.json(getPlayoffBracket(req.params.id));
@@ -1423,7 +1455,8 @@ app.get('/api/playoff-series/:id/games', (req, res) => {
 app.delete('/api/playoffs/:id', requireOwner, (req, res) => {
   const playoff = db.prepare('SELECT * FROM playoffs WHERE id = ?').get(req.params.id);
   if (!playoff) return res.status(404).json({ error: 'Playoff not found' });
-  // Unlink games
+  // Delete auto-generated scheduled games for this playoff; unlink any manually-completed ones
+  db.prepare('DELETE FROM games WHERE status = ? AND playoff_series_id IN (SELECT id FROM playoff_series WHERE playoff_id = ?)').run('scheduled', req.params.id);
   db.prepare('UPDATE games SET playoff_series_id = NULL WHERE playoff_series_id IN (SELECT id FROM playoff_series WHERE playoff_id = ?)').run(req.params.id);
   db.prepare('DELETE FROM playoff_series WHERE playoff_id = ?').run(req.params.id);
   db.prepare('DELETE FROM playoff_teams WHERE playoff_id = ?').run(req.params.id);
