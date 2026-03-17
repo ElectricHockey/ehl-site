@@ -2,6 +2,20 @@ const API = '/api';
 
 // game-stats.js (loaded before this file) provides GameStats.renderTeamPanel and GameStats.normalizePlayer
 
+// ── Admin helpers ───────────────────────────────────────────────────────────
+
+function getAdminToken() { return localStorage.getItem('ehl_admin_token') || ''; }
+
+/** Returns true when the browser has an active admin session (owner or game_admin). */
+async function hasAdminSession() {
+  try {
+    const res = await fetch(`${API}/auth/status`, { headers: { 'X-Admin-Token': getAdminToken() } });
+    const data = await res.json();
+    // loggedIn is only true for admin sessions; role is 'owner' or 'game_admin'
+    return data.loggedIn && !!data.role;
+  } catch { return false; }
+}
+
 // ── Main ───────────────────────────────────────────────────────────────────
 
 async function loadGame() {
@@ -14,13 +28,16 @@ async function loadGame() {
   }
 
   try {
-    const res = await fetch(`${API}/games/${id}/stats`);
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
+    const [statsRes, adminFlag] = await Promise.all([
+      fetch(`${API}/games/${id}/stats`),
+      hasAdminSession(),
+    ]);
+    if (!statsRes.ok) {
+      const err = await statsRes.json().catch(() => ({}));
       root.innerHTML = `<p class="error">${err.error || 'Game not found.'} <a href="recent-scores.html">Back</a></p>`;
       return;
     }
-    const { game, home_players, away_players, has_stats } = await res.json();
+    const { game, home_players, away_players, has_stats } = await statsRes.json();
 
     document.title = `${game.home_team.name} vs ${game.away_team.name} – EHL`;
 
@@ -34,6 +51,14 @@ async function loadGame() {
     const logoImg = (team) => team.logo_url
       ? `<img src="${team.logo_url}" class="game-team-logo" alt="${team.name}" />`
       : `<div class="game-team-logo" style="border-radius:8px;border:1px solid #30363d;"></div>`;
+
+    const adminBtn = adminFlag
+      ? `<p style="text-align:center;margin-bottom:0.75rem;">
+           <a href="admin.html#games" style="display:inline-block;padding:0.35rem 0.9rem;background:#21262d;border:1px solid #30363d;border-radius:6px;color:#58a6ff;font-size:0.82rem;text-decoration:none;">
+             ✏️ Edit Stats / Score
+           </a>
+         </p>`
+      : '';
 
     let html = `
       <div class="game-header">
@@ -51,7 +76,8 @@ async function loadGame() {
           <a href="team.html?id=${game.away_team.id}" class="game-team-name">${game.away_team.name}</a>
         </div>
       </div>
-      <p class="game-meta">${date}${otBadge}</p>`;
+      <p class="game-meta">${date}${otBadge}</p>
+      ${adminBtn}`;
 
     if (!has_stats) {
       html += '<p style="color:#8b949e;text-align:center;">No player stats were recorded for this game.</p>';

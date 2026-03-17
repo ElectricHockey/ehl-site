@@ -29,7 +29,8 @@ async function checkAdmin() {
       headers: { 'X-Admin-Token': getAdminToken() },
     });
     const data = await res.json();
-    isAdmin = data.isAdmin;
+    // data.loggedIn is only true for active admin sessions (owner / game_admin)
+    isAdmin = (data.loggedIn && !!data.role) || false;
   } catch { isAdmin = false; }
   document.getElementById('admin-bar').style.display = isAdmin ? '' : 'none';
 }
