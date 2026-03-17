@@ -963,6 +963,14 @@ app.patch('/api/games/:id', requireAdmin, (req, res) => {
   db.prepare('UPDATE games SET home_score=?, away_score=?, ea_match_id=?, status=?, season_id=?, is_overtime=?, date=? WHERE id=?')
     .run(home_score, away_score, ea_match_id, status, season_id, is_overtime, date, req.params.id);
 
+  // Auto-update the playoff series bracket whenever a playoff game is completed or updated
+  const effectiveSeries = req.body.playoff_series_id !== undefined
+    ? (req.body.playoff_series_id ? Number(req.body.playoff_series_id) : null)
+    : game.playoff_series_id;
+  if (effectiveSeries && status === 'complete') {
+    recomputeSeriesWins(effectiveSeries);
+  }
+
   if (req.body.player_stats) {
     const { home_players, away_players } = req.body.player_stats;
     db.prepare('DELETE FROM game_player_stats WHERE game_id = ?').run(req.params.id);
@@ -1345,14 +1353,14 @@ app.post('/api/playoffs', requireOwner, (req, res) => {
   if (!series_start_date) {
     return res.status(400).json({ error: 'series_start_date (YYYY-MM-DD) is required' });
   }
+  const season = db.prepare('SELECT * FROM seasons WHERE id = ?').get(season_id);
+  if (!season) return res.status(404).json({ error: 'Season not found' });
+  if (season.is_playoff) return res.status(400).json({ error: 'Cannot create a playoff bracket from a playoff season' });
   const validTeamCounts = [2, 4, 8, 16];
   const n = Number(teams_qualify);
   if (!validTeamCounts.includes(n)) {
     return res.status(400).json({ error: 'teams_qualify must be 2, 4, 8, or 16' });
   }
-  const season = db.prepare('SELECT * FROM seasons WHERE id = ?').get(season_id);
-  if (!season) return res.status(404).json({ error: 'Season not found' });
-  if (season.is_playoff) return res.status(400).json({ error: 'Cannot create a playoff bracket from a playoff season' });
   const existing = db.prepare('SELECT id FROM playoffs WHERE season_id = ?').get(season_id);
   if (existing) return res.status(409).json({ error: 'A playoff already exists for this season. Delete it first.' });
 
@@ -1454,6 +1462,42 @@ app.patch('/api/playoff-series/:id', requireAdmin, (req, res) => {
     .run(hw, lw, winner_id, req.params.id);
   res.json({ ok: true, winner_id });
 });
+
+/**
+ * Recount series wins by tallying all completed games in the series.
+ * Called automatically whenever a playoff game's status changes to 'complete'
+ * so the bracket stays in sync without any manual input.
+ */
+function recomputeSeriesWins(seriesId) {
+  const s = db.prepare('SELECT * FROM playoff_series WHERE id = ?').get(seriesId);
+  if (!s) return;
+  const pl = db.prepare('SELECT series_length FROM playoffs WHERE id = ?').get(s.playoff_id);
+  const winsToWin = Math.ceil((pl ? pl.series_length : 7) / 2);
+
+  // Count how many complete games each team has won in this series
+  const games = db.prepare(
+    "SELECT home_team_id, away_team_id, home_score, away_score FROM games WHERE playoff_series_id = ? AND status = 'complete'"
+  ).all(seriesId);
+
+  let hw = 0, lw = 0;
+  for (const g of games) {
+    if (g.home_score === g.away_score) continue; // skip ties (shouldn't occur in hockey)
+    const homeWon = g.home_score > g.away_score;
+    const homeIsHigh = g.home_team_id === s.high_seed_id;
+    if (homeWon) {
+      if (homeIsHigh) hw++; else lw++;
+    } else {
+      if (homeIsHigh) lw++; else hw++;
+    }
+  }
+
+  let winner_id = null;
+  if (hw >= winsToWin) winner_id = s.high_seed_id;
+  else if (lw >= winsToWin) winner_id = s.low_seed_id;
+
+  db.prepare('UPDATE playoff_series SET high_seed_wins = ?, low_seed_wins = ?, winner_id = ? WHERE id = ?')
+    .run(hw, lw, winner_id, seriesId);
+}
 
 // GET /api/playoff-series/:id/games – games linked to a series
 app.get('/api/playoff-series/:id/games', (req, res) => {
