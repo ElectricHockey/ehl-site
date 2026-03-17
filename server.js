@@ -1286,7 +1286,11 @@ function getPlayoffBracket(playoffId) {
     if (!rounds[s.round_number]) rounds[s.round_number] = [];
     rounds[s.round_number].push(s);
   }
-  return { playoff, teams, rounds };
+  // Include the playoff season name if one was auto-created
+  const playoffSeason = playoff.playoff_season_id
+    ? db.prepare('SELECT id, name FROM seasons WHERE id = ?').get(playoff.playoff_season_id)
+    : null;
+  return { playoff, teams, rounds, playoff_season: playoffSeason };
 }
 
 // GET /api/playoffs/by-season/:seasonId
@@ -1313,9 +1317,12 @@ const SERIES_HOME_PATTERN = [true, true, false, false, true, false, true];
 /**
  * Insert `seriesLength` scheduled game stubs for a newly created playoff_series.
  * Games are created with status='scheduled', score 0-0, linked to the series.
+ * startDate (YYYY-MM-DD) is the date of Game 1; subsequent games are spaced 2 days apart.
+ * When startDate is omitted (e.g. advance-round), games are dated from today's date
+ * and can be updated later via the stats editor.
  */
-function createSeriesSchedule(seriesId, highSeedTeamId, lowSeedTeamId, seasonId, seriesLength) {
-  const placeholderDate = new Date().toISOString().slice(0, 10);
+function createSeriesSchedule(seriesId, highSeedTeamId, lowSeedTeamId, seasonId, seriesLength, startDate) {
+  const base = startDate ? new Date(startDate + 'T00:00:00Z') : new Date();
   const insertGame = db.prepare(
     'INSERT INTO games (home_team_id, away_team_id, home_score, away_score, date, status, season_id, is_overtime, playoff_series_id) VALUES (?, ?, 0, 0, ?, ?, ?, 0, ?)'
   );
@@ -1323,15 +1330,20 @@ function createSeriesSchedule(seriesId, highSeedTeamId, lowSeedTeamId, seasonId,
     const highSeedHosts = SERIES_HOME_PATTERN[i];
     const home = highSeedHosts ? highSeedTeamId : lowSeedTeamId;
     const away = highSeedHosts ? lowSeedTeamId  : highSeedTeamId;
-    insertGame.run(home, away, placeholderDate, 'scheduled', seasonId, seriesId);
+    const gameDate = new Date(base);
+    gameDate.setUTCDate(gameDate.getUTCDate() + i * 2);
+    insertGame.run(home, away, gameDate.toISOString().slice(0, 10), 'scheduled', seasonId, seriesId);
   }
 }
 
 // POST /api/playoffs – create bracket from season standings
 app.post('/api/playoffs', requireOwner, (req, res) => {
-  const { season_id, teams_qualify, min_games_played, series_length } = req.body;
+  const { season_id, teams_qualify, min_games_played, series_length, series_start_date } = req.body;
   if (!season_id || !teams_qualify || teams_qualify < 2) {
     return res.status(400).json({ error: 'season_id and teams_qualify (min 2) are required' });
+  }
+  if (!series_start_date) {
+    return res.status(400).json({ error: 'series_start_date (YYYY-MM-DD) is required' });
   }
   const validTeamCounts = [2, 4, 8, 16];
   const n = Number(teams_qualify);
@@ -1340,6 +1352,7 @@ app.post('/api/playoffs', requireOwner, (req, res) => {
   }
   const season = db.prepare('SELECT * FROM seasons WHERE id = ?').get(season_id);
   if (!season) return res.status(404).json({ error: 'Season not found' });
+  if (season.is_playoff) return res.status(400).json({ error: 'Cannot create a playoff bracket from a playoff season' });
   const existing = db.prepare('SELECT id FROM playoffs WHERE season_id = ?').get(season_id);
   if (existing) return res.status(409).json({ error: 'A playoff already exists for this season. Delete it first.' });
 
@@ -1353,9 +1366,15 @@ app.post('/api/playoffs', requireOwner, (req, res) => {
   // Pad with BYE slots if fewer teams qualified than requested
   const effectiveN = qualified.length;
 
+  // Auto-create a dedicated playoff season so stats restart for the playoffs
+  const playoffSeasonName = `${season.name} Playoffs`;
+  const psResult = db.prepare('INSERT INTO seasons (name, is_active, league_type, is_playoff) VALUES (?, 0, ?, 1)')
+    .run(playoffSeasonName, season.league_type || '');
+  const playoffSeasonId = psResult.lastInsertRowid;
+
   const pl = db.prepare(
-    'INSERT INTO playoffs (season_id, teams_qualify, min_games_played, series_length) VALUES (?, ?, ?, ?)'
-  ).run(Number(season_id), effectiveN, minGP, Number(series_length) || 7);
+    'INSERT INTO playoffs (season_id, teams_qualify, min_games_played, series_length, playoff_season_id) VALUES (?, ?, ?, ?, ?)'
+  ).run(Number(season_id), effectiveN, minGP, Number(series_length) || 7, playoffSeasonId);
   const playoffId = pl.lastInsertRowid;
 
   // Insert seeded teams
@@ -1372,7 +1391,7 @@ app.post('/api/playoffs', requireOwner, (req, res) => {
     const sr = db.prepare(
       'INSERT INTO playoff_series (playoff_id, round_number, series_number, high_seed_id, low_seed_id, high_seed_num, low_seed_num) VALUES (?, 1, ?, ?, ?, ?, ?)'
     ).run(playoffId, i + 1, hi.id, lo.id, i + 1, effectiveN - i);
-    createSeriesSchedule(sr.lastInsertRowid, hi.id, lo.id, Number(season_id), seriesLen);
+    createSeriesSchedule(sr.lastInsertRowid, hi.id, lo.id, playoffSeasonId, seriesLen, series_start_date);
   }
 
   res.status(201).json(getPlayoffBracket(playoffId));
@@ -1412,7 +1431,7 @@ app.post('/api/playoffs/:id/advance-round', requireOwner, (req, res) => {
     const sr = db.prepare(
       'INSERT INTO playoff_series (playoff_id, round_number, series_number, high_seed_id, low_seed_id, high_seed_num, low_seed_num) VALUES (?, ?, ?, ?, ?, ?, ?)'
     ).run(req.params.id, nextRound, i + 1, hi.team_id, lo.team_id, hi.seed, lo.seed);
-    createSeriesSchedule(sr.lastInsertRowid, hi.team_id, lo.team_id, playoff.season_id, playoff.series_length || 7);
+    createSeriesSchedule(sr.lastInsertRowid, hi.team_id, lo.team_id, playoff.playoff_season_id || playoff.season_id, playoff.series_length || 7);
   }
 
   res.json(getPlayoffBracket(req.params.id));
@@ -1461,6 +1480,11 @@ app.delete('/api/playoffs/:id', requireOwner, (req, res) => {
   db.prepare('DELETE FROM playoff_series WHERE playoff_id = ?').run(req.params.id);
   db.prepare('DELETE FROM playoff_teams WHERE playoff_id = ?').run(req.params.id);
   db.prepare('DELETE FROM playoffs WHERE id = ?').run(req.params.id);
+  // Delete the auto-created playoff season (and any remaining games assigned to it)
+  if (playoff.playoff_season_id) {
+    db.prepare('UPDATE games SET season_id = NULL WHERE season_id = ?').run(playoff.playoff_season_id);
+    db.prepare('DELETE FROM seasons WHERE id = ? AND is_playoff = 1').run(playoff.playoff_season_id);
+  }
   res.json({ ok: true });
 });
 

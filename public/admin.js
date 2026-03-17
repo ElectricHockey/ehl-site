@@ -246,16 +246,18 @@ async function loadSeasons() {
     list.innerHTML = allSeasons.map(s => `
       <div class="season-item">
         ${s.is_active ? '<span class="season-active-badge">★ Active</span>' : ''}
+        ${s.is_playoff ? '<span style="background:#2d1b00;color:#e3b341;border:1px solid #9e6a03;border-radius:10px;padding:0.1rem 0.45rem;font-size:0.72rem;margin-right:0.25rem;">🏆 Playoffs</span>' : ''}
         <strong style="flex:1;">${s.name}</strong>
         <span style="color:#8b949e;font-size:0.8rem;">${typeLabel(s.league_type)}</span>
-        ${!s.is_active ? `<button class="btn-secondary" style="font-size:0.8rem;padding:0.25rem 0.6rem;" onclick="setActiveSeason(${s.id})">Set Active</button>` : ''}
-        <button class="btn-danger" style="font-size:0.8rem;padding:0.25rem 0.6rem;" onclick="deleteSeason(${s.id})">Delete</button>
+        ${!s.is_active && !s.is_playoff ? `<button class="btn-secondary" style="font-size:0.8rem;padding:0.25rem 0.6rem;" onclick="setActiveSeason(${s.id})">Set Active</button>` : ''}
+        ${!s.is_playoff ? `<button class="btn-danger" style="font-size:0.8rem;padding:0.25rem 0.6rem;" onclick="deleteSeason(${s.id})">Delete</button>` : ''}
       </div>`).join('');
   }
 
-  // Populate season dropdowns in game form
+  // Populate season dropdowns in game form – exclude auto-created playoff seasons
+  const regularSeasons = allSeasons.filter(s => !s.is_playoff);
   const seasonOpts = '<option value="">— No Season —</option>' +
-    allSeasons.map(s => `<option value="${s.id}"${s.is_active ? ' selected' : ''}>${s.name} (${typeLabel(s.league_type)})</option>`).join('');
+    regularSeasons.map(s => `<option value="${s.id}"${s.is_active ? ' selected' : ''}>${s.name} (${typeLabel(s.league_type)})</option>`).join('');
   document.getElementById('game-season').innerHTML = seasonOpts;
 }
 
@@ -1027,26 +1029,27 @@ document.getElementById('edit-player-overlay').addEventListener('click', e => {
 const typeLabel = lt => lt === 'threes' ? "3's" : lt === 'sixes' ? "6's" : lt || '?';
 
 async function loadAdminPlayoffs() {
-  // Populate season dropdown for create form
+  // Populate season dropdown for create form – only regular (non-playoff) seasons
   const res = await fetch(`${API}/seasons`);
   const seasons = res.ok ? await res.json() : [];
+  const regularSeasons = seasons.filter(s => !s.is_playoff);
   const sel = document.getElementById('po-season');
   if (sel) {
     sel.innerHTML = '<option value="">— Select Season —</option>' +
-      seasons.map(s => `<option value="${s.id}">${s.name} (${typeLabel(s.league_type)})</option>`).join('');
+      regularSeasons.map(s => `<option value="${s.id}">${s.name} (${typeLabel(s.league_type)})</option>`).join('');
   }
 
-  // For each season, try to load its playoff
+  // For each regular season, try to load its playoff
   const list = document.getElementById('playoffs-list');
   if (!list) return;
-  if (seasons.length === 0) {
+  if (regularSeasons.length === 0) {
     list.innerHTML = '<p style="color:#8b949e;font-size:0.85rem;">No seasons yet. Create a season first.</p>';
     return;
   }
 
   list.innerHTML = '<p style="color:#8b949e;font-size:0.85rem;">Loading…</p>';
   const rows = [];
-  for (const s of seasons) {
+  for (const s of regularSeasons) {
     try {
       const pr = await fetch(`${API}/playoffs/by-season/${s.id}`);
       if (pr.ok) {
@@ -1069,6 +1072,7 @@ function abbrevAdmin(name) {
 
 function renderAdminPlayoffCard(season, data) {
   const pl = data.playoff;
+  const playoffSeason = data.playoff_season;
   const numRounds = Object.keys(data.rounds).length;
   const lastRound = data.rounds[numRounds];
   const finalSeries = lastRound && lastRound.length === 1 ? lastRound[0] : null;
@@ -1098,9 +1102,14 @@ function renderAdminPlayoffCard(season, data) {
   const curRoundDone = curSeries.length > 0 && curSeries.every(s => s.winner_id);
   const canAdvance  = curRoundDone && curSeries.length > 1;
 
+  const playoffSeasonBadge = playoffSeason
+    ? `<span style="background:#2d1b00;color:#e3b341;border:1px solid #9e6a03;border-radius:10px;padding:0.1rem 0.5rem;font-size:0.75rem;">🏆 ${escAttr(playoffSeason.name)}</span>`
+    : '';
+
   return `<div style="background:#161b22;border:1px solid #30363d;border-radius:10px;padding:1.25rem;margin-bottom:1.25rem;">
     <div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:0.75rem;">
       <strong style="font-size:1rem;">${season.name}</strong>
+      ${playoffSeasonBadge}
       <span style="color:#8b949e;font-size:0.82rem;">${typeLabel(season.league_type)}</span>
       <span style="color:#8b949e;font-size:0.82rem;">Best of ${pl.series_length} · ${pl.teams_qualify} teams · Min ${pl.min_games_played} GP</span>
       ${champion ? `<span style="background:#1a3a2a;color:#3fb950;border-radius:10px;padding:0.1rem 0.6rem;font-size:0.78rem;font-weight:700;">🏆 ${champion.name}</span>` : ''}
@@ -1173,13 +1182,15 @@ document.getElementById('playoff-form').addEventListener('submit', async e => {
   const teams_qualify = Number(document.getElementById('po-qualify').value);
   const min_games_played = Number(document.getElementById('po-min-gp').value);
   const series_length = Number(document.getElementById('po-series-length').value);
+  const series_start_date = document.getElementById('po-start-date').value;
 
   if (!season_id) { alert('Please select a season.'); return; }
+  if (!series_start_date) { alert('Please select a Round 1 start date.'); return; }
 
   const res = await fetch(`${API}/playoffs`, {
     method: 'POST',
     headers: adminJsonHeaders(),
-    body: JSON.stringify({ season_id: Number(season_id), teams_qualify, min_games_played, series_length }),
+    body: JSON.stringify({ season_id: Number(season_id), teams_qualify, min_games_played, series_length, series_start_date }),
   });
   if (res.ok) {
     e.target.reset();

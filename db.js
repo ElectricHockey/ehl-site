@@ -207,6 +207,8 @@ try { db.exec('ALTER TABLE games ADD COLUMN playoff_series_id INTEGER'); } catch
 try { db.exec('ALTER TABLE players ADD COLUMN discord TEXT'); } catch (_) {}
 try { db.exec('ALTER TABLE players ADD COLUMN discord_id TEXT'); } catch (_) {}
 try { db.exec('ALTER TABLE users ADD COLUMN role TEXT'); } catch (_) {}
+try { db.exec('ALTER TABLE seasons ADD COLUMN is_playoff INTEGER DEFAULT 0'); } catch (_) {}
+try { db.exec('ALTER TABLE playoffs ADD COLUMN playoff_season_id INTEGER'); } catch (_) {}
 
 // ── Seed teams ──────────────────────────────────────────────────────────────
 // Edit this array to define your league's teams.
