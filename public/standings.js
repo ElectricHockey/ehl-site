@@ -111,10 +111,42 @@ async function loadStandings() {
   }
 }
 
+// ── View switching (Standings / Playoffs) ──────────────────────────────────
+
+let _currentView = 'standings';
+
+function setStandingsView(view) {
+  _currentView = view;
+  const standingsRoot = document.getElementById('standings-root');
+  const playoffRoot   = document.getElementById('playoff-root');
+  const btnS = document.getElementById('view-btn-standings');
+  const btnP = document.getElementById('view-btn-playoffs');
+
+  if (view === 'standings') {
+    if (standingsRoot) standingsRoot.style.display = '';
+    if (playoffRoot)   playoffRoot.style.display   = 'none';
+    const sd = document.getElementById('series-detail');
+    if (sd) sd.style.display = 'none';
+    if (btnS) { btnS.classList.add('active');    }
+    if (btnP) { btnP.classList.remove('active'); }
+    loadStandings();
+  } else {
+    if (standingsRoot) standingsRoot.style.display = 'none';
+    if (playoffRoot)   playoffRoot.style.display   = '';
+    if (btnS) { btnS.classList.remove('active'); }
+    if (btnP) { btnP.classList.add('active');    }
+    // loadPlayoff is defined in playoffs.js which is loaded after this script
+    if (typeof loadPlayoff === 'function') loadPlayoff();
+  }
+}
+
 (async () => {
   if (typeof SeasonSelector !== 'undefined') {
     await SeasonSelector.init('season-selector-container');
-    SeasonSelector.onSeasonChange(() => loadStandings());
+    SeasonSelector.onSeasonChange(() => {
+      if (_currentView === 'standings') loadStandings();
+      else if (typeof loadPlayoff === 'function') loadPlayoff();
+    });
   }
   loadStandings();
 })();

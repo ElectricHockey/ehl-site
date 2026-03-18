@@ -1,6 +1,6 @@
 // season-selector.js – League type + season selector
-// Renders a "League" dropdown (3's / 6's) and a "Season" dropdown that
-// updates to show only seasons for the active league type.
+// Renders tab buttons for 3's / 6's (with the site logo) and a "Season"
+// dropdown that updates to show only seasons for the active league.
 // Exposes:
 //   SeasonSelector.init(containerId)
 //   SeasonSelector.getSelectedSeasonId()   – season id for active league
@@ -16,8 +16,8 @@ const SeasonSelector = (() => {
   const selectStyle = 'background:#161b22;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.3rem 0.6rem;font-size:0.88rem;';
 
   function getSelectedLeagueType() {
-    const el = document.getElementById('league-type-select');
-    return el ? el.value : null;
+    const active = document.querySelector('.league-tab-btn.active');
+    return active ? active.dataset.league : 'threes';
   }
 
   function getSelectedSeasonId() {
@@ -47,6 +47,16 @@ const SeasonSelector = (() => {
     ).join('');
   }
 
+  function _switchLeague(type) {
+    localStorage.setItem(STORAGE_TYPE, type);
+    // Update tab active states
+    document.querySelectorAll('.league-tab-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.league === type);
+    });
+    _populateSeasonSelect(type);
+    if (_onChange) _onChange();
+  }
+
   async function init(containerId) {
     const container = document.getElementById(containerId || 'season-selector-container');
     if (!container) return;
@@ -60,27 +70,30 @@ const SeasonSelector = (() => {
 
       const savedType = localStorage.getItem(STORAGE_TYPE) || 'threes';
 
-      container.innerHTML = `<div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;">
-        <label for="league-type-select" style="color:#8b949e;font-size:0.85rem;white-space:nowrap;">League:</label>
-        <select id="league-type-select" style="${selectStyle}">
-          <option value="threes" ${savedType === 'threes' ? 'selected' : ''}>3's</option>
-          <option value="sixes"  ${savedType === 'sixes'  ? 'selected' : ''}>6's</option>
-        </select>
-        <label for="season-select" style="color:#8b949e;font-size:0.85rem;white-space:nowrap;">Season:</label>
-        <select id="season-select" style="${selectStyle}"></select>
-      </div>`;
+      container.innerHTML = `
+        <div class="league-tabs-row">
+          <button class="league-tab-btn${savedType === 'threes' ? ' active' : ''}" data-league="threes">
+            <img src="/api/site-logo" alt="EHL" class="league-tab-logo" />
+            <span>3's</span>
+          </button>
+          <button class="league-tab-btn${savedType === 'sixes' ? ' active' : ''}" data-league="sixes">
+            <img src="/api/site-logo" alt="EHL" class="league-tab-logo" />
+            <span>6's</span>
+          </button>
+          <div class="league-tab-season">
+            <label for="season-select" style="color:#8b949e;font-size:0.85rem;white-space:nowrap;">Season:</label>
+            <select id="season-select" style="${selectStyle}"></select>
+          </div>
+        </div>`;
 
       _populateSeasonSelect(savedType);
 
-      document.getElementById('league-type-select').addEventListener('change', e => {
-        const type = e.target.value;
-        localStorage.setItem(STORAGE_TYPE, type);
-        _populateSeasonSelect(type);
-        if (_onChange) _onChange();
+      container.querySelectorAll('.league-tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => _switchLeague(btn.dataset.league));
       });
 
       document.getElementById('season-select').addEventListener('change', e => {
-        const type = document.getElementById('league-type-select').value;
+        const type = getSelectedLeagueType();
         localStorage.setItem(STORAGE_SEASON[type], e.target.value);
         if (_onChange) _onChange();
       });

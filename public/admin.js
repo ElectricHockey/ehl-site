@@ -1,5 +1,23 @@
 const API = '/api';
 
+// ── Shared helpers ──────────────────────────────────────────────────────────
+const typeLabel = lt => lt === 'threes' ? "3's" : lt === 'sixes' ? "6's" : lt || '?';
+
+// ── Admin league filter (3's or 6's) ───────────────────────────────────────
+let adminLeagueFilter = localStorage.getItem('ehl_admin_league') || 'threes';
+
+function setAdminLeague(league) {
+  adminLeagueFilter = league;
+  localStorage.setItem('ehl_admin_league', league);
+  document.querySelectorAll('.admin-league-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.league === league);
+  });
+  // Reload data for the active sections
+  loadSeasons();
+  loadTeams();
+  loadGames();
+}
+
 function getPlayerToken() { return localStorage.getItem('ehl_player_token') || ''; }
 function getAdminToken() { return localStorage.getItem('ehl_admin_token') || ''; }
 function getAdminRole() { return localStorage.getItem('ehl_admin_role') || ''; }
@@ -102,6 +120,11 @@ function showAdminPanel(role, username) {
   // Update logged-in bar
   const roleLabel = role === 'owner' ? '👑 Owner' : '🎮 Game Admin';
   document.getElementById('logged-in-name').textContent = `${roleLabel}: ${username}`;
+
+  // Set correct active state on league switcher buttons
+  document.querySelectorAll('.admin-league-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.league === adminLeagueFilter);
+  });
 
   // Show/hide owner-only tabs
   document.querySelectorAll('.admin-tab-btn[data-owner-only]').forEach(btn => {
@@ -236,14 +259,15 @@ let allSeasons = [];
 async function loadSeasons() {
   const res = await fetch(`${API}/seasons`);
   allSeasons = await res.json();
+
+  // Filter for display list by selected league
+  const filteredSeasons = allSeasons.filter(s => !s.league_type || s.league_type === adminLeagueFilter);
   const list = document.getElementById('seasons-list');
 
-  const typeLabel = lt => lt === 'threes' ? "3's" : lt === 'sixes' ? "6's" : lt || '?';
-
-  if (allSeasons.length === 0) {
-    list.innerHTML = '<p style="color:#8b949e;font-size:0.85rem;">No seasons yet. Create one above.</p>';
+  if (filteredSeasons.length === 0) {
+    list.innerHTML = `<p style="color:#8b949e;font-size:0.85rem;">No ${adminLeagueFilter === 'threes' ? "3's" : "6's"} seasons yet. Create one above.</p>`;
   } else {
-    list.innerHTML = allSeasons.map(s => `
+    list.innerHTML = filteredSeasons.map(s => `
       <div class="season-item">
         ${s.is_active ? '<span class="season-active-badge">★ Active</span>' : ''}
         ${s.is_playoff ? '<span style="background:#2d1b00;color:#e3b341;border:1px solid #9e6a03;border-radius:10px;padding:0.1rem 0.45rem;font-size:0.72rem;margin-right:0.25rem;">🏆 Playoffs</span>' : ''}
@@ -254,8 +278,8 @@ async function loadSeasons() {
       </div>`).join('');
   }
 
-  // Populate season dropdowns in game form – exclude auto-created playoff seasons
-  const regularSeasons = allSeasons.filter(s => !s.is_playoff);
+  // Populate season dropdowns in game form – filtered by current league, exclude auto-created playoff seasons
+  const regularSeasons = allSeasons.filter(s => !s.is_playoff && (!s.league_type || s.league_type === adminLeagueFilter));
   const seasonOpts = '<option value="">— No Season —</option>' +
     regularSeasons.map(s => `<option value="${s.id}"${s.is_active ? ' selected' : ''}>${s.name} (${typeLabel(s.league_type)})</option>`).join('');
   document.getElementById('game-season').innerHTML = seasonOpts;
@@ -293,7 +317,9 @@ function colorSwatch(hex) {
 
 async function loadTeams() {
   const res = await fetch(`${API}/teams`);
-  const teams = await res.json();
+  const allTeams = await res.json();
+  // Filter teams table display by selected league
+  const teams = allTeams.filter(t => !t.league_type || t.league_type === adminLeagueFilter);
   const tbody = document.querySelector('#teams-table tbody');
   const ltLabel = lt => lt === 'threes' ? '3v3' : lt === 'sixes' ? '6v6' : '—';
   tbody.innerHTML = teams.length === 0
@@ -318,15 +344,18 @@ async function loadTeams() {
         <td><button class="btn-danger" onclick="deleteTeam(${t.id})">Delete</button></td>
       </tr>`).join('');
 
-  const tOpts = '<option value="">— No Team —</option>' + teams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+  // Dropdowns always show ALL teams (for game creation and roster management)
+  const tOpts = '<option value="">— No Team —</option>' + allTeams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
   document.getElementById('player-team').innerHTML = tOpts;
-  const gOpts = '<option value="">Select team</option>' + teams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+  // Game home/away dropdowns: filter by current league
+  const leagueTeams = allTeams.filter(t => !t.league_type || t.league_type === adminLeagueFilter);
+  const gOpts = '<option value="">Select team</option>' + leagueTeams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
   document.getElementById('game-home').innerHTML = gOpts;
   document.getElementById('game-away').innerHTML = gOpts;
-  // Roster tab team selector
+  // Roster tab team selector: show all teams
   const rSel = document.getElementById('roster-team-select');
   const rPrev = rSel.value;
-  rSel.innerHTML = '<option value="">— Select a team —</option>' + teams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+  rSel.innerHTML = '<option value="">— Select a team —</option>' + allTeams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
   if (rPrev) rSel.value = rPrev;
 }
 
@@ -534,7 +563,14 @@ async function deletePlayer(id) {
 
 async function loadGames() {
   const res = await fetch(`${API}/games`);
-  const games = await res.json();
+  const allGames = await res.json();
+  // Filter games by current league using the season's league_type
+  const seasonLeagueMap = Object.fromEntries(allSeasons.map(s => [s.id, s.league_type]));
+  const games = allGames.filter(g => {
+    if (!g.season_id) return true; // unassigned games: show in both
+    const lt = seasonLeagueMap[g.season_id];
+    return !lt || lt === adminLeagueFilter;
+  });
   const seasonMap = Object.fromEntries(allSeasons.map(s => [s.id, s.name]));
   const tbody = document.querySelector('#games-table tbody');
   tbody.innerHTML = games.length === 0
@@ -1025,8 +1061,6 @@ document.getElementById('edit-player-overlay').addEventListener('click', e => {
 });
 
 // ── Playoffs ──────────────────────────────────────────────────────────────
-
-const typeLabel = lt => lt === 'threes' ? "3's" : lt === 'sixes' ? "6's" : lt || '?';
 
 async function loadAdminPlayoffs() {
   // Populate season dropdown for create form – only regular (non-playoff) seasons

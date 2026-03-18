@@ -100,6 +100,57 @@ nav a:hover, nav a.active {
   padding: 0 1.5rem;
 }
 
+/* ── League tab buttons (season-selector) ─────────────────── */
+.league-tabs-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.25rem;
+}
+
+.league-tab-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.5rem 1.2rem;
+  border-radius: 10px;
+  border: 2px solid #30363d;
+  background: #161b22;
+  color: #8b949e;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 600;
+  transition: all 0.15s;
+  min-width: 70px;
+}
+
+.league-tab-btn.active {
+  border-color: #58a6ff;
+  background: #1c2a3a;
+  color: #58a6ff;
+}
+
+.league-tab-btn:hover:not(.active) {
+  border-color: #8b949e;
+  color: #c9d1d9;
+}
+
+.league-tab-logo {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+  border-radius: 4px;
+}
+
+.league-tab-season {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-left: 0.5rem;
+}
+
 h1, h2, h3 {
   margin-bottom: 0.75rem;
 }
@@ -499,6 +550,30 @@ tbody tr.team-row:hover {
 /* ── Homepage: hero compact ─────────────────────────────────── */
 .hero-compact { padding-bottom: 1.5rem; }
 .hero-compact h1 { font-size: 2rem; }
+
+/* ── Homepage: league section header ───────────────────────── */
+.home-league-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 2px solid #30363d;
+}
+.home-league-logo {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+  border-radius: 6px;
+}
+.home-league-title {
+  font-size: 1.3rem !important;
+  font-weight: 700;
+  color: #e6edf3 !important;
+  margin: 0 !important;
+  border: none !important;
+  padding: 0 !important;
+}
 
 /* ── Homepage: panel grid ───────────────────────────────────── */
 .home-panels {

@@ -1,4 +1,5 @@
-const API = '/api';
+// API is declared in standings.js when loaded together; define only if standalone
+if (typeof API === 'undefined') { window.API = '/api'; }
 const SLOT_H = 90; // px – height of one series card slot
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -322,10 +323,16 @@ async function loadPlayoff() {
 
 // ── Init ────────────────────────────────────────────────────────────────────
 
+// When loaded standalone (playoffs.html), init SeasonSelector and load.
+// When loaded from standings.html, standings.js handles init and will call
+// loadPlayoff() directly – so we skip init here if already initialised.
 (async () => {
-  if (typeof SeasonSelector !== 'undefined') {
-    await SeasonSelector.init('season-selector-container');
-    SeasonSelector.onSeasonChange(() => loadPlayoff());
+  // Check if we're on the standalone playoffs page (not embedded in standings)
+  if (document.title.includes('Playoffs') && !document.getElementById('standings-root')) {
+    if (typeof SeasonSelector !== 'undefined') {
+      await SeasonSelector.init('season-selector-container');
+      SeasonSelector.onSeasonChange(() => loadPlayoff());
+    }
+    loadPlayoff();
   }
-  loadPlayoff();
 })();

@@ -20,8 +20,8 @@ function pct3(v) {
 
 // ── Recent Scores ───────────────────────────────────────────────────────────
 
-async function loadRecentScores(seasonId) {
-  const root = document.getElementById('home-recent-scores');
+async function loadRecentScores(seasonId, rootId) {
+  const root = document.getElementById(rootId);
   if (!root) return;
   if (!seasonId) { root.innerHTML = '<p style="color:#8b949e;font-size:0.88rem;">No active season.</p>'; return; }
   try {
@@ -47,8 +47,8 @@ async function loadRecentScores(seasonId) {
 
 // ── Mini Standings ──────────────────────────────────────────────────────────
 
-async function loadMiniStandings(seasonId) {
-  const root = document.getElementById('home-standings');
+async function loadMiniStandings(seasonId, rootId) {
+  const root = document.getElementById(rootId);
   if (!root) return;
   if (!seasonId) { root.innerHTML = '<p style="color:#8b949e;font-size:0.88rem;">No active season.</p>'; return; }
   try {
@@ -89,8 +89,8 @@ function leaderRow(p, stat, fmtFn) {
   </div>`;
 }
 
-async function loadStatsLeaders(seasonId) {
-  const root = document.getElementById('home-leaders');
+async function loadStatsLeaders(seasonId, rootId) {
+  const root = document.getElementById(rootId);
   if (!root) return;
   if (!seasonId) { root.innerHTML = '<p style="color:#8b949e;font-size:0.88rem;">No active season.</p>'; return; }
   try {
@@ -152,20 +152,48 @@ async function loadStatsLeaders(seasonId) {
 // ── Bootstrap ───────────────────────────────────────────────────────────────
 
 async function initHome() {
-  let seasonId = null;
+  // Load active seasons for both league types in parallel
+  let threesSeasonId = null;
+  let sixesSeasonId  = null;
+
   try {
-    const res = await fetch(`${API}/seasons`);
-    if (res.ok) {
-      const seasons = await res.json();
-      const active = seasons.find(s => s.is_active) || seasons[0];
-      if (active) seasonId = active.id;
+    const [r3, r6] = await Promise.all([
+      fetch(`${API}/seasons?type=threes`),
+      fetch(`${API}/seasons?type=sixes`),
+    ]);
+    if (r3.ok) {
+      const seasons3 = await r3.json();
+      const active3 = seasons3.find(s => s.is_active) || seasons3[0];
+      if (active3) threesSeasonId = active3.id;
+    }
+    if (r6.ok) {
+      const seasons6 = await r6.json();
+      const active6 = seasons6.find(s => s.is_active) || seasons6[0];
+      if (active6) sixesSeasonId = active6.id;
     }
   } catch {}
 
+  // If no 3's data available, hide that section
+  const threesHeader = document.getElementById('home-threes-header');
+  const threesPanel  = document.getElementById('home-panels-threes');
+  if (!threesSeasonId && threesHeader && threesPanel) {
+    threesPanel.innerHTML = '<p style="color:#8b949e;font-size:0.88rem;padding:0.5rem 0;">No active 3\'s season.</p>';
+  }
+
+  // If no 6's data available, hide that section
+  const sixesHeader = document.getElementById('home-sixes-header');
+  const sixesPanel  = document.getElementById('home-panels-sixes');
+  if (!sixesSeasonId && sixesHeader && sixesPanel) {
+    sixesPanel.innerHTML = '<p style="color:#8b949e;font-size:0.88rem;padding:0.5rem 0;">No active 6\'s season.</p>';
+  }
+
   await Promise.all([
-    loadRecentScores(seasonId),
-    loadMiniStandings(seasonId),
-    loadStatsLeaders(seasonId),
+    loadRecentScores(threesSeasonId, 'home-recent-scores-threes'),
+    loadMiniStandings(threesSeasonId, 'home-standings-threes'),
+    loadStatsLeaders(threesSeasonId,  'home-leaders-threes'),
+    loadRecentScores(sixesSeasonId,   'home-recent-scores-sixes'),
+    loadMiniStandings(sixesSeasonId,  'home-standings-sixes'),
+    loadStatsLeaders(sixesSeasonId,   'home-leaders-sixes'),
   ]);
 }
 
