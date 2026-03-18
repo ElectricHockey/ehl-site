@@ -75,11 +75,11 @@
       <div class="admin-league-bar" id="admin-league-bar">
         <span style="color:#8b949e;font-size:0.85rem;white-space:nowrap;">League:</span>
         <button class="admin-league-btn active" data-league="threes" onclick="setAdminLeague('threes')">
-          <img src="/api/site-logo" alt="" class="admin-league-btn-logo" />
+          <img src="/api/site-logo?type=threes" alt="" class="admin-league-btn-logo" />
           3's
         </button>
         <button class="admin-league-btn" data-league="sixes" onclick="setAdminLeague('sixes')">
-          <img src="/api/site-logo" alt="" class="admin-league-btn-logo" />
+          <img src="/api/site-logo?type=sixes" alt="" class="admin-league-btn-logo" />
           6's
         </button>
       </div>
@@ -298,27 +298,78 @@
       <!-- ── Site Logo tab ────────────────────────────────── -->
       <div id="admin-tab-site-logo" class="admin-section">
         <h2>Site Logo</h2>
-        <div class="form-section" style="max-width:420px;">
-          <p style="color:#8b949e;font-size:0.9rem;margin-bottom:1rem;">
-            Upload a custom image to use as the league logo in the top-left nav.
-            Supported formats: PNG, JPG, GIF, WebP, SVG (max 10 MB).
-          </p>
-          <div style="margin-bottom:1rem;">
-            <p style="font-size:0.85rem;color:#8b949e;margin-bottom:0.4rem;">Current logo:</p>
-            <img id="current-site-logo-preview" src="/api/site-logo" alt="Current logo"
-              style="max-height:80px;max-width:200px;object-fit:contain;background:#21262d;border-radius:6px;padding:6px;display:block;" />
-          </div>
-          <form id="site-logo-form">
-            <div class="form-group" style="flex-direction:column;margin-bottom:0.75rem;">
-              <label for="site-logo-file">New Logo Image</label>
-              <input type="file" id="site-logo-file" accept="image/*" required
-                onchange="previewSiteLogo(this)" style="color:#c9d1d9;" />
-              <img id="site-logo-preview-new" alt="preview"
-                style="max-height:80px;max-width:200px;object-fit:contain;background:#21262d;border-radius:6px;padding:6px;margin-top:0.4rem;display:none;" />
+        <p style="color:#8b949e;font-size:0.9rem;margin-bottom:1.25rem;">
+          Upload logos for each league. The 3's and 6's logos are used on the league tab buttons.
+          The main site logo is used in the top-left nav and as a fallback.
+          Supported formats: PNG, JPG, GIF, WebP, SVG (max 10 MB).
+        </p>
+
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1.25rem;">
+
+          <!-- 3's League Logo -->
+          <div class="form-section">
+            <h3 style="margin-bottom:0.75rem;">🏒 3's League Logo</h3>
+            <div style="margin-bottom:0.75rem;">
+              <p style="font-size:0.82rem;color:#8b949e;margin-bottom:0.4rem;">Current:</p>
+              <img id="current-logo-threes" src="/api/site-logo?type=threes" alt="3's logo"
+                style="max-height:80px;max-width:180px;object-fit:contain;background:#21262d;border-radius:6px;padding:6px;display:block;" />
             </div>
-            <button type="submit">Upload Logo</button>
-            <span id="site-logo-msg" style="margin-left:0.75rem;font-size:0.85rem;"></span>
-          </form>
+            <form id="logo-form-threes" data-league="threes">
+              <div class="form-group" style="flex-direction:column;margin-bottom:0.75rem;">
+                <label for="logo-file-threes">New Image</label>
+                <input type="file" id="logo-file-threes" accept="image/*" required
+                  onchange="previewLeagueLogo(this,'logo-preview-threes')" style="color:#c9d1d9;" />
+                <img id="logo-preview-threes" alt="preview"
+                  style="max-height:80px;max-width:180px;object-fit:contain;background:#21262d;border-radius:6px;padding:6px;margin-top:0.4rem;display:none;" />
+              </div>
+              <button type="submit">Upload 3's Logo</button>
+              <span id="logo-msg-threes" style="margin-left:0.75rem;font-size:0.85rem;"></span>
+            </form>
+          </div>
+
+          <!-- 6's League Logo -->
+          <div class="form-section">
+            <h3 style="margin-bottom:0.75rem;">🏒 6's League Logo</h3>
+            <div style="margin-bottom:0.75rem;">
+              <p style="font-size:0.82rem;color:#8b949e;margin-bottom:0.4rem;">Current:</p>
+              <img id="current-logo-sixes" src="/api/site-logo?type=sixes" alt="6's logo"
+                style="max-height:80px;max-width:180px;object-fit:contain;background:#21262d;border-radius:6px;padding:6px;display:block;" />
+            </div>
+            <form id="logo-form-sixes" data-league="sixes">
+              <div class="form-group" style="flex-direction:column;margin-bottom:0.75rem;">
+                <label for="logo-file-sixes">New Image</label>
+                <input type="file" id="logo-file-sixes" accept="image/*" required
+                  onchange="previewLeagueLogo(this,'logo-preview-sixes')" style="color:#c9d1d9;" />
+                <img id="logo-preview-sixes" alt="preview"
+                  style="max-height:80px;max-width:180px;object-fit:contain;background:#21262d;border-radius:6px;padding:6px;margin-top:0.4rem;display:none;" />
+              </div>
+              <button type="submit">Upload 6's Logo</button>
+              <span id="logo-msg-sixes" style="margin-left:0.75rem;font-size:0.85rem;"></span>
+            </form>
+          </div>
+
+          <!-- Main / Nav Logo -->
+          <div class="form-section">
+            <h3 style="margin-bottom:0.75rem;">🌐 Main Site Logo</h3>
+            <p style="font-size:0.82rem;color:#8b949e;margin-bottom:0.75rem;">Used in the top-left nav and as a fallback when a league logo is not set.</p>
+            <div style="margin-bottom:0.75rem;">
+              <p style="font-size:0.82rem;color:#8b949e;margin-bottom:0.4rem;">Current:</p>
+              <img id="current-site-logo-preview" src="/api/site-logo" alt="Current logo"
+                style="max-height:80px;max-width:180px;object-fit:contain;background:#21262d;border-radius:6px;padding:6px;display:block;" />
+            </div>
+            <form id="site-logo-form">
+              <div class="form-group" style="flex-direction:column;margin-bottom:0.75rem;">
+                <label for="site-logo-file">New Logo Image</label>
+                <input type="file" id="site-logo-file" accept="image/*" required
+                  onchange="previewSiteLogo(this)" style="color:#c9d1d9;" />
+                <img id="site-logo-preview-new" alt="preview"
+                  style="max-height:80px;max-width:180px;object-fit:contain;background:#21262d;border-radius:6px;padding:6px;margin-top:0.4rem;display:none;" />
+              </div>
+              <button type="submit">Upload Main Logo</button>
+              <span id="site-logo-msg" style="margin-left:0.75rem;font-size:0.85rem;"></span>
+            </form>
+          </div>
+
         </div>
       </div>
 

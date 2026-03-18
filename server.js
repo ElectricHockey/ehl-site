@@ -301,25 +301,37 @@ app.delete('/api/seasons/:id', requireOwner, (req, res) => {
 // ── Site Logo ──────────────────────────────────────────────────────────────
 
 // GET /api/site-logo  – redirect to the current site logo file
-app.get('/api/site-logo', (_req, res) => {
+// Optional query param: ?type=threes|sixes to get the league-specific logo
+// Falls back to the main site logo if no league-specific one is set.
+app.get('/api/site-logo', (req, res) => {
+  const lt = req.query.type; // 'threes', 'sixes', or undefined
+  if (lt === 'threes' || lt === 'sixes') {
+    const key = `site_logo_url_${lt}`;
+    const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
+    if (row && row.value) return res.redirect(302, row.value);
+    // Fall through to main logo below
+  }
   const row = db.prepare("SELECT value FROM settings WHERE key = 'site_logo_url'").get();
   const url = (row && row.value) ? row.value : '/logo.svg';
   res.redirect(302, url);
 });
 
 // POST /api/admin/site-logo  – upload a new site logo (owner only)
+// Optional body field `league_type` = 'threes' | 'sixes' for per-league logos.
 app.post('/api/admin/site-logo', requireOwner, logoUpload.single('logo'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No image file provided' });
   const newUrl = `/uploads/${req.file.filename}`;
+  const lt = (req.body.league_type || '').trim();
+  const key = (lt === 'threes' || lt === 'sixes') ? `site_logo_url_${lt}` : 'site_logo_url';
   // Delete old custom logo synchronously before updating DB, so we don't
   // leave orphaned files if the DB write fails (and vice-versa).
-  const row = db.prepare("SELECT value FROM settings WHERE key = 'site_logo_url'").get();
+  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
   if (row && row.value && row.value.startsWith('/uploads/')) {
     const old = path.join(__dirname, 'public', row.value);
     try { fs.unlinkSync(old); } catch (err) { if (err.code !== 'ENOENT') console.warn('site-logo unlink:', err.message); }
   }
-  db.prepare("INSERT INTO settings (key, value) VALUES ('site_logo_url', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
-    .run(newUrl);
+  db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
+    .run(key, newUrl);
   res.json({ url: newUrl });
 });
 

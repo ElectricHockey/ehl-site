@@ -6,12 +6,23 @@ const typeLabel = lt => lt === 'threes' ? "3's" : lt === 'sixes' ? "6's" : lt ||
 // ── Admin league filter (3's or 6's) ───────────────────────────────────────
 let adminLeagueFilter = localStorage.getItem('ehl_admin_league') || 'threes';
 
+function _syncLeagueFormDefaults(league) {
+  // Auto-set the season form league type selector
+  const seasonType = document.getElementById('season-type');
+  if (seasonType) seasonType.value = league;
+  // Auto-set the team form league type selector
+  const teamLt = document.getElementById('team-league-type');
+  if (teamLt) teamLt.value = league;
+}
+
 function setAdminLeague(league) {
   adminLeagueFilter = league;
   localStorage.setItem('ehl_admin_league', league);
   document.querySelectorAll('.admin-league-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.league === league);
   });
+  // Sync form defaults to the new league
+  _syncLeagueFormDefaults(league);
   // Reload data for the active sections
   loadSeasons();
   loadTeams();
@@ -125,6 +136,9 @@ function showAdminPanel(role, username) {
   document.querySelectorAll('.admin-league-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.league === adminLeagueFilter);
   });
+
+  // Sync form dropdowns to the stored league
+  _syncLeagueFormDefaults(adminLeagueFilter);
 
   // Show/hide owner-only tabs
   document.querySelectorAll('.admin-tab-btn[data-owner-only]').forEach(btn => {
@@ -344,7 +358,7 @@ async function loadTeams() {
         <td><button class="btn-danger" onclick="deleteTeam(${t.id})">Delete</button></td>
       </tr>`).join('');
 
-  // Dropdowns always show ALL teams (for game creation and roster management)
+  // Dropdowns always show ALL teams (for player team assignment)
   const tOpts = '<option value="">— No Team —</option>' + allTeams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
   document.getElementById('player-team').innerHTML = tOpts;
   // Game home/away dropdowns: filter by current league
@@ -352,11 +366,11 @@ async function loadTeams() {
   const gOpts = '<option value="">Select team</option>' + leagueTeams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
   document.getElementById('game-home').innerHTML = gOpts;
   document.getElementById('game-away').innerHTML = gOpts;
-  // Roster tab team selector: show all teams
+  // Roster tab team selector: filter by current league
   const rSel = document.getElementById('roster-team-select');
   const rPrev = rSel.value;
-  rSel.innerHTML = '<option value="">— Select a team —</option>' + allTeams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
-  if (rPrev) rSel.value = rPrev;
+  rSel.innerHTML = '<option value="">— Select a team —</option>' + leagueTeams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+  if (rPrev && leagueTeams.find(t => String(t.id) === rPrev)) rSel.value = rPrev;
 }
 
 // ── Roster Management ─────────────────────────────────────────────────────
@@ -1253,6 +1267,70 @@ function previewSiteLogo(input) {
     img.style.display = 'none';
   }
 }
+
+// Preview helper for league-specific logo forms
+function previewLeagueLogo(input, previewId) {
+  const img = document.getElementById(previewId);
+  if (!img) return;
+  if (img._objectUrl) { URL.revokeObjectURL(img._objectUrl); img._objectUrl = null; }
+  if (input.files && input.files[0]) {
+    img._objectUrl = URL.createObjectURL(input.files[0]);
+    img.src = img._objectUrl;
+    img.style.display = 'block';
+  } else {
+    img.style.display = 'none';
+  }
+}
+
+// Upload handler for league-specific logo forms (threes / sixes)
+async function uploadLeagueLogo(leagueType, fileInputId, previewId, currentId, msgId) {
+  const file = document.getElementById(fileInputId).files[0];
+  const msg  = document.getElementById(msgId);
+  if (!file) return;
+  msg.style.color = '#8b949e';
+  msg.textContent = 'Uploading…';
+  const fd = new FormData();
+  fd.append('logo', file);
+  fd.append('league_type', leagueType);
+  try {
+    const res = await fetch(`${API}/admin/site-logo`, {
+      method: 'POST',
+      headers: { 'X-Admin-Token': getAdminToken() },
+      body: fd,
+    });
+    if (res.ok) {
+      msg.style.color = '#3fb950';
+      msg.textContent = 'Logo updated!';
+      const bust = `?v=${Date.now()}`;
+      document.getElementById(currentId).src = `/api/site-logo?type=${leagueType}${bust}`;
+      // Refresh league tab buttons that use this logo
+      document.querySelectorAll(`.league-tab-btn[data-league="${leagueType}"] img`).forEach(i => {
+        i.src = `/api/site-logo?type=${leagueType}${bust}`;
+      });
+      document.getElementById(fileInputId).value = '';
+      const prev = document.getElementById(previewId);
+      if (prev) { prev.style.display = 'none'; }
+    } else {
+      const data = await res.json().catch(() => ({}));
+      msg.style.color = '#f85149';
+      msg.textContent = data.error || `Upload failed (${res.status})`;
+    }
+  } catch {
+    msg.style.color = '#f85149';
+    msg.textContent = 'Network error – could not reach the server';
+  }
+}
+
+// Wire up league logo forms
+['threes', 'sixes'].forEach(lt => {
+  const form = document.getElementById(`logo-form-${lt}`);
+  if (form) {
+    form.addEventListener('submit', async e => {
+      e.preventDefault();
+      await uploadLeagueLogo(lt, `logo-file-${lt}`, `logo-preview-${lt}`, `current-logo-${lt}`, `logo-msg-${lt}`);
+    });
+  }
+});
 
 document.getElementById('site-logo-form').addEventListener('submit', async e => {
   e.preventDefault();

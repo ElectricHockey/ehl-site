@@ -73,11 +73,11 @@ const SeasonSelector = (() => {
       container.innerHTML = `
         <div class="league-tabs-row">
           <button class="league-tab-btn${savedType === 'threes' ? ' active' : ''}" data-league="threes">
-            <img src="/api/site-logo" alt="EHL" class="league-tab-logo" />
+            <img src="/api/site-logo?type=threes" alt="EHL" class="league-tab-logo" />
             <span>3's</span>
           </button>
           <button class="league-tab-btn${savedType === 'sixes' ? ' active' : ''}" data-league="sixes">
-            <img src="/api/site-logo" alt="EHL" class="league-tab-logo" />
+            <img src="/api/site-logo?type=sixes" alt="EHL" class="league-tab-logo" />
             <span>6's</span>
           </button>
           <div class="league-tab-season">
