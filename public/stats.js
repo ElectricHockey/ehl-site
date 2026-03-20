@@ -127,9 +127,8 @@ function renderSkaters(league) {
     </tr></thead>
     <tbody>${sorted.map(p => `<tr${playerRowAttrs(p)}>
       <td><a href="player.html?name=${encodeURIComponent(p.name)}" class="player-link">${p.name}</a></td>
-      <td>${p.team_logo ? `<img src="${p.team_logo}" style="width:18px;height:18px;object-fit:contain;vertical-align:middle;margin-right:0.25rem;border-radius:2px;" />` : ''}${p.team_name}</td>
-      <td>${p.position || '–'}</td>
-      ${SKATER_COLS.map(c => `<td style="${c.style ? c.style(p) : ''}">${c.fmt(p)}</td>`).join('')}
+      <td style="text-align:center;">${p.team_logo ? `<img src="${p.team_logo}" style="width:20px;height:20px;object-fit:contain;vertical-align:middle;border-radius:2px;" title="${p.team_name}" />` : '–'}</td>
+      <td>${p.position || '–'}</td>.map(c => `<td style="${c.style ? c.style(p) : ''}">${c.fmt(p)}</td>`).join('')}
     </tr>`).join('')}</tbody>
   </table></div>`;
   if (root.firstElementChild && prevScroll) root.firstElementChild.scrollLeft = prevScroll;
@@ -154,7 +153,7 @@ function renderGoalies(league) {
     </tr></thead>
     <tbody>${sorted.map(p => `<tr${playerRowAttrs(p)}>
       <td><a href="player.html?name=${encodeURIComponent(p.name)}" class="player-link">${p.name}</a></td>
-      <td>${p.team_logo ? `<img src="${p.team_logo}" style="width:18px;height:18px;object-fit:contain;vertical-align:middle;margin-right:0.25rem;border-radius:2px;" />` : ''}${p.team_name}</td>
+      <td style="text-align:center;">${p.team_logo ? `<img src="${p.team_logo}" style="width:20px;height:20px;object-fit:contain;vertical-align:middle;border-radius:2px;" title="${p.team_name}" />` : '–'}</td>
       ${GOALIE_COLS.map(c => `<td style="${c.style ? c.style(p) : ''}">${c.fmt(p)}</td>`).join('')}
     </tr>`).join('')}</tbody>
   </table></div>`;

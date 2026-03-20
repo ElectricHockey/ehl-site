@@ -7,6 +7,8 @@ const LT_TABS   = [
   { key: LT_SIXES,  label: "6's" },
   { key: LT_THREES, label: "3's" },
 ];
+// Extra (non-league) tabs on the player profile
+const LT_EXTRA_TABS = ['records', 'awards'];
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -357,27 +359,23 @@ function renderLeagueSections(seasonTeamStats, lastGames, isGoalie) {
   const ltSet = new Set(seasonTeamStats.map(r => r.league_type || ''));
   lastGames.forEach(g => ltSet.add(g.league_type || ''));
 
-  const has6 = ltSet.has(LT_SIXES);
-  const has3 = ltSet.has(LT_THREES);
+  // Default to first league that has data, fallback to first tab
+  const defaultLt = (LT_TABS.find(t => ltSet.has(t.key)) || LT_TABS[0]).key;
 
-  // If only one type (or no type info), render flat — no tabs needed
-  if (!has6 || !has3) {
-    return `
-      <h2 class="section-heading">🕐 Last 5 Games</h2>
-      ${renderLastGames(lastGames, '', isGoalie)}
-      <h2 class="section-heading">📊 Career Stats</h2>
-      ${renderCareerTable(seasonTeamStats, isGoalie)}`;
-  }
+  // League tabs + spacer + Records + Awards
+  const tabButtons = [
+    ...LT_TABS.map(t =>
+      `<button class="lt-tab${t.key === defaultLt ? ' lt-tab-active' : ''}" data-lt="${t.key}">${t.label}</button>`
+    ),
+    '<span style="flex:1;"></span>',
+    `<button class="lt-tab" data-lt="records">Records</button>`,
+    `<button class="lt-tab" data-lt="awards">Awards</button>`,
+  ].join('');
 
-  // Both types exist — build tabs
-  const tabButtons = LT_TABS.map((t, i) =>
-    `<button class="lt-tab${i === 0 ? ' lt-tab-active' : ''}" data-lt="${t.key}">${t.label}</button>`
-  ).join('');
-
-  const tabPanels = LT_TABS.map((t, i) => {
+  const leaguePanels = LT_TABS.map(t => {
     const filteredStats = seasonTeamStats.filter(r => (r.league_type || '') === t.key);
     const filteredGames = lastGames.filter(g => (g.league_type || '') === t.key);
-    return `<div class="lt-panel" id="lt-panel-${t.key}" style="${i > 0 ? 'display:none;' : ''}">
+    return `<div class="lt-panel" id="lt-panel-${t.key}" style="${t.key !== defaultLt ? 'display:none;' : ''}">
       <h2 class="section-heading" style="margin-top:0.75rem;">🕐 Last 5 Games</h2>
       ${renderLastGames(filteredGames, '', isGoalie)}
       <h2 class="section-heading">📊 Career Stats</h2>
@@ -385,7 +383,13 @@ function renderLeagueSections(seasonTeamStats, lastGames, isGoalie) {
     </div>`;
   }).join('');
 
-  return `<div class="lt-tabs">${tabButtons}</div>${tabPanels}`;
+  return `<div class="lt-tabs">${tabButtons}</div>${leaguePanels}
+    <div class="lt-panel" id="lt-panel-records" style="display:none;">
+      <p style="color:#8b949e;padding:1.5rem 0;">No records on file.</p>
+    </div>
+    <div class="lt-panel" id="lt-panel-awards" style="display:none;">
+      <p style="color:#8b949e;padding:1.5rem 0;">No awards on file.</p>
+    </div>`;
 }
 
 // ── Main ───────────────────────────────────────────────────────────────────
@@ -502,12 +506,12 @@ async function loadPlayer() {
 
     root.innerHTML = html;
 
-    // Wire up league-type tab buttons
+    // Wire up league-type tab buttons (including Records and Awards)
     root.querySelectorAll('.lt-tab').forEach(btn => {
       btn.addEventListener('click', () => {
         const lt = btn.dataset.lt;
-        // Only act on known league-type keys to avoid selector injection
-        if (!LT_TABS.some(t => t.key === lt)) return;
+        // Only act on known keys to avoid selector injection
+        if (!LT_TABS.some(t => t.key === lt) && !LT_EXTRA_TABS.includes(lt)) return;
         root.querySelectorAll('.lt-tab').forEach(b => b.classList.remove('lt-tab-active'));
         btn.classList.add('lt-tab-active');
         root.querySelectorAll('.lt-panel').forEach(p => { p.style.display = 'none'; });
