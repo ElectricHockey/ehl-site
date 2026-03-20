@@ -268,6 +268,13 @@ async function openGameDetail(gameId) {
   title.textContent = game ? `${game.home_team_name} vs ${game.away_team_name}` : 'Game Details';
   subtitle.textContent = game ? game.date : '';
   body.innerHTML = '<p class="picker-loading">Loading game stats…</p>';
+
+  // Move the panel to appear right after the table-wrapper div of the clicked row
+  if (row) {
+    const tableWrapper = row.closest('div[style*="overflow"]') || row.closest('div');
+    if (tableWrapper) tableWrapper.after(panel);
+  }
+
   panel.classList.remove('hidden');
   panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
@@ -298,7 +305,14 @@ function renderGameDetail(data) {
 
   const isComplete = game.status === 'complete';
   const finalLabel = isComplete
-    ? `<div style="text-align:center;font-size:0.72rem;font-weight:700;letter-spacing:0.1em;color:#8b949e;text-transform:uppercase;padding-bottom:0.2rem;">${game.is_forfeit ? 'FORFEIT' : game.is_overtime ? 'FINAL/OT' : 'FINAL'}</div>`
+    ? `<div style="text-align:center;font-size:0.72rem;font-weight:700;letter-spacing:0.1em;color:#8b949e;text-transform:uppercase;padding-bottom:0.2rem;">${game.is_forfeit ? 'FORFEIT' : game.is_overtime ? 'FINAL · OT' : 'FINAL'}</div>`
+    : '';
+
+  const homeWin = isComplete && game.home_score > game.away_score;
+  const awayWin = isComplete && game.away_score > game.home_score;
+
+  const logoImg = (team) => team.logo_url
+    ? `<img src="${team.logo_url}" style="width:36px;height:36px;object-fit:contain;border-radius:6px;background:#21262d;padding:3px;" alt="${team.name}" />`
     : '';
 
   // Power play summary from player stats (PP goals / PP opportunities)
@@ -317,17 +331,32 @@ function renderGameDetail(data) {
     </div>`;
   }
 
+  const editBtn = (isAdmin && isComplete)
+    ? `<p style="text-align:center;margin:0.4rem 0 0.2rem;">
+         <a href="admin.html#games" aria-label="Edit Stats or Score" style="display:inline-block;padding:0.3rem 0.85rem;background:#21262d;border:1px solid #30363d;border-radius:6px;color:#58a6ff;font-size:0.82rem;text-decoration:none;">
+           ✏️ Edit Stats / Score
+         </a>
+       </p>`
+    : '';
+
   const scoreHtml = `
     ${finalLabel}
     <div class="detail-scoreboard">
-      <span class="detail-team-name">${game.home_team.name}</span>
-      <span class="detail-score-num">${isComplete ? game.home_score : '–'}</span>
-      <span class="detail-vs">vs</span>
-      <span class="detail-score-num">${isComplete ? game.away_score : '–'}</span>
-      <span class="detail-team-name">${game.away_team.name}</span>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:0.3rem;">
+        ${logoImg(game.home_team)}
+        <span class="detail-team-name">${game.home_team.name}</span>
+      </div>
+      <span class="detail-score-num${homeWin ? ' detail-score-winner' : ''}">${isComplete ? game.home_score : '–'}</span>
+      <span class="detail-vs">–</span>
+      <span class="detail-score-num${awayWin ? ' detail-score-winner' : ''}">${isComplete ? game.away_score : '–'}</span>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:0.3rem;">
+        ${logoImg(game.away_team)}
+        <span class="detail-team-name">${game.away_team.name}</span>
+      </div>
     </div>
     ${ppHtml}
-    <p style="text-align:center;color:#8b949e;font-size:0.85rem;padding:0.25rem 0 0.5rem;">${game.date} · ${statusBadge(game.status)}</p>`;
+    <p style="text-align:center;color:#8b949e;font-size:0.85rem;padding:0.25rem 0 0.25rem;">${game.date} · ${statusBadge(game.status, game.is_forfeit)}</p>
+    ${editBtn}`;
 
   if (!has_stats) {
     body.innerHTML = scoreHtml + `<div class="picker-empty">
@@ -421,6 +450,19 @@ async function openPicker(gameId) {
   title.textContent = game ? `${game.home_team_name} vs ${game.away_team_name}` : 'EA Matches';
   subtitle.textContent = game ? `Scheduled: ${game.date} · Pick the EA match that corresponds to this game` : '';
   body.innerHTML = '<p class="picker-loading">Loading EA matches…</p>';
+
+  // Place picker after the detail panel (if open) or right after the row's table wrapper
+  const detail = document.getElementById('game-detail');
+  if (!detail.classList.contains('hidden')) {
+    detail.after(picker);
+  } else {
+    const row = document.getElementById(`game-row-${gameId}`);
+    if (row) {
+      const tableWrapper = row.closest('div[style*="overflow"]') || row.closest('div');
+      if (tableWrapper) tableWrapper.after(picker);
+    }
+  }
+
   picker.classList.remove('hidden');
   picker.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
@@ -545,9 +587,8 @@ async function assignMatch(gameId, matchId, homeScore, awayScore, homePlayers, a
       throw new Error(err.error || `HTTP ${res.status}`);
     }
     await refreshGame(gameId);
-    await openPicker(gameId);
-    // Refresh detail panel if it's showing this game
-    if (activeGameId === gameId) await openGameDetail(gameId);
+    closePicker(); // close picker so detail is the focus
+    await openGameDetail(gameId);
   } catch (err) {
     alert(`Failed to assign EA match: ${err.message}`);
   }
