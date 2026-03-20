@@ -6,93 +6,126 @@
   <title>Player – EHL</title>
   <link rel="stylesheet" href="style.css" />
   <style>
-    .player-header {
-      background: #161b22;
-      border: 1px solid #30363d;
-      border-radius: 10px;
+    /* ── Hero banner ──────────────────────────────────────────────────────── */
+    .phl-hero {
+      position: relative; overflow: hidden;
+      border-radius: 10px; margin-bottom: 1.5rem;
+      background: linear-gradient(135deg, var(--c1, #21262d) 0%, var(--c2, #0d1117) 100%);
       padding: 1.5rem 2rem;
-      margin-bottom: 1.5rem;
-      display: flex;
-      align-items: center;
-      gap: 1.25rem;
-      flex-wrap: wrap;
+      display: flex; align-items: center; gap: 1.5rem; flex-wrap: wrap;
+      border: 1px solid rgba(255,255,255,0.08);
     }
-    .player-avatar {
-      width: 64px; height: 64px;
-      background: #21262d; border: 2px solid #30363d;
-      border-radius: 50%; display: flex; align-items: center;
-      justify-content: center; font-size: 1.8rem; flex-shrink: 0;
+    .phl-hero::after {
+      content: ''; position: absolute; inset: 0;
+      background: rgba(0,0,0,0.45); pointer-events: none;
     }
-    .player-info { flex: 1; min-width: 0; }
-    .player-name { font-size: 1.6rem; font-weight: 800; color: #e6edf3; margin: 0 0 0.3rem; }
-    .player-meta { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
-    .player-badge-pos {
-      display: inline-block; font-size: 0.78rem; font-weight: 600;
-      background: #1f2d3d; color: #58a6ff; border: 1px solid #388bfd55;
-      border-radius: 10px; padding: 0.15rem 0.55rem;
+    .phl-hero > * { position: relative; z-index: 1; }
+    .phl-hero-logo {
+      width: 80px; height: 80px; object-fit: contain; flex-shrink: 0;
+      filter: drop-shadow(0 2px 8px rgba(0,0,0,0.5));
     }
-    .player-badge-team {
-      display: inline-flex; align-items: center; gap: 0.35rem;
-      font-size: 0.82rem; font-weight: 600; color: #3fb950;
-      background: #122317; border: 1px solid #238636;
-      border-radius: 10px; padding: 0.15rem 0.6rem;
-      text-decoration: none;
+    .phl-hero-logo-ph {
+      width: 80px; height: 80px; flex-shrink: 0;
+      background: rgba(255,255,255,0.08); border-radius: 50%;
+      display: flex; align-items: center; justify-content: center; font-size: 2.5rem;
     }
-    .player-badge-team:hover { background: #1a3622; }
-    .player-badge-team img { width: 16px; height: 16px; object-fit: contain; border-radius: 2px; }
-    .player-badge-fa {
-      font-size: 0.78rem; color: #8b949e; background: #21262d;
-      border: 1px solid #30363d; border-radius: 10px; padding: 0.15rem 0.55rem;
+    .phl-hero-info { flex: 1; min-width: 0; }
+    .phl-hero-pos {
+      display: inline-block; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.08em;
+      text-transform: uppercase; color: rgba(255,255,255,0.55);
+      background: rgba(255,255,255,0.1); border-radius: 4px; padding: 0.1rem 0.45rem;
+      margin-bottom: 0.3rem;
     }
-    .player-badge-platform {
-      font-size: 0.75rem; color: #8b949e;
+    .phl-hero-name {
+      font-size: 2rem; font-weight: 800; color: #fff;
+      margin: 0 0 0.25rem; line-height: 1.1; text-shadow: 0 1px 4px rgba(0,0,0,0.6);
+    }
+    .phl-hero-team { font-size: 0.9rem; color: rgba(255,255,255,0.6); }
+    .phl-hero-stats { display: flex; gap: 0.75rem; margin-left: auto; flex-wrap: wrap; }
+    .phl-stat-box {
+      background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 8px; padding: 0.65rem 1.1rem; text-align: center; min-width: 72px;
+    }
+    .phl-stat-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.07em; color: rgba(255,255,255,0.5); margin-bottom: 0.2rem; }
+    .phl-stat-val { font-size: 1.8rem; font-weight: 800; color: #fff; line-height: 1; }
+
+    /* ── Two-column body ──────────────────────────────────────────────────── */
+    .phl-body { display: grid; grid-template-columns: 190px 1fr; gap: 1.25rem; align-items: start; }
+    @media (max-width: 720px) { .phl-body { grid-template-columns: 1fr; } }
+
+    /* ── Sidebar cards ────────────────────────────────────────────────────── */
+    .phl-card {
       background: #161b22; border: 1px solid #30363d;
-      border-radius: 10px; padding: 0.12rem 0.5rem;
+      border-radius: 8px; padding: 1rem; margin-bottom: 1rem;
     }
+    .phl-card:last-child { margin-bottom: 0; }
+    .phl-avatar {
+      width: 100%; aspect-ratio: 2/3; max-height: 220px;
+      background: linear-gradient(160deg, #21262d 0%, #0d1117 100%);
+      border-radius: 6px; margin-bottom: 0.75rem;
+      display: flex; align-items: center; justify-content: center; font-size: 4rem;
+      overflow: hidden;
+    }
+    .phl-team-link {
+      display: flex; align-items: center; justify-content: center; gap: 0.4rem;
+      font-size: 0.82rem; font-weight: 700; color: #3fb950;
+      background: #122317; border: 1px solid #238636;
+      border-radius: 8px; padding: 0.3rem 0.6rem;
+      text-decoration: none; margin-top: 0.25rem;
+    }
+    .phl-team-link:hover { background: #1a3622; }
+    .phl-team-link img { width: 16px; height: 16px; object-fit: contain; }
+    .phl-fa { text-align: center; color: #8b949e; font-size: 0.82rem; padding: 0.25rem 0; }
+    .phl-card-heading {
+      font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em;
+      color: #8b949e; margin: 0 0 0.6rem; padding-bottom: 0.4rem; border-bottom: 1px solid #30363d;
+    }
+    .phl-info-row {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 0.28rem 0; font-size: 0.82rem; border-bottom: 1px solid #21262d;
+    }
+    .phl-info-row:last-child { border-bottom: none; }
+    .phl-info-label { color: #8b949e; }
+    .phl-info-value { color: #e6edf3; font-weight: 600; text-align: right; max-width: 110px; word-break: break-all; font-size: 0.8rem; }
+
+    /* ── Section headings ─────────────────────────────────────────────────── */
     .section-heading {
       font-size: 1rem; font-weight: 700; color: #e6edf3;
       margin: 1.5rem 0 0.6rem; padding-bottom: 0.4rem;
       border-bottom: 2px solid #30363d;
     }
-    /* Last 5 games table */
+
+    /* ── Tables ───────────────────────────────────────────────────────────── */
     .last-games-table { width: 100%; border-collapse: collapse; }
     .last-games-table th { font-size: 0.75rem; color: #8b949e; font-weight: 600; padding: 0.3rem 0.5rem; text-align: left; border-bottom: 1px solid #30363d; }
     .last-games-table td { font-size: 0.85rem; padding: 0.4rem 0.5rem; border-bottom: 1px solid #21262d; color: #e6edf3; }
     .last-games-table tr:last-child td { border-bottom: none; }
     .result-w { color: #3fb950; font-weight: 700; }
     .result-l { color: #f85149; font-weight: 700; }
-    /* Season table */
-    .season-block { margin-bottom: 1.5rem; }
-    .season-label {
-      font-size: 0.82rem; font-weight: 700; text-transform: uppercase;
-      letter-spacing: 0.06em; color: #8b949e; margin-bottom: 0.35rem;
-      display: flex; align-items: center; gap: 0.4rem;
-    }
     .season-total-row td { background: rgba(56,139,253,0.07); font-weight: 600; color: #58a6ff; }
     .career-total-row td { background: rgba(63,185,80,0.1); font-weight: 700; color: #3fb950; font-size: 0.9rem; }
     .team-logo-xs { width: 16px; height: 16px; object-fit: contain; border-radius: 2px; vertical-align: middle; margin-right: 0.25rem; }
+
+    /* ── Misc ─────────────────────────────────────────────────────────────── */
     .back-link { color: #58a6ff; font-size: 0.88rem; text-decoration: none; display: inline-block; margin-bottom: 1rem; }
     .back-link:hover { text-decoration: underline; }
     .player-link { color: #58a6ff; text-decoration: none; }
     .player-link:hover { text-decoration: underline; }
-    /* League-type tabs */
-    .lt-tabs {
-      display: flex;
-      gap: 0;
-      border-bottom: 2px solid #30363d;
-      margin-bottom: 0;
+    .player-badge-team {
+      display: inline-flex; align-items: center; gap: 0.35rem;
+      font-size: 0.82rem; font-weight: 600; color: #3fb950;
+      background: #122317; border: 1px solid #238636;
+      border-radius: 10px; padding: 0.15rem 0.6rem; text-decoration: none;
     }
+    .player-badge-team:hover { background: #1a3622; }
+    .player-badge-team img { width: 16px; height: 16px; object-fit: contain; border-radius: 2px; }
+
+    /* ── League-type tabs ─────────────────────────────────────────────────── */
+    .lt-tabs { display: flex; gap: 0; border-bottom: 2px solid #30363d; margin-bottom: 0; }
     .lt-tab {
-      background: none;
-      border: none;
-      border-bottom: 2px solid transparent;
-      color: #8b949e;
-      cursor: pointer;
-      font-size: 0.95rem;
-      font-weight: 700;
-      padding: 0.5rem 1.25rem;
-      margin-bottom: -2px;
-      transition: color 0.15s;
+      background: none; border: none; border-bottom: 2px solid transparent;
+      color: #8b949e; cursor: pointer; font-size: 0.95rem; font-weight: 700;
+      padding: 0.5rem 1.25rem; margin-bottom: -2px; transition: color 0.15s;
     }
     .lt-tab:hover { color: #e6edf3; }
     .lt-tab.lt-tab-active { color: #58a6ff; border-bottom-color: #58a6ff; }

@@ -413,36 +413,91 @@ async function loadPlayer() {
     // Position label
     const pos = isGoalie ? 'G' :
       (player ? (player.user_position || player.player_position || '–') : (seasonTeamStats[0]?.position || '–'));
-    const platformLabel = player?.platform
-      ? `<span class="player-badge-platform">${player.platform === 'psn' ? '🎮 PSN' : '🎮 Xbox'}</span>`
-      : '';
-    const discordLabel = player?.discord
-      ? `<span class="player-badge-platform" style="color:#5865f2;border-color:#5865f2;background:rgba(88,101,242,0.12);">⊟ ${player.discord}</span>`
-      : '';
 
-    // Team badge
-    let teamBadge = '<span class="player-badge-fa">Free Agent</span>';
-    if (player?.team_id && player?.is_rostered) {
-      teamBadge = `<a href="team.html?id=${player.team_id}" class="player-badge-team">
-        ${player.team_logo ? `<img src="${player.team_logo}" alt="${player.team_name}" class="team-logo-xs" />` : ''}
-        ${player.team_name}
-      </a>`;
-    }
+    // Career aggregate for hero stat boxes
+    const career = seasonTeamStats.length
+      ? (isGoalie ? sumGoalieRows(seasonTeamStats) : sumSkaterRows(seasonTeamStats))
+      : null;
+    const totalGP  = career?.gp ?? 0;
+    const totalPts = isGoalie ? null : (career?.points ?? 0);
+    const totalPM  = isGoalie ? null : (career?.plus_minus ?? 0);
+    const totalWins = isGoalie ? (career?.goalie_wins ?? 0) : null;
+    const totalLoss = isGoalie ? (career?.goalie_losses ?? 0) : null;
+    const careerSvp = (isGoalie && career?.shots_against > 0)
+      ? (career.saves / career.shots_against).toFixed(3).replace(/^0(?=\.)/, '')
+      : null;
+    const pmStr = totalPM === null ? null : (totalPM >= 0 ? `+${totalPM}` : String(totalPM));
 
-    let html = `
-      <div class="player-header">
-        <div class="player-avatar">🏒</div>
-        <div class="player-info">
-          <h1 class="player-name">${name}</h1>
-          <div class="player-meta">
-            <span class="player-badge-pos">${isGoalie ? 'Goalie' : pos}</span>
-            ${teamBadge}
-            ${platformLabel}
-            ${discordLabel}
-          </div>
+    const statBoxes = isGoalie
+      ? [
+          { label: 'GP',  value: totalGP },
+          { label: 'W',   value: totalWins },
+          { label: 'SV%', value: careerSvp ?? '–' },
+        ]
+      : [
+          { label: 'GP',  value: totalGP },
+          { label: 'PTS', value: totalPts },
+          { label: '+/–', value: pmStr },
+        ];
+
+    // Hero colors from team
+    const c1 = player?.color1 || '#1c2128';
+    const c2 = player?.color2 || '#0d1117';
+
+    // Hero team logo or placeholder
+    const heroLogo = (player?.team_logo)
+      ? `<img src="${player.team_logo}" class="phl-hero-logo" alt="${player.team_name || ''}">`
+      : `<div class="phl-hero-logo-ph">🏒</div>`;
+
+    // Sidebar: team badge link or FA
+    const sideTeam = (player?.team_id && player?.is_rostered)
+      ? `<a href="team.html?id=${player.team_id}" class="phl-team-link">
+           ${player.team_logo ? `<img src="${player.team_logo}" alt="${player.team_name}">` : ''}
+           ${player.team_name}
+         </a>`
+      : `<p class="phl-fa">Free Agent</p>`;
+
+    // Sidebar career info rows
+    const uniqueSeasons = new Set(seasonTeamStats.map(r => r.season_id)).size;
+    const infoRows = [];
+    infoRows.push({ label: 'Seasons', value: uniqueSeasons || 0 });
+    infoRows.push({ label: 'Position', value: isGoalie ? 'Goalie' : (pos !== '–' ? pos : '–') });
+    if (player?.number) infoRows.push({ label: 'Number', value: `#${player.number}` });
+    if (player?.platform) infoRows.push({ label: 'Platform', value: player.platform === 'psn' ? '🎮 PSN' : '🎮 Xbox' });
+    if (player?.discord)  infoRows.push({ label: 'Discord', value: player.discord });
+
+    const infoHtml = infoRows
+      .map(r => `<div class="phl-info-row"><span class="phl-info-label">${r.label}</span><span class="phl-info-value">${r.value}</span></div>`)
+      .join('');
+
+    const html = `
+      <div class="phl-hero" style="--c1:${c1};--c2:${c2};">
+        ${heroLogo}
+        <div class="phl-hero-info">
+          <div class="phl-hero-pos">${isGoalie ? 'G' : pos}</div>
+          <h1 class="phl-hero-name">${name}</h1>
+          <div class="phl-hero-team">${player?.team_name || 'Free Agent'}</div>
+        </div>
+        <div class="phl-hero-stats">
+          ${statBoxes.map(s => `<div class="phl-stat-box"><div class="phl-stat-label">${s.label}</div><div class="phl-stat-val">${s.value ?? '–'}</div></div>`).join('')}
         </div>
       </div>
-      ${renderLeagueSections(seasonTeamStats, lastGames, isGoalie)}
+
+      <div class="phl-body">
+        <aside class="phl-sidebar">
+          <div class="phl-card">
+            <div class="phl-avatar">🏒</div>
+            ${sideTeam}
+          </div>
+          <div class="phl-card">
+            <h3 class="phl-card-heading">Career Info</h3>
+            ${infoHtml}
+          </div>
+        </aside>
+        <div class="phl-main">
+          ${renderLeagueSections(seasonTeamStats, lastGames, isGoalie)}
+        </div>
+      </div>
     `;
 
     root.innerHTML = html;
