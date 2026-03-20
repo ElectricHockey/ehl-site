@@ -1322,6 +1322,16 @@ app.get('/api/playoffs/by-season/:seasonId', (req, res) => {
   res.json(bracket);
 });
 
+// GET /api/playoffs/by-playoff-season/:playoffSeasonId
+// Used when the user selects a "Season X Playoffs" entry in the season dropdown.
+app.get('/api/playoffs/by-playoff-season/:playoffSeasonId', (req, res) => {
+  const playoff = db.prepare('SELECT * FROM playoffs WHERE playoff_season_id = ?').get(req.params.playoffSeasonId);
+  if (!playoff) return res.status(404).json({ error: 'No playoff found for this playoff season' });
+  const bracket = getPlayoffBracket(playoff.id);
+  if (!bracket) return res.status(404).json({ error: 'Playoff data not found' });
+  res.json(bracket);
+});
+
 // ── Playoff schedule helpers ──────────────────────────────────────────────
 
 /**

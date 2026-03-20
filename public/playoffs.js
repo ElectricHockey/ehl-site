@@ -285,6 +285,7 @@ function closeSeriesDetail() {
 async function loadPlayoff() {
   const root = document.getElementById('playoff-root');
   const sid  = typeof SeasonSelector !== 'undefined' ? SeasonSelector.getSelectedSeasonId() : null;
+  const isPlayoffSeason = typeof SeasonSelector !== 'undefined' ? SeasonSelector.getSelectedSeasonIsPlayoff() : false;
 
   if (!sid) {
     root.innerHTML = '<div class="bracket-empty"><p>Select a league and season above to view the playoff bracket.</p></div>';
@@ -295,7 +296,12 @@ async function loadPlayoff() {
   closeSeriesDetail();
 
   try {
-    const res = await fetch(`${API}/playoffs/by-season/${sid}`);
+    // If the selected season is a dedicated playoff season, look up by playoff_season_id.
+    // Otherwise fall back to looking up by the regular season id.
+    const endpoint = isPlayoffSeason
+      ? `${API}/playoffs/by-playoff-season/${sid}`
+      : `${API}/playoffs/by-season/${sid}`;
+    const res = await fetch(endpoint);
     if (res.status === 404) {
       root.innerHTML = '<div class="bracket-empty"><p>No playoff bracket has been created for this season yet.</p><p style="font-size:0.85rem;margin-top:0.5rem;">An admin can create one in the <a href="admin.html" style="color:#58a6ff;">Admin Panel → Playoffs</a> tab.</p></div>';
       return;
@@ -304,10 +310,6 @@ async function loadPlayoff() {
 
     const data = await res.json();
     _bracketData = data;
-
-    // Season name for subtitle
-    const season = data.playoff;
-    const leagueLabel = ''; // comes from season data we may not have here
 
     root.innerHTML = renderBracket(data.playoff, data.teams, data.rounds);
 

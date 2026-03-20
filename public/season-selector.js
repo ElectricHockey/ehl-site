@@ -3,8 +3,9 @@
 // dropdown that updates to show only seasons for the active league.
 // Exposes:
 //   SeasonSelector.init(containerId)
-//   SeasonSelector.getSelectedSeasonId()   – season id for active league
-//   SeasonSelector.getSelectedLeagueType() – 'threes' | 'sixes'
+//   SeasonSelector.getSelectedSeasonId()        – season id for active league
+//   SeasonSelector.getSelectedLeagueType()      – 'threes' | 'sixes'
+//   SeasonSelector.getSelectedSeasonIsPlayoff() – true if selected season is a playoff season
 //   SeasonSelector.onSeasonChange(callback)
 
 const SeasonSelector = (() => {
@@ -25,12 +26,38 @@ const SeasonSelector = (() => {
     return el && el.value ? Number(el.value) : null;
   }
 
+  function getSelectedSeasonIsPlayoff() {
+    const el = document.getElementById('season-select');
+    if (!el) return false;
+    const opt = el.options[el.selectedIndex];
+    return opt ? opt.dataset.isPlayoff === '1' : false;
+  }
+
   function onSeasonChange(cb) { _onChange = cb; }
+
+  // Sort seasons so each regular season is immediately followed by its playoff season.
+  // Playoff seasons are auto-named "${regularSeason.name} Playoffs" by the server when
+  // a bracket is created; the `is_playoff` flag and name suffix are the link between them.
+  function _sortWithPlayoffs(seasons) {
+    const regular = seasons.filter(s => !s.is_playoff);
+    const playoff  = seasons.filter(s =>  s.is_playoff);
+    const result = [];
+    for (const s of regular) {
+      result.push(s);
+      const pl = playoff.find(p => p.name === `${s.name} Playoffs`);
+      if (pl) result.push(pl);
+    }
+    // Any unmatched playoff seasons (edge case)
+    for (const p of playoff) {
+      if (!result.includes(p)) result.push(p);
+    }
+    return result;
+  }
 
   function _populateSeasonSelect(type) {
     const el = document.getElementById('season-select');
     if (!el) return;
-    const seasons = _seasonsCache[type] || [];
+    const seasons = _sortWithPlayoffs(_seasonsCache[type] || []);
     const key     = STORAGE_SEASON[type];
     if (seasons.length === 0) {
       el.innerHTML = '<option value="">No seasons</option>';
@@ -39,11 +66,13 @@ const SeasonSelector = (() => {
     }
     el.disabled  = false;
     const saved   = localStorage.getItem(key);
-    const active  = seasons.find(s => s.is_active);
-    let defaultId = saved ? Number(saved) : (active ? active.id : seasons[0].id);
-    if (!seasons.find(s => s.id === defaultId)) defaultId = active ? active.id : seasons[0].id;
+    // Default to the first active regular season, or first season overall
+    const regularSeasons    = seasons.filter(s => !s.is_playoff);
+    const activeRegularSeason = regularSeasons.find(s => s.is_active);
+    let defaultId = saved ? Number(saved) : (activeRegularSeason ? activeRegularSeason.id : seasons[0].id);
+    if (!seasons.find(s => s.id === defaultId)) defaultId = activeRegularSeason ? activeRegularSeason.id : seasons[0].id;
     el.innerHTML = seasons.map(s =>
-      `<option value="${s.id}" ${s.id === defaultId ? 'selected' : ''}>${s.name}${s.is_active ? ' ★' : ''}</option>`
+      `<option value="${s.id}" data-is-playoff="${s.is_playoff ? '1' : '0'}" ${s.id === defaultId ? 'selected' : ''}>${s.name}${s.is_active ? ' ★' : ''}</option>`
     ).join('');
   }
 
@@ -100,5 +129,5 @@ const SeasonSelector = (() => {
     } catch { container.innerHTML = ''; }
   }
 
-  return { init, getSelectedSeasonId, getSelectedLeagueType, onSeasonChange };
+  return { init, getSelectedSeasonId, getSelectedLeagueType, getSelectedSeasonIsPlayoff, onSeasonChange };
 })();

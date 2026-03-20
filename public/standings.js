@@ -111,42 +111,34 @@ async function loadStandings() {
   }
 }
 
-// ── View switching (Standings / Playoffs) ──────────────────────────────────
+// ── Show standings or bracket depending on selected season ─────────────────
 
-let _currentView = 'standings';
-
-function setStandingsView(view) {
-  _currentView = view;
+function showForSelectedSeason() {
   const standingsRoot = document.getElementById('standings-root');
   const playoffRoot   = document.getElementById('playoff-root');
-  const btnS = document.getElementById('view-btn-standings');
-  const btnP = document.getElementById('view-btn-playoffs');
+  const sd            = document.getElementById('series-detail');
 
-  if (view === 'standings') {
-    if (standingsRoot) standingsRoot.style.display = '';
-    if (playoffRoot)   playoffRoot.style.display   = 'none';
-    const sd = document.getElementById('series-detail');
-    if (sd) sd.style.display = 'none';
-    if (btnS) { btnS.classList.add('active');    }
-    if (btnP) { btnP.classList.remove('active'); }
-    loadStandings();
-  } else {
+  const isPlayoff = typeof SeasonSelector !== 'undefined'
+    ? SeasonSelector.getSelectedSeasonIsPlayoff()
+    : false;
+
+  if (isPlayoff) {
     if (standingsRoot) standingsRoot.style.display = 'none';
     if (playoffRoot)   playoffRoot.style.display   = '';
-    if (btnS) { btnS.classList.remove('active'); }
-    if (btnP) { btnP.classList.add('active');    }
-    // loadPlayoff is defined in playoffs.js which is loaded after this script
+    if (sd)            sd.style.display            = 'none';
     if (typeof loadPlayoff === 'function') loadPlayoff();
+  } else {
+    if (standingsRoot) standingsRoot.style.display = '';
+    if (playoffRoot)   playoffRoot.style.display   = 'none';
+    if (sd)            sd.style.display            = 'none';
+    loadStandings();
   }
 }
 
 (async () => {
   if (typeof SeasonSelector !== 'undefined') {
     await SeasonSelector.init('season-selector-container');
-    SeasonSelector.onSeasonChange(() => {
-      if (_currentView === 'standings') loadStandings();
-      else if (typeof loadPlayoff === 'function') loadPlayoff();
-    });
+    SeasonSelector.onSeasonChange(() => showForSelectedSeason());
   }
-  loadStandings();
+  showForSelectedSeason();
 })();

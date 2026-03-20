@@ -6,26 +6,7 @@
   <title>Standings – EHL</title>
   <link rel="stylesheet" href="style.css" />
   <style>
-    /* ── View tabs (Standings / Playoffs) ─────────────────────── */
-    .standings-view-tabs {
-      display: flex;
-      gap: 0.5rem;
-      margin-bottom: 1.25rem;
-    }
-    .s-view-btn {
-      padding: 0.4rem 1.2rem;
-      border-radius: 20px;
-      border: 1px solid #30363d;
-      background: #21262d;
-      color: #8b949e;
-      cursor: pointer;
-      font-size: 0.9rem;
-      transition: all 0.15s;
-    }
-    .s-view-btn.active { background: #1c2a3a; border-color: #58a6ff; color: #58a6ff; }
-    .s-view-btn:hover:not(.active) { border-color: #8b949e; color: #c9d1d9; }
-
-    /* ── Bracket styles (copied from playoffs.html) ────────────── */
+    /* ── Bracket styles ────────────────────────────────────────── */
     .bracket-outer { position:relative; overflow-x:auto; overflow-y:visible; }
     .bracket-grid { display:flex; align-items:flex-start; gap:0; padding:1.5rem 0.5rem 2rem; min-width:max-content; position:relative; }
     .bracket-svg { position:absolute; top:0; left:0; pointer-events:none; overflow:visible; }
@@ -91,12 +72,6 @@
   <div class="container">
     <h1 id="page-title">League Standings</h1>
     <div style="margin-bottom:1.25rem;" id="season-selector-container"></div>
-
-    <!-- View tabs: Standings / Playoffs -->
-    <div class="standings-view-tabs" id="standings-view-tabs">
-      <button class="s-view-btn active" id="view-btn-standings" onclick="setStandingsView('standings')">📊 Standings</button>
-      <button class="s-view-btn" id="view-btn-playoffs" onclick="setStandingsView('playoffs')">🏆 Playoffs</button>
-    </div>
 
     <div id="standings-root"><p class="loading">Loading standings…</p></div>
     <div id="playoff-root" style="display:none;"><p class="loading">Loading playoff bracket…</p></div>
