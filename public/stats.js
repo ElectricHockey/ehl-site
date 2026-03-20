@@ -119,11 +119,10 @@ function renderSkaters(league) {
     : data;
   const sorted = sortData(filtered, leagueSort[league].skater.key, leagueSort[league].skater.dir);
   const s = k => thClass(k, leagueSort[league].skater);
-  const L = JSON.stringify(league); // safe string for onclick
   root.innerHTML = `<div style="overflow-x:auto;"><table id="skaters-table">
     <thead><tr>
       <th>Player</th><th>Team</th><th>Pos</th>
-      ${SKATER_COLS.map(c => `<th data-tip="${c.tip}" class="${s(c.key)}" onclick="sortSkaters('${c.key}',${L})">${c.label}</th>`).join('')}
+      ${SKATER_COLS.map(c => `<th data-tip="${c.tip}" class="${s(c.key)}" onclick="sortSkaters('${c.key}','${league}')">${c.label}</th>`).join('')}
     </tr></thead>
     <tbody>${sorted.map(p => `<tr${playerRowAttrs(p)}>
       <td><a href="player.html?name=${encodeURIComponent(p.name)}" class="player-link">${p.name}</a></td>
@@ -145,11 +144,10 @@ function renderGoalies(league) {
     : data;
   const sorted = sortData(filtered, leagueSort[league].goalie.key, leagueSort[league].goalie.dir);
   const s = k => thClass(k, leagueSort[league].goalie);
-  const L = JSON.stringify(league);
   root.innerHTML = `<div style="overflow-x:auto;"><table id="goalies-table">
     <thead><tr>
       <th>Player</th><th>Team</th>
-      ${GOALIE_COLS.map(c => `<th data-tip="${c.tip}" class="${s(c.key)}" onclick="sortGoalies('${c.key}',${L})">${c.label}</th>`).join('')}
+      ${GOALIE_COLS.map(c => `<th data-tip="${c.tip}" class="${s(c.key)}" onclick="sortGoalies('${c.key}','${league}')">${c.label}</th>`).join('')}
     </tr></thead>
     <tbody>${sorted.map(p => `<tr${playerRowAttrs(p)}>
       <td><a href="player.html?name=${encodeURIComponent(p.name)}" class="player-link">${p.name}</a></td>

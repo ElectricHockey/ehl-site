@@ -331,11 +331,12 @@ function renderGameDetail(data) {
     </div>`;
   }
 
-  const editBtn = (isAdmin && isComplete)
+  const hasEaLink = !!(game.ea_match_id);
+  const editBtn = (isAdmin && (isComplete || hasEaLink))
     ? `<p style="text-align:center;margin:0.4rem 0 0.2rem;">
-         <a href="admin.html#games" aria-label="Edit Stats or Score" style="display:inline-block;padding:0.3rem 0.85rem;background:#21262d;border:1px solid #30363d;border-radius:6px;color:#58a6ff;font-size:0.82rem;text-decoration:none;">
+         <button aria-label="Edit Stats or Score" onclick="editGameStats(${game.id})" style="padding:0.3rem 0.85rem;background:#21262d;border:1px solid #30363d;border-radius:6px;color:#58a6ff;font-size:0.82rem;cursor:pointer;">
            ✏️ Edit Stats / Score
-         </a>
+         </button>
        </p>`
     : '';
 
@@ -638,6 +639,14 @@ async function refreshGame(gameId) {
 
 (async () => {
   await checkAdmin();
+
+  // Wire up the shared game-stats-editor so that after saving it refreshes
+  // the inline game detail panel on this page instead of navigating away.
+  window._gseOnSave = async (gameId) => {
+    await refreshGame(gameId);
+    await openGameDetail(gameId);
+  };
+
   await SeasonSelector.init('season-selector-container');
   SeasonSelector.onSeasonChange(() => {
     closePicker();

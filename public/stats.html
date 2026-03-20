@@ -11,8 +11,9 @@
       user-select: none;
     }
     .sortable-th:hover { color: #58a6ff; }
-    .sortable-th.sort-asc::after  { content: ' ▲'; color: #58a6ff; }
-    .sortable-th.sort-desc::after { content: ' ▼'; color: #58a6ff; }
+    /* Use ::before for sort arrows so they don't conflict with [data-tip]::after tooltip */
+    .sortable-th.sort-asc::before  { content: '▲ '; color: #58a6ff; font-size: 0.65em; vertical-align: middle; }
+    .sortable-th.sort-desc::before { content: '▼ '; color: #58a6ff; font-size: 0.65em; vertical-align: middle; }
     .tab-bar {
       display: flex; gap: 0.5rem; margin-bottom: 1.5rem;
     }
