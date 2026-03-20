@@ -929,9 +929,13 @@ app.get('/api/games', (req, res) => {
   const limitClause = limit ? `LIMIT ${limit}` : '';
   const games = db.prepare(`
     SELECT g.*, ht.name AS home_team_name, ht.logo_url AS home_logo,
-      at.name AS away_team_name, at.logo_url AS away_logo
-    FROM games g JOIN teams ht ON g.home_team_id = ht.id JOIN teams at ON g.away_team_id = at.id
-    ${where} ORDER BY g.date DESC ${limitClause}
+      at.name AS away_team_name, at.logo_url AS away_logo,
+      ps.round_number AS playoff_round_number
+    FROM games g
+    JOIN teams ht ON g.home_team_id = ht.id
+    JOIN teams at ON g.away_team_id = at.id
+    LEFT JOIN playoff_series ps ON g.playoff_series_id = ps.id
+    ${where} ORDER BY g.date ASC ${limitClause}
   `).all(...params);
   res.json(games);
 });
@@ -1378,10 +1382,9 @@ app.post('/api/playoffs', requireOwner, (req, res) => {
   const season = db.prepare('SELECT * FROM seasons WHERE id = ?').get(season_id);
   if (!season) return res.status(404).json({ error: 'Season not found' });
   if (season.is_playoff) return res.status(400).json({ error: 'Cannot create a playoff bracket from a playoff season' });
-  const validTeamCounts = [2, 4, 8, 16];
   const n = Number(teams_qualify);
-  if (!validTeamCounts.includes(n)) {
-    return res.status(400).json({ error: 'teams_qualify must be 2, 4, 8, or 16' });
+  if (n < 2 || n > 64) {
+    return res.status(400).json({ error: 'teams_qualify must be between 2 and 64' });
   }
   const existing = db.prepare('SELECT id FROM playoffs WHERE season_id = ?').get(season_id);
   if (existing) return res.status(409).json({ error: 'A playoff already exists for this season. Delete it first.' });
@@ -1393,10 +1396,7 @@ app.post('/api/playoffs', requireOwner, (req, res) => {
   if (qualified.length < 2) {
     return res.status(400).json({ error: `Only ${qualified.length} team(s) qualify. Need at least 2.` });
   }
-  // Pad with BYE slots if fewer teams qualified than requested
   const effectiveN = qualified.length;
-
-  // Auto-create a dedicated playoff season so stats restart for the playoffs
   const playoffSeasonName = `${season.name} Playoffs`;
   const psResult = db.prepare('INSERT INTO seasons (name, is_active, league_type, is_playoff) VALUES (?, 0, ?, 1)')
     .run(playoffSeasonName, season.league_type || '');
@@ -1412,15 +1412,33 @@ app.post('/api/playoffs', requireOwner, (req, res) => {
     db.prepare('INSERT INTO playoff_teams (playoff_id, team_id, seed) VALUES (?, ?, ?)').run(playoffId, t.id, i + 1);
   });
 
-  // Generate round 1 matchups: 1 vs N, 2 vs N-1, …
-  const m = Math.floor(effectiveN / 2);
+  // Compute byes for non-power-of-2 field sizes.
+  // nextPow2 = smallest power of 2 >= effectiveN.
+  // numByes teams (seeds 1..numByes) get pre-won "bye" series in round 1.
+  // Remaining teams (seeds numByes+1..effectiveN) play real round-1 series.
+  const nextPow2 = Math.pow(2, Math.ceil(Math.log2(effectiveN)));
+  const numByes  = nextPow2 - effectiveN;
+
+  let seriesNum = 1;
   const seriesLen = Number(series_length) || 7;
+
+  // Insert bye series (pre-completed, no games needed)
+  for (let i = 0; i < numByes; i++) {
+    const byeTeam = qualified[i];
+    db.prepare(
+      'INSERT INTO playoff_series (playoff_id, round_number, series_number, high_seed_id, low_seed_id, high_seed_num, low_seed_num, winner_id) VALUES (?, 1, ?, ?, NULL, ?, NULL, ?)'
+    ).run(playoffId, seriesNum++, byeTeam.id, i + 1, byeTeam.id);
+  }
+
+  // Insert real round-1 series (the remaining teams, paired 1st vs last, 2nd vs 2nd-last, etc.)
+  const roundTeams = qualified.slice(numByes); // seeds numByes+1 .. effectiveN
+  const m = Math.floor(roundTeams.length / 2);
   for (let i = 0; i < m; i++) {
-    const hi = qualified[i];
-    const lo = qualified[effectiveN - 1 - i];
+    const hi = roundTeams[i];
+    const lo = roundTeams[roundTeams.length - 1 - i];
     const sr = db.prepare(
       'INSERT INTO playoff_series (playoff_id, round_number, series_number, high_seed_id, low_seed_id, high_seed_num, low_seed_num) VALUES (?, 1, ?, ?, ?, ?, ?)'
-    ).run(playoffId, i + 1, hi.id, lo.id, i + 1, effectiveN - i);
+    ).run(playoffId, seriesNum++, hi.id, lo.id, numByes + i + 1, effectiveN - i);
     createSeriesSchedule(sr.lastInsertRowid, hi.id, lo.id, playoffSeasonId, seriesLen, series_start_date);
   }
 
@@ -1519,6 +1537,11 @@ function recomputeSeriesWins(seriesId) {
 
   db.prepare('UPDATE playoff_series SET high_seed_wins = ?, low_seed_wins = ?, winner_id = ? WHERE id = ?')
     .run(hw, lw, winner_id, seriesId);
+
+  // When a winner is determined, delete any remaining scheduled games in this series
+  if (winner_id !== null) {
+    db.prepare("DELETE FROM games WHERE playoff_series_id = ? AND status = 'scheduled'").run(seriesId);
+  }
 }
 
 // GET /api/playoff-series/:id/games – games linked to a series

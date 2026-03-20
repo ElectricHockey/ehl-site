@@ -59,6 +59,9 @@ function seriesCard(s, seriesLength) {
       <span class="b-team-name">${abbrev(s.low_seed_name)}</span>
       <span class="b-wins${lowWinsCls}">${s.low_seed_wins}</span>
     </div>`;
+  } else if (isComplete) {
+    // Bye: the high seed advanced without playing
+    html += `<div class="b-team" style="opacity:0.45;"><span class="b-seed">—</span><div class="b-logo-placeholder"></div><span class="b-tbd">BYE</span></div>`;
   } else {
     html += `<div class="b-team"><span class="b-seed">—</span><div class="b-logo-placeholder"></div><span class="b-tbd">TBD</span></div>`;
   }

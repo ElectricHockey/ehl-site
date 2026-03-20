@@ -128,6 +128,68 @@ async function loadSchedule() {
   }
 }
 
+// Format "YYYY-MM-DD" → "Monday, March 1"
+function formatDateHeader(dateStr) {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  return new Date(year, month - 1, day).toLocaleDateString('en-US', {
+    weekday: 'long', month: 'long', day: 'numeric',
+  });
+}
+
+// Round label (mirrors the playoffs.js roundName helper)
+function playoffRoundLabel(roundNum, totalRounds) {
+  if (roundNum === totalRounds) return '🏆 Final';
+  if (roundNum === totalRounds - 1) return 'Semifinals';
+  if (roundNum === totalRounds - 2) return 'Quarterfinals';
+  return `Round ${roundNum}`;
+}
+
+function buildGameRow(g) {
+  return `
+    <tr class="game-row" id="game-row-${g.id}" data-game-id="${g.id}"
+      onclick="toggleGameDetail(${g.id}, event)">
+      <td>${g.date}</td>
+      <td>${g.home_logo ? `<img src="${g.home_logo}" style="width:22px;height:22px;object-fit:contain;vertical-align:middle;margin-right:0.3rem;border-radius:3px;" />` : ''}${g.home_team_name}</td>
+      <td>${g.status === 'complete' ? `${g.home_score} – ${g.away_score}` : '–'}</td>
+      <td>${g.away_logo ? `<img src="${g.away_logo}" style="width:22px;height:22px;object-fit:contain;vertical-align:middle;margin-right:0.3rem;border-radius:3px;" />` : ''}${g.away_team_name}</td>
+      <td id="status-cell-${g.id}">${statusBadge(g.status)}</td>
+      ${isAdmin ? `
+      <td id="ea-status-${g.id}">
+        ${g.ea_match_id
+          ? `<span class="ea-badge ea-badge-linked">🔗 Linked</span>`
+          : `<span class="ea-badge ea-badge-unlinked">Not linked</span>`}
+      </td>
+      <td>
+        <button class="btn-secondary" style="font-size:0.82rem;padding:0.3rem 0.7rem;"
+          onclick="togglePicker(${g.id}, event)">
+          Pick EA Match
+        </button>
+      </td>` : ''}
+    </tr>`;
+}
+
+function buildGameTable(games) {
+  if (!games || games.length === 0) return '';
+  // Group by date (API already returns in ASC order, but sort locally as a safety guard)
+  const byDate = {};
+  for (const g of games) {
+    if (!byDate[g.date]) byDate[g.date] = [];
+    byDate[g.date].push(g);
+  }
+  const thead = `<thead><tr>
+    <th>Date</th><th>Home Team</th><th>Score</th><th>Away Team</th><th>Status</th>
+    ${isAdmin ? '<th>EA Match</th><th>Actions</th>' : ''}
+  </tr></thead>`;
+  let html = '';
+  for (const date of Object.keys(byDate).sort()) {
+    html += `<div class="schedule-date-header">${formatDateHeader(date)}</div>`;
+    html += `<div style="overflow-x:auto;margin-bottom:0.25rem;"><table class="schedule-section-table">${thead}<tbody>`;
+    html += byDate[date].map(buildGameRow).join('');
+    html += '</tbody></table></div>';
+  }
+  return html;
+}
+
 function renderScheduleSection(containerId, games) {
   const root = document.getElementById(containerId);
   if (!root) return;
@@ -135,43 +197,34 @@ function renderScheduleSection(containerId, games) {
     root.innerHTML = '<p style="color:#8b949e;">No games scheduled yet.</p>';
     return;
   }
-  const sorted = [...games].sort((a, b) => a.date.localeCompare(b.date));
-  root.innerHTML = `
-    <table class="schedule-section-table">
-      <thead>
-        <tr>
-          <th>Date</th>
-          <th>Home Team</th>
-          <th>Score</th>
-          <th>Away Team</th>
-          <th>Status</th>
-          ${isAdmin ? '<th>EA Match</th><th>Actions</th>' : ''}
-        </tr>
-      </thead>
-      <tbody>
-        ${sorted.map(g => `
-          <tr class="game-row" id="game-row-${g.id}" data-game-id="${g.id}"
-            onclick="toggleGameDetail(${g.id}, event)">
-            <td>${g.date}</td>
-            <td>${g.home_logo ? `<img src="${g.home_logo}" style="width:22px;height:22px;object-fit:contain;vertical-align:middle;margin-right:0.3rem;border-radius:3px;" />` : ''}${g.home_team_name}</td>
-            <td>${g.status === 'complete' ? `${g.home_score} – ${g.away_score}` : '–'}</td>
-            <td>${g.away_logo ? `<img src="${g.away_logo}" style="width:22px;height:22px;object-fit:contain;vertical-align:middle;margin-right:0.3rem;border-radius:3px;" />` : ''}${g.away_team_name}</td>
-            <td id="status-cell-${g.id}">${statusBadge(g.status)}</td>
-            ${isAdmin ? `
-            <td id="ea-status-${g.id}">
-              ${g.ea_match_id
-                ? `<span class="ea-badge ea-badge-linked">🔗 Linked</span>`
-                : `<span class="ea-badge ea-badge-unlinked">Not linked</span>`}
-            </td>
-            <td>
-              <button class="btn-secondary" style="font-size:0.82rem;padding:0.3rem 0.7rem;"
-                onclick="togglePicker(${g.id}, event)">
-                Pick EA Match
-              </button>
-            </td>` : ''}
-          </tr>`).join('')}
-      </tbody>
-    </table>`;
+
+  // Detect if any games belong to a numbered playoff round
+  const hasPlayoffRounds = games.some(g => g.playoff_round_number != null && g.playoff_round_number > 0);
+
+  if (!hasPlayoffRounds) {
+    // Regular season: just group by date
+    root.innerHTML = buildGameTable(games);
+    return;
+  }
+
+  // Playoff season: group by round first, then by date within each round
+  const byRound = {};
+  for (const g of games) {
+    const r = g.playoff_round_number ?? 0;
+    if (!byRound[r]) byRound[r] = [];
+    byRound[r].push(g);
+  }
+  const roundNumbers = Object.keys(byRound).map(Number).sort((a, b) => a - b);
+  const playoffRounds = roundNumbers.filter(r => r > 0);
+  const totalRounds = playoffRounds.length > 0 ? Math.max(...playoffRounds) : 1;
+
+  let html = '';
+  for (const r of roundNumbers) {
+    const label = r === 0 ? 'Other Games' : playoffRoundLabel(r, totalRounds);
+    html += `<div class="schedule-round-header">${label}</div>`;
+    html += buildGameTable(byRound[r]);
+  }
+  root.innerHTML = html;
 }
 
 // ── Game Detail Panel ──────────────────────────────────────────────────────
