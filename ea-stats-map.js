@@ -36,7 +36,12 @@ module.exports = {
 
   // ── Ratings ───────────────────────────────────────────────────────────────
   skrating:               'overallRating',
-  ratingOffense:          'offensiveRating',  // offense rating
+  ratingOffense:          'offensiveRating',  // offense rating (primary EA field name)
+  // Fallbacks: eaField() tries each mapped key in insertion order and uses the first
+  // one that is present in the EA API response, so these only apply when ratingOffense
+  // is absent (e.g. if EA renames the field in a future game version).
+  skoffrating:            'offensiveRating',  // fallback: alternate field name
+  skoffensiverating:      'offensiveRating',  // fallback: alternate field name
   ratingDefense:          'defensiveRating',
   ratingTeamplay:         'teamPlayRating',
 

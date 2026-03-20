@@ -475,10 +475,12 @@ tbody tr.team-row:hover {
   z-index: 500;
   box-shadow: 0 4px 12px rgba(0,0,0,0.45);
 }
+/* CSS ::after tooltip disabled — nav.js provides a position:fixed JS tooltip
+   that doesn't overlap adjacent columns and handles viewport clamping.
 [data-tip]:hover::after,
 [data-tip].tip-open::after {
   opacity: 1;
-}
+} */
 
 /* Player / team links inside tables */
 .player-link { color: #58a6ff; text-decoration: none; }

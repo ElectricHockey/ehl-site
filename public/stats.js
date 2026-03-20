@@ -119,6 +119,7 @@ function renderSkaters(league) {
     : data;
   const sorted = sortData(filtered, leagueSort[league].skater.key, leagueSort[league].skater.dir);
   const s = k => thClass(k, leagueSort[league].skater);
+  const prevScroll = root.firstElementChild?.scrollLeft || 0;
   root.innerHTML = `<div style="overflow-x:auto;"><table id="skaters-table">
     <thead><tr>
       <th>Player</th><th>Team</th><th>Pos</th>
@@ -131,6 +132,7 @@ function renderSkaters(league) {
       ${SKATER_COLS.map(c => `<td style="${c.style ? c.style(p) : ''}">${c.fmt(p)}</td>`).join('')}
     </tr>`).join('')}</tbody>
   </table></div>`;
+  if (root.firstElementChild && prevScroll) root.firstElementChild.scrollLeft = prevScroll;
 }
 
 function renderGoalies(league) {
@@ -144,6 +146,7 @@ function renderGoalies(league) {
     : data;
   const sorted = sortData(filtered, leagueSort[league].goalie.key, leagueSort[league].goalie.dir);
   const s = k => thClass(k, leagueSort[league].goalie);
+  const prevScroll = root.firstElementChild?.scrollLeft || 0;
   root.innerHTML = `<div style="overflow-x:auto;"><table id="goalies-table">
     <thead><tr>
       <th>Player</th><th>Team</th>
@@ -155,6 +158,7 @@ function renderGoalies(league) {
       ${GOALIE_COLS.map(c => `<td style="${c.style ? c.style(p) : ''}">${c.fmt(p)}</td>`).join('')}
     </tr>`).join('')}</tbody>
   </table></div>`;
+  if (root.firstElementChild && prevScroll) root.firstElementChild.scrollLeft = prevScroll;
 }
 
 async function fetchLeagueStats(seasonId) {
