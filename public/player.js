@@ -197,7 +197,7 @@ function renderCareerTable(seasonTeamStats, isGoalie) {
   const thead = isGoalie ? goalieThead() : skaterThead();
   const rowFn = isGoalie ? goalieRow : skaterRow;
 
-  let html = `<div style="overflow-x:auto;"><table class="season-stats-table">
+  let html = `<div style="overflow-x:auto;max-width:100%;"><table class="season-stats-table">
     ${thead}<tbody>`;
 
   for (const block of blocks) {
@@ -341,7 +341,7 @@ function renderLastGames(lastGames, name, isGoalie) {
     <th data-tip="Breakaway Save %">BKS%</th>
     <th data-tip="Time on Ice">TOI</th>`;
 
-  return `<div style="overflow-x:auto;"><table class="last-games-table">
+  return `<div style="overflow-x:auto;max-width:100%;"><table class="last-games-table">
     <thead><tr>
       <th>Date</th><th></th><th>Score</th><th>Opponent</th>
       <th data-tip="Overall Rating (avg. of OFFR + DR + TPR)">OVR</th>

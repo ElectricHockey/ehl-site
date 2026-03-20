@@ -50,8 +50,10 @@
     .phl-stat-val { font-size: 1.8rem; font-weight: 800; color: #fff; line-height: 1; }
 
     /* ── Two-column body ──────────────────────────────────────────────────── */
-    .phl-body { display: grid; grid-template-columns: 190px 1fr; gap: 1.25rem; align-items: start; }
+    .phl-body { display: grid; grid-template-columns: 190px 1fr; gap: 1.25rem; align-items: start; min-width: 0; }
     @media (max-width: 720px) { .phl-body { grid-template-columns: 1fr; } }
+    /* Grid main column must have min-width:0 so it can shrink below content size */
+    .phl-main { min-width: 0; overflow: hidden; }
 
     /* ── Sidebar cards ────────────────────────────────────────────────────── */
     .phl-card {
