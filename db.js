@@ -209,52 +209,61 @@ try { db.exec('ALTER TABLE players ADD COLUMN discord_id TEXT'); } catch (_) {}
 try { db.exec('ALTER TABLE users ADD COLUMN role TEXT'); } catch (_) {}
 try { db.exec('ALTER TABLE seasons ADD COLUMN is_playoff INTEGER DEFAULT 0'); } catch (_) {}
 try { db.exec('ALTER TABLE playoffs ADD COLUMN playoff_season_id INTEGER'); } catch (_) {}
+try { db.exec('ALTER TABLE games ADD COLUMN is_forfeit INTEGER DEFAULT 0'); } catch (_) {}
 
 // ── Seed teams ──────────────────────────────────────────────────────────────
-// Edit this array to define your league's teams.
-// Teams are only inserted when the `teams` table is empty, so you can freely
-// add/remove entries here and then delete `league.db` to re-seed from scratch.
+// Teams listed here are upserted by name on every startup (INSERT OR IGNORE),
+// so they will be added to an existing DB without duplicating existing rows.
 //
 // Fields:
 //   name        (required) – display name of the team
 //   conference  – e.g. 'East', 'West'  (leave '' if unused)
 //   division    – e.g. 'Atlantic', 'Pacific'  (leave '' if unused)
 //   league_type – 'sixes' (6v6) | 'threes' (3v3) | '' (unset)
+//   ea_club_id  – numeric EA Pro Clubs club ID
 //   color1      – primary hex colour, e.g. '#1a73e8'
-//   color2      – secondary hex colour, e.g. '#ffffff'
-//
-// To link each team to its EA Pro Clubs club, use the Admin panel after startup
-// (or add an `ea_club_id` integer field here and include it in the INSERT below).
+//   color2      – secondary hex colour
 
 const SEED_TEAMS = [
-  // ── Example teams – replace with your actual teams ──────────────────────
-  // { name: 'Chicago Wolves',      conference: 'West', division: 'Central',  league_type: 'sixes',  color1: '#cc0000', color2: '#000000' },
-  // { name: 'New York Rangers',    conference: 'East', division: 'Atlantic', league_type: 'sixes',  color1: '#0038a8', color2: '#ce1126' },
-  // { name: 'Toronto Maple Leafs', conference: 'East', division: 'Atlantic', league_type: 'sixes',  color1: '#003e7e', color2: '#ffffff' },
-  // { name: 'Vancouver Canucks',   conference: 'West', division: 'Pacific',  league_type: 'sixes',  color1: '#00843d', color2: '#00205b' },
+  { name: '1K Knights',                league_type: 'threes', ea_club_id: 40577,  color1: '#ff1740', color2: '#aeaeb0' },
+  { name: 'Hope Skate Park',           league_type: 'threes', ea_club_id: 18810,  color1: '#6e2d71', color2: '#3a6e8c' },
+  { name: 'Montrescotia Buffalos',     league_type: 'threes', ea_club_id: 6021,   color1: '#db0228', color2: '#ffffff' },
+  { name: 'Cape Cod Rangers',          league_type: 'threes', ea_club_id: 5364,   color1: '#264d20', color2: '#ebd6a9' },
+  { name: 'Canadian Frostbytes',       league_type: 'threes', ea_club_id: 7176,   color1: '#032974', color2: '#31eff5' },
+  { name: 'Blood Sweat & Beers',       league_type: 'threes', ea_club_id: 18206,  color1: '#d5520b', color2: '#072a48' },
+  { name: 'Number 5 Orange',           league_type: 'threes', ea_club_id: 6021,   color1: '#fe8e01', color2: '#050404' },
+  { name: 'Cooper Gang HC',            league_type: 'threes', ea_club_id: 40779,  color1: '#023c7f', color2: '#ffffff' },
+  { name: 'Arizona Beauts',            league_type: 'threes', ea_club_id: 1055,   color1: '#7772a8', color2: '#1a1a1a' },
+  { name: 'Why So Sweaty',             league_type: 'threes', ea_club_id: 4793,   color1: '#d60c1f', color2: '#010103' },
+  { name: 'Reading Rizzzzzzzz',        league_type: 'threes', ea_club_id: 7126,   color1: '#274194', color2: '#c0be7d' },
+  { name: 'The Fresh Bake',            league_type: 'threes', ea_club_id: 19600,  color1: '#420c62', color2: '#efd310' },
+  { name: 'F around and Find Out',     league_type: 'threes', ea_club_id: 1273,   color1: '#d15701', color2: '#091c33' },
+  { name: 'NCHL PITTSBURGH PENGUINS',  league_type: 'threes', ea_club_id: 144152, color1: '#ffb81c', color2: '#000000' },
+  { name: 'Reverse HC',                league_type: 'threes', ea_club_id: 133450, color1: '#ceb164', color2: '#0d0d0c' },
+  { name: 'Blackout Bandits',          league_type: 'threes', ea_club_id: 14261,  color1: '#ff8121', color2: '#202020' },
 ];
 
 if (SEED_TEAMS.length > 0) {
-  const existing = db.prepare('SELECT COUNT(*) AS n FROM teams').get().n;
-  if (existing === 0) {
-    const insert = db.prepare(
-      'INSERT INTO teams (name, conference, division, league_type, color1, color2) VALUES (?, ?, ?, ?, ?, ?)'
-    );
-    const seedAll = db.transaction(() => {
-      for (const t of SEED_TEAMS) {
-        insert.run(
-          t.name        || '',
-          t.conference  || '',
-          t.division    || '',
-          t.league_type || '',
-          t.color1      || '',
-          t.color2      || ''
-        );
+  // Upsert each team: insert if name not present, update colors/ea_club_id if it is.
+  const findByName = db.prepare('SELECT id FROM teams WHERE name = ?');
+  const insertTeam = db.prepare(
+    'INSERT INTO teams (name, conference, division, league_type, ea_club_id, color1, color2) VALUES (?, \'\', \'\', ?, ?, ?, ?)'
+  );
+  const updateTeam = db.prepare(
+    'UPDATE teams SET league_type=?, ea_club_id=?, color1=?, color2=? WHERE id=?'
+  );
+  const seedAll = db.transaction(() => {
+    for (const t of SEED_TEAMS) {
+      const existing = findByName.get(t.name || '');
+      if (existing) {
+        updateTeam.run(t.league_type || '', t.ea_club_id || null, t.color1 || '', t.color2 || '', existing.id);
+      } else {
+        insertTeam.run(t.name || '', t.league_type || '', t.ea_club_id || null, t.color1 || '', t.color2 || '');
       }
-    });
-    seedAll();
-    console.log(`[db] Seeded ${SEED_TEAMS.length} team(s).`);
-  }
+    }
+  });
+  seedAll();
+  console.log(`[db] Upserted ${SEED_TEAMS.length} seeded team(s).`);
 }
 
 module.exports = db;

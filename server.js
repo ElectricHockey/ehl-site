@@ -967,6 +967,7 @@ app.patch('/api/games/:id', requireAdmin, (req, res) => {
   const status = req.body.status !== undefined ? req.body.status : game.status;
   const season_id = req.body.season_id !== undefined ? req.body.season_id : game.season_id;
   const is_overtime = req.body.is_overtime !== undefined ? (req.body.is_overtime ? 1 : 0) : (game.is_overtime || 0);
+  const is_forfeit  = req.body.is_forfeit  !== undefined ? (req.body.is_forfeit  ? 1 : 0) : (game.is_forfeit  || 0);
   const date = req.body.date !== undefined ? req.body.date : game.date;
   if (req.body.home_score !== undefined) {
     home_score = parseInt(req.body.home_score, 10);
@@ -976,8 +977,8 @@ app.patch('/api/games/:id', requireAdmin, (req, res) => {
     away_score = parseInt(req.body.away_score, 10);
     if (isNaN(away_score) || away_score < 0 || away_score > 99) return res.status(400).json({ error: 'away_score must be 0–99' });
   }
-  db.prepare('UPDATE games SET home_score=?, away_score=?, ea_match_id=?, status=?, season_id=?, is_overtime=?, date=? WHERE id=?')
-    .run(home_score, away_score, ea_match_id, status, season_id, is_overtime, date, req.params.id);
+  db.prepare('UPDATE games SET home_score=?, away_score=?, ea_match_id=?, status=?, season_id=?, is_overtime=?, is_forfeit=?, date=? WHERE id=?')
+    .run(home_score, away_score, ea_match_id, status, season_id, is_overtime, is_forfeit, date, req.params.id);
 
   // Auto-update the playoff series bracket whenever a playoff game is completed or updated
   const effectiveSeries = req.body.playoff_series_id !== undefined

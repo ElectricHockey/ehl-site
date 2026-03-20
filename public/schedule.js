@@ -52,7 +52,8 @@ function resultBadge(r) {
   return `<span class="badge badge-tie">${r}</span>`;
 }
 
-function statusBadge(s) {
+function statusBadge(s, isForfeit) {
+  if (s === 'complete' && isForfeit) return '<span class="status-badge status-forfeit">🏳 Forfeit</span>';
   if (s === 'complete') return '<span class="status-badge status-complete">✓ Final</span>';
   return '<span class="status-badge status-scheduled">Scheduled</span>';
 }
@@ -152,7 +153,7 @@ function buildGameRow(g) {
       <td>${g.home_logo ? `<img src="${g.home_logo}" style="width:22px;height:22px;object-fit:contain;vertical-align:middle;margin-right:0.3rem;border-radius:3px;" />` : ''}${g.home_team_name}</td>
       <td>${g.status === 'complete' ? `${g.home_score} – ${g.away_score}` : '–'}</td>
       <td>${g.away_logo ? `<img src="${g.away_logo}" style="width:22px;height:22px;object-fit:contain;vertical-align:middle;margin-right:0.3rem;border-radius:3px;" />` : ''}${g.away_team_name}</td>
-      <td id="status-cell-${g.id}">${statusBadge(g.status)}</td>
+      <td id="status-cell-${g.id}">${statusBadge(g.status, g.is_forfeit)}</td>
       ${isAdmin ? `
       <td id="ea-status-${g.id}">
         ${g.ea_match_id
@@ -273,10 +274,13 @@ async function openGameDetail(gameId) {
   // Admin buttons
   const pickBtn = document.getElementById('detail-pick-btn');
   const completeBtn = document.getElementById('detail-complete-btn');
+  const forfeitBtn = document.getElementById('detail-forfeit-btn');
   if (pickBtn) pickBtn.style.display = isAdmin ? '' : 'none';
   if (completeBtn) completeBtn.style.display = (isAdmin && game && game.status !== 'complete') ? '' : 'none';
+  if (forfeitBtn) forfeitBtn.style.display = (isAdmin && game && game.status !== 'complete') ? '' : 'none';
   if (pickBtn) pickBtn.dataset.gameId = gameId;
   if (completeBtn) completeBtn.dataset.gameId = gameId;
+  if (forfeitBtn) forfeitBtn.dataset.gameId = gameId;
 
   try {
     const res = await fetch(`${API}/games/${gameId}/stats`);
@@ -294,7 +298,7 @@ function renderGameDetail(data) {
 
   const isComplete = game.status === 'complete';
   const finalLabel = isComplete
-    ? `<div style="text-align:center;font-size:0.72rem;font-weight:700;letter-spacing:0.1em;color:#8b949e;text-transform:uppercase;padding-bottom:0.2rem;">${game.is_overtime ? 'FINAL/OT' : 'FINAL'}</div>`
+    ? `<div style="text-align:center;font-size:0.72rem;font-weight:700;letter-spacing:0.1em;color:#8b949e;text-transform:uppercase;padding-bottom:0.2rem;">${game.is_forfeit ? 'FORFEIT' : game.is_overtime ? 'FINAL/OT' : 'FINAL'}</div>`
     : '';
 
   // Power play summary from player stats (PP goals / PP opportunities)
@@ -343,6 +347,7 @@ document.getElementById('game-detail').addEventListener('click', e => {
   const gameId = parseInt(btn.dataset.gameId, 10);
   if (btn.dataset.action === 'open-picker') { openPicker(gameId); }
   else if (btn.dataset.action === 'mark-complete') { markComplete(gameId); }
+  else if (btn.dataset.action === 'mark-forfeit') { markForfeit(gameId); }
 });
 
 async function markComplete(gameId) {
@@ -362,6 +367,32 @@ async function markComplete(gameId) {
     await openGameDetail(gameId);
   } catch (err) {
     alert(`Failed to mark game complete: ${err.message}`);
+  }
+}
+
+async function markForfeit(gameId) {
+  const game = allGames.find(g => g.id === gameId);
+  if (!game) return;
+  const homeWins = confirm(
+    `Forfeit: does ${game.home_team_name} win?\n\nOK = ${game.home_team_name} wins\nCancel = ${game.away_team_name} wins`
+  );
+  if (!confirm(`Confirm: mark this game as a forfeit win for ${homeWins ? game.home_team_name : game.away_team_name}?`)) return;
+  const home_score = homeWins ? 1 : 0;
+  const away_score = homeWins ? 0 : 1;
+  try {
+    const res = await fetch(`${API}/games/${gameId}`, {
+      method: 'PATCH',
+      headers: adminHeaders(),
+      body: JSON.stringify({ status: 'complete', is_overtime: 0, is_forfeit: 1, home_score, away_score }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    await refreshGame(gameId);
+    await openGameDetail(gameId);
+  } catch (err) {
+    alert(`Failed to record forfeit: ${err.message}`);
   }
 }
 
@@ -553,7 +584,7 @@ async function refreshGame(gameId) {
     const row = document.getElementById(`game-row-${gameId}`);
     if (row) {
       row.cells[2].textContent = g.status === 'complete' ? `${g.home_score} – ${g.away_score}` : '–';
-      document.getElementById(`status-cell-${gameId}`).innerHTML = statusBadge(g.status);
+      document.getElementById(`status-cell-${gameId}`).innerHTML = statusBadge(g.status, g.is_forfeit);
       const eaCell = document.getElementById(`ea-status-${gameId}`);
       if (eaCell) eaCell.innerHTML = g.ea_match_id
         ? `<span class="ea-badge ea-badge-linked">🔗 Linked</span>`

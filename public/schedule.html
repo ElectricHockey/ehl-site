@@ -41,6 +41,7 @@
     }
     .status-complete   { background: #1f4b2f; color: #3fb950; }
     .status-scheduled  { background: #2d2d2d; color: #8b949e; }
+    .status-forfeit    { background: #3d2020; color: #e05c5c; }
 
     .ea-badge {
       display: inline-flex;
@@ -243,6 +244,8 @@
             data-action="open-picker">🎮 Pick EA Match</button>
           <button id="detail-complete-btn" class="btn-complete" style="display:none;"
             data-action="mark-complete">✅ Mark Complete</button>
+          <button id="detail-forfeit-btn" class="btn-secondary" style="display:none;background:#3d2020;color:#e05c5c;border-color:#5c3030;"
+            data-action="mark-forfeit">🏳 Forfeit</button>
           <button class="btn-close" onclick="closeGameDetail()" title="Close">✕</button>
         </div>
       </div>
