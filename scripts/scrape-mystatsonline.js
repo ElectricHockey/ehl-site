@@ -256,39 +256,85 @@ async function scrapeSchedule(leagueId, seasonId) {
   const urls = [
     // The real schedule+scores page (primary)
     `${BASE}/schedule_scores/schedule.aspx?IDLeague=${leagueId}&IDSeason=${seasonId}`,
+    `${BASE}/schedule_scores/schedule_scores_hockey.aspx?IDLeague=${leagueId}&IDSeason=${seasonId}`,
+    `${BASE}/schedule_scores/scores.aspx?IDLeague=${leagueId}&IDSeason=${seasonId}`,
+    `${BASE}/schedule_scores/hockey_scores.aspx?IDLeague=${leagueId}&IDSeason=${seasonId}`,
+    `${BASE}/schedule_scores/game_score_hockey.aspx?IDLeague=${leagueId}&IDSeason=${seasonId}`,
     // Legacy / alternative paths (fallback)
     `${BASE}/schedule/schedule.aspx?IDLeague=${leagueId}&IDSeason=${seasonId}`,
     `${BASE}/schedule/results.aspx?IDLeague=${leagueId}&IDSeason=${seasonId}`,
     `${BASE}/home/home_hockey.aspx?IDLeague=${leagueId}&IDSeason=${seasonId}`,
   ];
+
+  // Track pages that returned valid HTML even if we parsed 0 games
+  // (they may contain IDGame= links we can use as a fallback)
+  const candidateHtmlPages = [];
+
   for (const url of urls) {
     try {
       const { status, body } = await fetchUrl(url);
       if (status !== 200) continue;
       const games = parseScheduleHtml(body);
       if (games.length > 0) return games;
+      // Keep for IDGame-link fallback below
+      candidateHtmlPages.push(body);
     } catch (e) {
       // try next URL
     }
   }
+
+  // ── IDGame-link fallback ────────────────────────────────────────────────
+  // If table-based schedule parsing found nothing, collect all IDGame= links
+  // from any page we fetched and visit each game page individually.
+  const allGameLinks = new Map(); // IDGame id → full URL
+  for (const html of candidateHtmlPages) {
+    for (const { gameId, href } of extractAllIDGameLinks(html, leagueId)) {
+      if (!allGameLinks.has(gameId)) allGameLinks.set(gameId, href);
+    }
+  }
+
+  if (allGameLinks.size > 0) {
+    process.stdout.write(`\n     → Falling back to ${allGameLinks.size} individual game page(s)…`);
+    const games = [];
+    let fetched = 0;
+    for (const [, href] of allGameLinks) {
+      try {
+        const { status, body } = await fetchUrl(href);
+        if (status !== 200) continue;
+        const game = parseGameScorePageHtml(body);
+        if (game) games.push({ ...game, _detailUrl: href });
+      } catch { /* skip */ }
+      fetched++;
+      if (fetched % 10 === 0) process.stdout.write('.');
+      await new Promise(r => setTimeout(r, 200));
+    }
+    process.stdout.write('\n');
+    if (games.length > 0) return games;
+  }
+
   return [];
 }
 
 function parseScheduleHtml(html) {
   const games = [];
-  // Look for a table with date/home/away/score columns
+  // Look for a table with date/home/away/score columns — try many header spellings
   const rows = findTableByHeaders(html, 'date') ||
                findTableByHeaders(html, 'home') ||
+               findTableByHeaders(html, 'visitor') ||
+               findTableByHeaders(html, 'away') ||
+               findTableByHeaders(html, 'home team') ||
+               findTableByHeaders(html, 'visiting team') ||
                parseTable(html, 0);
   if (!rows || rows.length < 2) return games;
 
   const headers = rows[0].map(h => h.toLowerCase());
-  const dateIdx   = colIdx(headers, 'date', 'game date');
-  const homeIdx   = colIdx(headers, 'home', 'home team');
-  const awayIdx   = colIdx(headers, 'away', 'visitor', 'away team');
-  const hScoreIdx = colIdx(headers, 'home score', 'h score', 'home g', 'hg');
-  const aScoreIdx = colIdx(headers, 'away score', 'v score', 'visitor g', 'vg', 'ag');
-  const otIdx     = colIdx(headers, 'ot', 'overtime');
+  const dateIdx   = colIdx(headers, 'date', 'game date', 'date played', 'scheduled date');
+  const homeIdx   = colIdx(headers, 'home', 'home team', 'home club', 'home side');
+  const awayIdx   = colIdx(headers, 'away', 'visitor', 'away team', 'visiting team', 'visiting club', 'guest');
+  const hScoreIdx = colIdx(headers, 'home score', 'h score', 'home g', 'hg', 'home goals');
+  const aScoreIdx = colIdx(headers, 'away score', 'v score', 'visitor g', 'vg', 'ag', 'visitor score', 'away goals');
+  const scoreIdx  = colIdx(headers, 'score', 'result', 'final');
+  const otIdx     = colIdx(headers, 'ot', 'overtime', 'so');
 
   // Also extract raw rows so we can grab embedded links per row
   const tableRe = /<table[\s\S]*?<\/table>/gi;
@@ -320,7 +366,13 @@ function parseScheduleHtml(html) {
     let hScore = hScoreIdx >= 0 ? num(row[hScoreIdx]) : null;
     let aScore = aScoreIdx >= 0 ? num(row[aScoreIdx]) : null;
 
-    // If scores missing, look for X-Y pattern in any cell
+    // If still missing, try a combined "score"/"result"/"final" column
+    if ((hScore === null || aScore === null) && scoreIdx >= 0) {
+      const scoreMatch = row[scoreIdx].match(/^(\d+)\s*[-–]\s*(\d+)$/);
+      if (scoreMatch) { hScore = parseInt(scoreMatch[1]); aScore = parseInt(scoreMatch[2]); }
+    }
+
+    // Final fallback: look for X-Y pattern in any cell
     if (hScore === null || aScore === null) {
       for (const cell of row) {
         const scoreMatch = cell.match(/^(\d+)\s*[-–]\s*(\d+)$/);
@@ -362,6 +414,109 @@ function extractGameDetailUrl(html) {
   return `https://www.mystatsonline.com/hockey/visitor/league/schedule_scores/${href}`;
 }
 
+/** Return every unique IDGame link found in an HTML page. */
+function extractAllIDGameLinks(html, leagueId) {
+  const links = [];
+  const seen = new Set();
+  const re = /href=["']([^"']*IDGame=(\d+)[^"']*)["']/gi;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    const gameId = m[2];
+    if (seen.has(gameId)) continue;
+    seen.add(gameId);
+    let href = m[1].replace(/&amp;/gi, '&');
+    if (!href.startsWith('http')) {
+      href = href.startsWith('/')
+        ? `https://www.mystatsonline.com${href}`
+        : `https://www.mystatsonline.com/hockey/visitor/league/schedule_scores/${href}`;
+    }
+    if (!href.includes('IDLeague=')) href += `&IDLeague=${leagueId}`;
+    links.push({ gameId, href });
+  }
+  return links;
+}
+
+/**
+ * Parse a game_score_hockey.aspx page to extract:
+ *   home_team, away_team, home_score, away_score, date, is_overtime
+ *
+ * The page typically has a small period-score table at the top:
+ *   Team       | P1 | P2 | P3 | [OT] | Final
+ *   Home Team  |  1 |  2 |  0 |      |     3
+ *   Away Team  |  0 |  1 |  1 |      |     2
+ *
+ * Returns null if parsing fails (game not yet played / unrecognised format).
+ */
+function parseGameScorePageHtml(html) {
+  const tableRe = /<table[\s\S]*?<\/table>/gi;
+  let m;
+  const tables = [];
+  while ((m = tableRe.exec(html)) !== null) tables.push(m[0]);
+
+  for (const tableHtml of tables) {
+    const rows = parseTableHtml(tableHtml);
+    // Score table: header + 2 team rows (possibly a 3rd row for OT or shootout)
+    if (rows.length < 3 || rows.length > 6) continue;
+
+    // Skip the optional header row — find first row whose first cell is non-numeric
+    // (the team name row)
+    let startRow = 0;
+    if (rows[0].every(c => !c.trim() || /^\d+$/.test(c.trim()) || /^(p\d|ot|so|f|final|total|t|score|team|club|home|visitor|away)$/i.test(c.trim()))) {
+      startRow = 1; // row 0 is the header
+    }
+
+    const homeRow = rows[startRow];
+    const awayRow = rows[startRow + 1];
+    if (!homeRow || !awayRow) continue;
+
+    const homeName = homeRow[0] ? homeRow[0].trim() : '';
+    const awayName = awayRow[0] ? awayRow[0].trim() : '';
+    if (!homeName || !awayName || homeName === awayName) continue;
+    // Reject obviously-wrong names (numbers, single chars, etc.)
+    if (/^\d+$/.test(homeName) || homeName.length < 2) continue;
+
+    // All non-name columns should be numeric
+    const homeNums = homeRow.slice(1).map(c => parseInt(c.trim(), 10)).filter(n => !isNaN(n));
+    const awayNums = awayRow.slice(1).map(c => parseInt(c.trim(), 10)).filter(n => !isNaN(n));
+    if (homeNums.length === 0 || awayNums.length === 0) continue;
+    if (homeNums.length !== awayNums.length) continue;
+
+    // Last numeric column is the final/total score
+    const homeScore = homeNums[homeNums.length - 1];
+    const awayScore = awayNums[awayNums.length - 1];
+
+    // Sanity: if there are period columns, their sum should equal the final
+    // (allow for 1 extra goal in OT/shootout)
+    if (homeNums.length > 1) {
+      const hPeriodSum = homeNums.slice(0, -1).reduce((a, b) => a + b, 0);
+      const aPeriodSum = awayNums.slice(0, -1).reduce((a, b) => a + b, 0);
+      if (Math.abs(homeScore - hPeriodSum) > 1 || Math.abs(awayScore - aPeriodSum) > 1) continue;
+    }
+
+    const is_overtime = homeNums.length > 4; // more than 3 periods + final column
+    const date = extractDateFromHtml(html);
+
+    return { home_team: homeName, away_team: awayName, home_score: homeScore, away_score: awayScore, date, is_overtime };
+  }
+  return null;
+}
+
+/** Scan HTML text (tags stripped) for a recognisable date string. */
+function extractDateFromHtml(html) {
+  // Strip tags for simpler matching
+  const text = html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
+  // ISO date
+  let m = text.match(/\b(\d{4}-\d{2}-\d{2})\b/);
+  if (m) { const d = normalizeDate(m[1]); if (d) return d; }
+  // M/D/YYYY or MM/DD/YYYY
+  m = text.match(/\b(\d{1,2}\/\d{1,2}\/\d{4})\b/);
+  if (m) { const d = normalizeDate(m[1]); if (d) return d; }
+  // "Jan 15, 2024" or "January 15, 2024"
+  m = text.match(/\b([A-Za-z]{3,9})\s+(\d{1,2}),?\s+(\d{4})\b/);
+  if (m) { const d = normalizeDate(`${m[1]} ${m[2]}, ${m[3]}`); if (d) return d; }
+  return null;
+}
+
 function normalizeDate(str) {
   if (!str) return null;
   str = str.trim();
@@ -370,15 +525,20 @@ function normalizeDate(str) {
   // M/D/YYYY or MM/DD/YYYY
   const m1 = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
   if (m1) return `${m1[3]}-${m1[1].padStart(2,'0')}-${m1[2].padStart(2,'0')}`;
-  // D-Mon-YYYY or Mon D, YYYY
-  const months = {jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
-  const m2 = str.match(/(\d{1,2})[- ]([a-zA-Z]{3})[- ](\d{4})/);
+  // Full or abbreviated month name lookup (Jan/January, Feb/February …)
+  const months = {
+    jan:1, january:1, feb:2, february:2, mar:3, march:3, apr:4, april:4,
+    may:5, jun:6, june:6, jul:7, july:7, aug:8, august:8, sep:9, sept:9,
+    september:9, oct:10, october:10, nov:11, november:11, dec:12, december:12,
+  };
+  // D-Mon-YYYY or D-Month-YYYY
+  const m2 = str.match(/(\d{1,2})[- ]([a-zA-Z]+)[- ](\d{4})/);
   if (m2) {
     const mo = months[m2[2].toLowerCase()];
     if (mo) return `${m2[3]}-${String(mo).padStart(2,'0')}-${m2[1].padStart(2,'0')}`;
   }
-  // Mon D, YYYY
-  const m3 = str.match(/([a-zA-Z]{3})\s+(\d{1,2}),?\s+(\d{4})/);
+  // Mon[th] D, YYYY  or  Mon[th] D YYYY
+  const m3 = str.match(/([a-zA-Z]+)\s+(\d{1,2}),?\s+(\d{4})/);
   if (m3) {
     const mo = months[m3[1].toLowerCase()];
     if (mo) return `${m3[3]}-${String(mo).padStart(2,'0')}-${m3[2].padStart(2,'0')}`;
