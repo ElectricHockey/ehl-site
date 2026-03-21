@@ -1196,3 +1196,72 @@ async function runImportText() {
   showImportStatus('⏳ Importing…', true);
   await sendImport(data);
 }
+
+// ── Excel schedule import ─────────────────────────────────────────────────
+
+function showXlImportStatus(msg, ok) {
+  const el = document.getElementById('xl-import-status');
+  if (!el) return;
+  el.style.display = 'block';
+  el.style.background = ok ? 'rgba(63,185,80,0.12)' : 'rgba(248,81,73,0.12)';
+  el.style.border = ok ? '1px solid rgba(63,185,80,0.4)' : '1px solid rgba(248,81,73,0.4)';
+  el.style.color = ok ? '#3fb950' : '#f85149';
+  el.textContent = msg;
+}
+
+async function runExcelImport() {
+  const fileInput   = document.getElementById('xl-import-file');
+  const seasonName  = (document.getElementById('xl-season-name')  || {}).value || '';
+  const leagueType  = (document.getElementById('xl-league-type')  || {}).value || '';
+  const leagueId    = (document.getElementById('xl-league-id')    || {}).value || '';
+
+  if (!fileInput || !fileInput.files.length) {
+    showXlImportStatus('❌ Please select an Excel file first.', false);
+    return;
+  }
+  if (!seasonName.trim()) {
+    showXlImportStatus('❌ Please enter a Season name.', false);
+    return;
+  }
+  const file = fileInput.files[0];
+  if (file.size > 20 * 1024 * 1024) {
+    showXlImportStatus('❌ File too large (max 20 MB).', false);
+    return;
+  }
+
+  showXlImportStatus('⏳ Uploading and processing… this may take a minute while player stats are fetched from mystatsonline.', true);
+
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('season_name', seasonName.trim());
+  fd.append('league_type', leagueType);
+  fd.append('league_id',   leagueId.trim());
+
+  try {
+    const token = localStorage.getItem('adminToken') || '';
+    const res = await fetch('/api/admin/import-excel', {
+      method: 'POST',
+      headers: { 'X-Admin-Token': token },
+      body: fd,
+    });
+    const json = await res.json().catch(() => ({}));
+    if (res.ok && json.ok) {
+      const s = json.summary || {};
+      const MAX_DISPLAYED_ERRORS = 10;
+      let msg = `✅ Excel import complete!\n` +
+        `Season: ${s.season || seasonName}\n` +
+        `Teams created: ${s.teams_created}\n` +
+        `Games created: ${s.games_created}  |  Skipped (duplicate): ${s.games_skipped}\n` +
+        `Games with stats fetched: ${s.stats_fetched}  |  Stats skipped/failed: ${s.stats_skipped}`;
+      if (s.errors && s.errors.length) {
+        msg += `\n\nErrors (${s.errors.length}):\n` + s.errors.slice(0, MAX_DISPLAYED_ERRORS).join('\n');
+        if (s.errors.length > MAX_DISPLAYED_ERRORS) msg += `\n…and ${s.errors.length - MAX_DISPLAYED_ERRORS} more`;
+      }
+      showXlImportStatus(msg, true);
+    } else {
+      showXlImportStatus(`❌ Import failed: ${json.error || res.status}`, false);
+    }
+  } catch (e) {
+    showXlImportStatus(`❌ Network error: ${e.message}`, false);
+  }
+}

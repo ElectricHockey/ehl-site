@@ -2,10 +2,13 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
+const https = require('https');
+const http = require('http');
 const rateLimit = require('express-rate-limit');
 const crypto = require('crypto');
 const multer = require('multer');
 const { promisify } = require('util');
+const ExcelJS = require('exceljs');
 const db = require('./db');
 const EA_STATS_MAP = require('./ea-stats-map');
 
@@ -46,6 +49,18 @@ const logoUpload = multer({
   fileFilter: (_req, file, cb) => {
     const ok = /^image\/(jpeg|png|gif|webp|svg\+xml)$/.test(file.mimetype);
     cb(ok ? null : new Error('Only image files are allowed'), ok);
+  },
+});
+
+// Memory-storage uploader for Excel schedule imports (no files saved to disk)
+const excelUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const ok = /\.(xlsx|xls)$/i.test(file.originalname) ||
+               file.mimetype === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+               file.mimetype === 'application/vnd.ms-excel';
+    cb(ok ? null : new Error('Only Excel files (.xlsx / .xls) are allowed'), ok);
   },
 });
 
@@ -2094,15 +2109,542 @@ app.get('/api/stats/historical', (req, res) => {
   res.json({ skaters, goalies });
 });
 
+// ── Excel schedule import ──────────────────────────────────────────────────
+// POST /api/admin/import-excel
+// Accepts a multipart/form-data request with:
+//   file        — .xlsx / .xls Excel file (schedule exported from mystatsonline)
+//   season_name — string, name for this season
+//   league_type — "threes" | "sixes" | ""
+//   league_id   — numeric mystatsonline league ID (e.g. 73879)
+//                 used to build the game-detail URL for fetching player stats.
+//
+// Excel column layout (flexible — detected from header row):
+//   Date / Time  |  Home team  |  Home score  |  OT  |  Away score  |  Away team  |  Location  |  Status  |  IDGame
+//
+// For each game row that has an IDGame value the server fetches:
+//   https://www.mystatsonline.com/hockey/visitor/league/schedule_scores/game_score_hockey.aspx?IDLeague=<id>&IDGame=<id>
+// and parses the skater / goalie stats tables, storing them in game_player_stats.
+
+// ── shared HTML / HTTP helpers (used by the Excel import only) ────────────
+
+function _mso_fetchUrl(url, redirectCount = 0) {
+  return new Promise((resolve, reject) => {
+    if (redirectCount > 10) return reject(new Error('Too many redirects'));
+    let parsed;
+    try { parsed = new URL(url); } catch (e) { return reject(e); }
+    const lib = parsed.protocol === 'https:' ? https : http;
+    const options = {
+      hostname: parsed.hostname,
+      path: parsed.pathname + parsed.search,
+      port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
+      method: 'GET',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; EHL-Importer/1.0)',
+        'Accept': 'text/html,application/xhtml+xml',
+      },
+    };
+    const req = lib.request(options, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        const next = new URL(res.headers.location, url).toString();
+        return resolve(_mso_fetchUrl(next, redirectCount + 1));
+      }
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', chunk => { body += chunk; });
+      res.on('end', () => resolve({ status: res.statusCode, body }));
+    });
+    req.on('error', reject);
+    req.setTimeout(30000, () => { req.destroy(new Error('Request timed out')); });
+    req.end();
+  });
+}
+
+function _mso_stripTags(str) {
+  let t = str.replace(/<[^>]*>/g, ' ');
+  t = t.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+       .replace(/&apos;/g, "'").replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&');
+  t = t.replace(/&#\d+;/g, ' ').replace(/&#x[\da-fA-F]+;/g, ' ');
+  return t.replace(/\s+/g, ' ').trim();
+}
+
+function _mso_parseTableHtml(tableHtml) {
+  const rows = [];
+  const rowRe = /<tr[\s\S]*?<\/tr>/gi;
+  let rowM;
+  while ((rowM = rowRe.exec(tableHtml)) !== null) {
+    const cells = [];
+    const cellRe = /<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi;
+    let cellM;
+    while ((cellM = cellRe.exec(rowM[0])) !== null) cells.push(_mso_stripTags(cellM[1]));
+    if (cells.length > 0) rows.push(cells);
+  }
+  return rows;
+}
+
+function _mso_colIdx(headers, ...names) {
+  for (const name of names) {
+    const idx = headers.findIndex(h => h.toLowerCase() === name.toLowerCase());
+    if (idx >= 0) return idx;
+  }
+  for (const name of names) {
+    if (name.length <= 2) continue;
+    const idx = headers.findIndex(h => h.toLowerCase().includes(name.toLowerCase()));
+    if (idx >= 0) return idx;
+  }
+  return -1;
+}
+
+function _mso_num(val) {
+  if (val === undefined || val === null || val === '' || val === '-') return 0;
+  const n = parseFloat(String(val).replace(/[^0-9.\-]/g, ''));
+  return isNaN(n) ? 0 : n;
+}
+
+function _mso_parseGameDetailHtml(html) {
+  const homePlayers = [];
+  const awayPlayers = [];
+  const tableRe = /<table[\s\S]*?<\/table>/gi;
+  let m;
+  const skaterTables = [];
+  const goalieTables = [];
+
+  while ((m = tableRe.exec(html)) !== null) {
+    const rows = _mso_parseTableHtml(m[0]);
+    if (rows.length < 2) continue;
+    const headers = rows[0].map(h => h.toLowerCase());
+
+    const hasGoalieNameCol = headers.some(h => h === 'goalies' || h === 'goalie');
+    const hasShotsAgainst  = headers.some(h => h === 'sa' || h.includes('shots against') || h.includes('shots a'));
+    const hasSaves         = headers.some(h => h === 'sv' || h === 'saves' || h === 'svs');
+    const isGoalie = (hasGoalieNameCol || hasShotsAgainst) && hasSaves;
+
+    const hasPlayerCol = headers.some(h => h === 'players' || h === 'player' || h === 'name' || h === 'skater');
+    const hasPosCol    = headers.some(h => h === 'pos' || h === 'position');
+    const hasGoalsCol  = headers.some(h => h === 'g' || h === 'goals');
+    const hasAssistsCol= headers.some(h => h === 'a' || h === 'assists');
+    const isSkater = hasPlayerCol && hasPosCol && hasGoalsCol && hasAssistsCol;
+
+    if (isGoalie)      goalieTables.push(rows);
+    else if (isSkater) skaterTables.push(rows);
+  }
+
+  const _parseSkaters = (rows, target) => {
+    const h = rows[0].map(v => v.toLowerCase());
+    const playerIdx= _mso_colIdx(h, 'players','player','name');
+    const posIdx   = _mso_colIdx(h, 'pos','position');
+    const gIdx     = _mso_colIdx(h, 'g','goals');
+    const aIdx     = _mso_colIdx(h, 'a','assists');
+    const sIdx     = _mso_colIdx(h, 's','shots');
+    const pimIdx   = _mso_colIdx(h, 'pim');
+    const pmIdx    = _mso_colIdx(h, '+/-','plus/minus','plusminus');
+    const ppgIdx   = _mso_colIdx(h, 'ppg','pp');
+    const shgIdx   = _mso_colIdx(h, 'shg','sh');
+    const gwgIdx   = _mso_colIdx(h, 'wg','gwg','game winning');
+    const hitsIdx  = _mso_colIdx(h, 'hits');
+    const bsIdx    = _mso_colIdx(h, 'bs','blocked');
+    const fowIdx   = _mso_colIdx(h, 'fow','fo wins','faceoff wins');
+    const foIdx    = _mso_colIdx(h, 'fo','faceoffs');
+    const gvaIdx   = _mso_colIdx(h, 'gva','giveaways');
+    const tkaIdx   = _mso_colIdx(h, 'tka','takeaways');
+    const toiIdx   = _mso_colIdx(h, 'toi','time on ice');
+
+    for (let i = 1; i < rows.length; i++) {
+      const row = rows[i];
+      const name = playerIdx >= 0 ? row[playerIdx] : '';
+      if (!name || /^totals?$/i.test(name)) continue;
+      const pos = posIdx >= 0 ? row[posIdx].toUpperCase() : 'F';
+      if (pos === 'G') continue;
+      const foW   = fowIdx >= 0 ? _mso_num(row[fowIdx]) : 0;
+      const foTot = foIdx >= 0 && foIdx !== fowIdx ? _mso_num(row[foIdx]) : 0;
+      target.push({
+        player_name:    name.trim(),
+        position:       pos || 'F',
+        goals:          gIdx   >= 0 ? _mso_num(row[gIdx])   : 0,
+        assists:        aIdx   >= 0 ? _mso_num(row[aIdx])   : 0,
+        shots:          sIdx   >= 0 ? _mso_num(row[sIdx])   : 0,
+        pim:            pimIdx >= 0 ? _mso_num(row[pimIdx]) : 0,
+        plus_minus:     pmIdx  >= 0 ? _mso_num(row[pmIdx])  : 0,
+        pp_goals:       ppgIdx >= 0 ? _mso_num(row[ppgIdx]) : 0,
+        sh_goals:       shgIdx >= 0 ? _mso_num(row[shgIdx]) : 0,
+        gwg:            gwgIdx >= 0 ? _mso_num(row[gwgIdx]) : 0,
+        hits:           hitsIdx>= 0 ? _mso_num(row[hitsIdx]): 0,
+        blocked_shots:  bsIdx  >= 0 ? _mso_num(row[bsIdx])  : 0,
+        faceoff_wins:   foW,
+        faceoff_losses: foTot > foW ? foTot - foW : 0,
+        giveaways:      gvaIdx >= 0 ? _mso_num(row[gvaIdx]) : 0,
+        takeaways:      tkaIdx >= 0 ? _mso_num(row[tkaIdx]) : 0,
+        toi:            toiIdx >= 0 ? _mso_num(row[toiIdx]) : 0,
+      });
+    }
+  };
+
+  const _parseGoalies = (rows, target) => {
+    const h = rows[0].map(v => v.toLowerCase());
+    const playerIdx= _mso_colIdx(h, 'goalies','goalie','players','player','name');
+    const saIdx    = _mso_colIdx(h, 'sa','shots against','shots a');
+    const gaIdx    = _mso_colIdx(h, 'ga','goals against');
+    const svIdx    = _mso_colIdx(h, 'sv','saves');
+    const gaaIdx   = _mso_colIdx(h, 'gaa');
+    const svpIdx   = _mso_colIdx(h, 'sv%','save%','save pct');
+    const soIdx    = _mso_colIdx(h, 'so','shutouts');
+    const wIdx     = _mso_colIdx(h, 'w','wins');
+    const lIdx     = _mso_colIdx(h, 'l','losses');
+    const toiIdx   = _mso_colIdx(h, 'toi','time on ice');
+    const psaIdx   = _mso_colIdx(h, 'psa','penalty shot attempts');
+    const psgaIdx  = _mso_colIdx(h, 'psga','penalty shot goals');
+    const otwIdx   = _mso_colIdx(h, 'otw','ot win');
+    const otlIdx   = _mso_colIdx(h, 'otl','ot loss');
+
+    for (let i = 1; i < rows.length; i++) {
+      const row = rows[i];
+      const name = playerIdx >= 0 ? row[playerIdx] : '';
+      if (!name || /^totals?$/i.test(name)) continue;
+      const svpRaw = svpIdx >= 0 ? row[svpIdx] : '';
+      const svp = svpRaw
+        ? parseFloat(svpRaw.replace('%','').trim()) / (svpRaw.includes('%') ? 100 : 1)
+        : null;
+      target.push({
+        player_name:   name.trim(),
+        position:      'G',
+        goals: 0, assists: 0,
+        shots_against: saIdx  >= 0 ? _mso_num(row[saIdx])  : 0,
+        goals_against: gaIdx  >= 0 ? _mso_num(row[gaIdx])  : 0,
+        saves:         svIdx  >= 0 ? _mso_num(row[svIdx])  : 0,
+        save_pct:      (svp != null && !isNaN(svp)) ? Math.round(svp * 1000) / 1000 : null,
+        gaa:           gaaIdx >= 0 && row[gaaIdx] ? parseFloat(row[gaaIdx]) || null : null,
+        shutouts:      soIdx  >= 0 ? _mso_num(row[soIdx])  : 0,
+        goalie_wins:   wIdx   >= 0 ? _mso_num(row[wIdx])   : 0,
+        goalie_losses: lIdx   >= 0 ? _mso_num(row[lIdx])   : 0,
+        goalie_otw:    otwIdx >= 0 ? _mso_num(row[otwIdx]) : 0,
+        goalie_otl:    otlIdx >= 0 ? _mso_num(row[otlIdx]) : 0,
+        toi:           toiIdx >= 0 ? _mso_num(row[toiIdx]) : 0,
+        penalty_shot_attempts: psaIdx  >= 0 ? _mso_num(row[psaIdx])  : 0,
+        penalty_shot_ga:       psgaIdx >= 0 ? _mso_num(row[psgaIdx]) : 0,
+      });
+    }
+  };
+
+  if (skaterTables[0]) _parseSkaters(skaterTables[0], homePlayers);
+  if (skaterTables[1]) _parseSkaters(skaterTables[1], awayPlayers);
+  if (goalieTables[0]) _parseGoalies(goalieTables[0], homePlayers);
+  if (goalieTables[1]) _parseGoalies(goalieTables[1], awayPlayers);
+
+  return { homePlayers, awayPlayers };
+}
+
+// ── Excel schedule import endpoint ────────────────────────────────────────
+
+app.post('/api/admin/import-excel', requireOwner, excelUpload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No Excel file uploaded.' });
+
+  const seasonName  = String(req.body.season_name  || '').trim();
+  const leagueType  = String(req.body.league_type  || '').trim();
+  const leagueId    = String(req.body.league_id    || '').trim();
+
+  if (!seasonName) return res.status(400).json({ error: '"season_name" is required.' });
+
+  // ── Parse the workbook ─────────────────────────────────────────────────
+  let workbook;
+  try {
+    workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(req.file.buffer);
+  } catch (e) {
+    return res.status(400).json({ error: `Could not parse Excel file: ${e.message}` });
+  }
+
+  const sheet = workbook.worksheets[0];
+  if (!sheet) return res.status(400).json({ error: 'The workbook contains no worksheets.' });
+
+  // ── Find the header row ────────────────────────────────────────────────
+  // Scan rows top→bottom for the first row containing "home team" (case-insensitive).
+  let headerRowNum = -1;
+  let colHomeTeam = -1, colHomeScore = -1, colOT = -1, colAwayScore = -1;
+  let colAwayTeam = -1, colStatus = -1, colIdGame = -1, colDateTime = -1;
+
+  sheet.eachRow((row, rowNum) => {
+    if (headerRowNum >= 0) return; // already found
+    const vals = [];
+    row.eachCell({ includeEmpty: true }, (cell, colNum) => {
+      vals[colNum - 1] = String(cell.value ?? '').trim().toLowerCase();
+    });
+    if (vals.some(v => v.includes('home team') || v === 'home')) {
+      headerRowNum = rowNum;
+      vals.forEach((v, i) => {
+        if (v.includes('date') || v.includes('time')) colDateTime   = i;
+        if (v.includes('home team') || v === 'home')  colHomeTeam   = i;
+        if (v.includes('away team') || v === 'away')  colAwayTeam   = i;
+        if (v.includes('status'))                     colStatus     = i;
+        if (v.includes('idgame') || v.includes('id game') || v === 'id') colIdGame = i;
+      });
+      // Home score: first blank/numeric column after home team, before away team
+      if (colHomeTeam >= 0 && colAwayTeam > colHomeTeam) {
+        for (let c = colHomeTeam + 1; c < colAwayTeam; c++) {
+          if (vals[c] === '') {
+            if (colHomeScore < 0) { colHomeScore = c; continue; }
+            if (colOT < 0)        { colOT = c;        continue; }
+            if (colAwayScore < 0) { colAwayScore = c; break; }
+          }
+        }
+        // fallback: just use colHomeTeam+1 and colHomeTeam+2
+        if (colHomeScore < 0) colHomeScore = colHomeTeam + 1;
+        if (colOT < 0)        colOT        = colHomeTeam + 2;
+        if (colAwayScore < 0 && colOT >= 0) colAwayScore = colOT + 1;
+      }
+    }
+  });
+
+  // If no header row with "home team" was found, try a positional fallback
+  if (headerRowNum < 0) {
+    // Assume standard layout: A=datetime, B=home, C=homeScore, D=OT, E=awayScore, F=away, G=loc, H=status, I=IDGame
+    headerRowNum = 0; // will skip 0 rows before data
+    colDateTime  = 0; colHomeTeam  = 1; colHomeScore = 2;
+    colOT        = 3; colAwayScore = 4; colAwayTeam  = 5;
+    colStatus    = 7; colIdGame    = 8;
+  }
+
+  // ── Collect game rows ──────────────────────────────────────────────────
+  const games = [];
+  let currentDate = '';
+
+  sheet.eachRow((row, rowNum) => {
+    if (rowNum <= headerRowNum) return; // skip header and anything above
+
+    const cells = [];
+    // Read all cells including empty (1-indexed in exceljs; we convert to 0-indexed)
+    const maxCol = Math.max(colIdGame, colAwayTeam, colStatus, colAwayScore, colOT, colHomeScore, colHomeTeam) + 2;
+    for (let c = 1; c <= maxCol + 1; c++) {
+      const cell = row.getCell(c);
+      let val = cell.value;
+      if (val instanceof Date) val = val.toISOString();
+      else if (val && typeof val === 'object' && val.result !== undefined) val = val.result; // formula
+      cells[c - 1] = String(val ?? '').trim();
+    }
+
+    const dateTimeVal = cells[colDateTime] || '';
+    const homeTeamVal = cells[colHomeTeam] || '';
+
+    // Detect date-header rows (e.g. "Saturday September 7, 2024")
+    // They typically have no home team value and the first cell looks like a date
+    if (!homeTeamVal && dateTimeVal) {
+      // Try to parse as a date string
+      const d = new Date(dateTimeVal);
+      if (!isNaN(d.getTime())) {
+        currentDate = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+      } else {
+        // Could be "Saturday September 7, 2024" — strip day-of-week and try
+        const stripped = dateTimeVal.replace(/^[a-zA-Z]+\s*/,'');
+        const d2 = new Date(stripped);
+        if (!isNaN(d2.getTime())) {
+          currentDate = `${d2.getFullYear()}-${String(d2.getMonth()+1).padStart(2,'0')}-${String(d2.getDate()).padStart(2,'0')}`;
+        } else {
+          // ISO date embedded somewhere?
+          const iso = dateTimeVal.match(/(\d{4}-\d{2}-\d{2})/);
+          if (iso) currentDate = iso[1];
+        }
+      }
+      return; // not a game row
+    }
+
+    if (!homeTeamVal) return; // blank row
+
+    // It's a game row — try to use the date portion of column A as a date if it looks like one
+    // (some exports put the full date+time in col A for every row)
+    let gameDate = currentDate;
+    if (dateTimeVal) {
+      const d = new Date(dateTimeVal);
+      if (!isNaN(d.getTime()) && d.getFullYear() > 2000) {
+        gameDate = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+      } else {
+        const iso = dateTimeVal.match(/(\d{4}-\d{2}-\d{2})/);
+        if (iso) gameDate = iso[1];
+      }
+    }
+
+    const awayTeamVal  = colAwayTeam  >= 0 ? (cells[colAwayTeam]  || '') : '';
+    const homeScoreVal = colHomeScore >= 0 ? (cells[colHomeScore] || '') : '';
+    const awayScoreVal = colAwayScore >= 0 ? (cells[colAwayScore] || '') : '';
+    const otVal        = colOT        >= 0 ? (cells[colOT]        || '') : '';
+    const statusVal    = colStatus    >= 0 ? (cells[colStatus]    || '') : '';
+    const idGameVal    = colIdGame    >= 0 ? (cells[colIdGame]    || '') : '';
+
+    const homeScore = parseInt(homeScoreVal, 10);
+    const awayScore = parseInt(awayScoreVal, 10);
+    const isOT      = /^OT$/i.test(otVal.trim());
+    const idGame    = idGameVal.trim();
+
+    if (!awayTeamVal) return; // must have away team
+
+    games.push({
+      date:       gameDate,
+      home_team:  homeTeamVal.trim(),
+      away_team:  awayTeamVal.trim(),
+      home_score: isNaN(homeScore) ? 0 : homeScore,
+      away_score: isNaN(awayScore) ? 0 : awayScore,
+      is_overtime: isOT ? 1 : 0,
+      status:     statusVal.trim(),
+      idGame,
+    });
+  });
+
+  if (games.length === 0) {
+    return res.status(400).json({ error: 'No game rows found in the uploaded file. Check that the file has the expected column layout (Home team, Away team, IDGame).' });
+  }
+
+  // ── DB helpers ────────────────────────────────────────────────────────
+  const findTeam    = db.prepare('SELECT id FROM teams WHERE name = ?');
+  const insertTeam  = db.prepare('INSERT INTO teams (name, conference, division, league_type, color1, color2) VALUES (?, \'\', \'\', ?, \'\', \'\')');
+  const findSeason  = db.prepare('SELECT id FROM seasons WHERE name = ?');
+  const insertSeason= db.prepare('INSERT INTO seasons (name, is_active, league_type) VALUES (?, 0, ?)');
+  const findGame    = db.prepare('SELECT id FROM games WHERE home_team_id=? AND away_team_id=? AND date=?');
+  const insertGame  = db.prepare(`
+    INSERT INTO games (home_team_id, away_team_id, home_score, away_score, date, status, season_id, is_overtime)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const deleteGPS   = db.prepare('DELETE FROM game_player_stats WHERE game_id = ?');
+  const insertGPS   = db.prepare(`
+    INSERT INTO game_player_stats
+      (game_id, team_id, player_name, position,
+       goals, assists, shots, pim, plus_minus, blocked_shots,
+       faceoff_wins, faceoff_losses, giveaways, takeaways, pp_goals, sh_goals, gwg, hits, toi,
+       saves, save_pct, goals_against, shots_against,
+       goalie_wins, goalie_losses, goalie_otw, goalie_otl, shutouts,
+       penalty_shot_attempts, penalty_shot_ga)
+    VALUES (?,?,?,?, ?,?,?,?,?,?, ?,?,?,?,?,?,?,?,?, ?,?,?,?, ?,?,?,?,?, ?,?)
+  `);
+
+  const teamCache = new Map();
+  function getOrCreateTeam(name) {
+    if (!name) return null;
+    if (teamCache.has(name)) return teamCache.get(name);
+    let row = findTeam.get(name);
+    if (!row) {
+      const r = insertTeam.run(name, leagueType || '');
+      teamCache.set(name, r.lastInsertRowid);
+      summary.teams_created++;
+      return r.lastInsertRowid;
+    }
+    teamCache.set(name, row.id);
+    return row.id;
+  }
+
+  const summary = {
+    season: seasonName,
+    teams_created: 0,
+    games_created: 0,
+    games_skipped: 0,
+    stats_fetched: 0,
+    stats_skipped: 0,
+    errors: [],
+  };
+
+  // ── Create / find the season ──────────────────────────────────────────
+  let seasonId;
+  const existingSeason = findSeason.get(seasonName);
+  if (existingSeason) {
+    seasonId = existingSeason.id;
+  } else {
+    seasonId = insertSeason.run(seasonName, leagueType || '').lastInsertRowid;
+  }
+
+  // ── Insert games (synchronous, in a transaction) ──────────────────────
+  const gameIds = []; // { dbId, game } pairs for games that need stat fetching
+  const insertGames = db.transaction(() => {
+    for (const g of games) {
+      if (!g.date) { summary.games_skipped++; continue; }
+      const homeId = getOrCreateTeam(g.home_team);
+      const awayId = getOrCreateTeam(g.away_team);
+      if (!homeId || !awayId) { summary.games_skipped++; continue; }
+
+      let existing = findGame.get(homeId, awayId, g.date);
+      let dbId;
+      if (existing) {
+        dbId = existing.id;
+        summary.games_skipped++;
+      } else {
+        const status = /complete/i.test(g.status) ? 'complete' : (g.status || 'complete');
+        dbId = insertGame.run(homeId, awayId, g.home_score, g.away_score, g.date, status, seasonId, g.is_overtime).lastInsertRowid;
+        summary.games_created++;
+      }
+      gameIds.push({ dbId, homeId, awayId, game: g });
+    }
+  });
+  insertGames();
+
+  // ── Fetch player stats from mystatsonline (async, per-game) ───────────
+  if (leagueId) {
+    for (const { dbId, homeId, awayId, game } of gameIds) {
+      if (!game.idGame) continue;
+      const url = `https://www.mystatsonline.com/hockey/visitor/league/schedule_scores/game_score_hockey.aspx?IDLeague=${leagueId}&IDGame=${game.idGame}`;
+      try {
+        const { status, body } = await _mso_fetchUrl(url);
+        if (status !== 200) {
+          summary.errors.push(`IDGame ${game.idGame}: HTTP ${status}`);
+          summary.stats_skipped++;
+          continue;
+        }
+        const { homePlayers, awayPlayers } = _mso_parseGameDetailHtml(body);
+        if (homePlayers.length === 0 && awayPlayers.length === 0) {
+          summary.stats_skipped++;
+          continue;
+        }
+
+        const homeWon = game.home_score > game.away_score;
+        const awayWon = game.away_score > game.home_score;
+        const isOT    = game.is_overtime === 1;
+
+        // Delete any existing stats for this game, then insert all players in one transaction
+        const saveAllStats = db.transaction((homePlrs, awayPlrs) => {
+          deleteGPS.run(dbId); // clear previous stats once, before inserting either team
+          const insertPlayers = (players, teamId, teamWon) => {
+            for (const p of players) {
+              const isGoalie = p.position === 'G';
+              let gw = 0, gl = 0, otw = 0, otl = 0, so = 0;
+              if (isGoalie) {
+                so = (p.goals_against || 0) === 0 ? 1 : 0;
+                if (teamWon) { if (isOT) otw = 1; else gw = 1; }
+                else         { if (isOT) otl = 1; else gl = 1; }
+              }
+              insertGPS.run(
+                dbId, teamId, p.player_name, p.position,
+                p.goals || 0, p.assists || 0, p.shots || 0, p.pim || 0,
+                p.plus_minus || 0, p.blocked_shots || 0,
+                p.faceoff_wins || 0, p.faceoff_losses || 0,
+                p.giveaways || 0, p.takeaways || 0,
+                p.pp_goals || 0, p.sh_goals || 0, p.gwg || 0, p.hits || 0, p.toi || 0,
+                p.saves || 0, p.save_pct != null ? p.save_pct : null,
+                p.goals_against || 0, p.shots_against || 0,
+                gw, gl, otw, otl, so,
+                p.penalty_shot_attempts || 0, p.penalty_shot_ga || 0
+              );
+            }
+          };
+          insertPlayers(homePlrs, homeId, homeWon);
+          insertPlayers(awayPlrs, awayId, awayWon);
+        });
+        saveAllStats(homePlayers, awayPlayers);
+        summary.stats_fetched++;
+      } catch (e) {
+        summary.errors.push(`IDGame ${game.idGame}: ${e.message}`);
+        summary.stats_skipped++;
+      }
+      // Polite delay between requests
+      await new Promise(r => setTimeout(r, 250));
+    }
+  }
+
+  res.json({ ok: true, summary });
+});
+
 // ── Global error handler ───────────────────────────────────────────────────
 // Catches multer errors (file too large, wrong type) and returns JSON so the
 // browser never sees a connection-reset "network error".
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
   if (err && err.code === 'LIMIT_FILE_SIZE') {
-    return res.status(413).json({ error: 'File too large. Maximum allowed size is 10 MB.' });
+    return res.status(413).json({ error: 'File too large. Maximum allowed size is 20 MB.' });
   }
-  if (err && err.message === 'Only image files are allowed') {
+  if (err && (err.message === 'Only image files are allowed' ||
+              err.message === 'Only Excel files (.xlsx / .xls) are allowed')) {
     return res.status(400).json({ error: err.message });
   }
   console.error('Unhandled error:', err);
