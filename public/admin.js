@@ -1130,11 +1130,10 @@ function showImportStatus(msg, ok) {
 }
 
 async function sendImport(data) {
-  const token = localStorage.getItem('admin_token');
   try {
     const res = await fetch('/api/admin/import', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Admin-Token': token },
+      headers: adminJsonHeaders(),
       body: JSON.stringify(data),
     });
     const json = await res.json().catch(() => ({}));
