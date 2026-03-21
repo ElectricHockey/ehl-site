@@ -2203,13 +2203,35 @@ function _mso_num(val) {
 function _mso_parseGameDetailHtml(html) {
   const homePlayers = [];
   const awayPlayers = [];
+  // Collect tables with their document position so we can detect team-section context
   const tableRe = /<table[\s\S]*?<\/table>/gi;
   let m;
-  const skaterTables = [];
+  const rawTables = [];
+  while ((m = tableRe.exec(html)) !== null) {
+    rawTables.push({ tableHtml: m[0], start: m.index });
+  }
+
+  // Walk tables in document order.  The HTML between consecutive tables often
+  // contains a heading that says "Visitor/Away" or "Home".  MSO convention is
+  // to list the away/visiting team first, so we default sectionIsAway = true.
+  let sectionIsAway = true;
+  let hasDetectedSection = false;
+  let prevEnd = 0;
+  const skaterTables = []; // { rows, isAway }
   const goalieTables = [];
 
-  while ((m = tableRe.exec(html)) !== null) {
-    const rows = _mso_parseTableHtml(m[0]);
+  for (const { tableHtml, start } of rawTables) {
+    const interText = html.slice(prevEnd, start).toLowerCase();
+    if (/\b(visitor|visitors|visiting|away)\b/.test(interText)) {
+      sectionIsAway = true;
+      hasDetectedSection = true;
+    } else if (/\bhome\b/.test(interText) && !/\b(away|visitor)\b/.test(interText)) {
+      sectionIsAway = false;
+      hasDetectedSection = true;
+    }
+    prevEnd = start + tableHtml.length;
+
+    const rows = _mso_parseTableHtml(tableHtml);
     if (rows.length < 2) continue;
     const headers = rows[0].map(h => h.toLowerCase());
 
@@ -2224,8 +2246,15 @@ function _mso_parseGameDetailHtml(html) {
     const hasAssistsCol= headers.some(h => h === 'a' || h === 'assists');
     const isSkater = hasPlayerCol && hasPosCol && hasGoalsCol && hasAssistsCol;
 
-    if (isGoalie)      goalieTables.push(rows);
-    else if (isSkater) skaterTables.push(rows);
+    if (isGoalie)      goalieTables.push({ rows, isAway: sectionIsAway });
+    else if (isSkater) skaterTables.push({ rows, isAway: sectionIsAway });
+  }
+
+  // No section headings found → fall back to positional assumption:
+  // first stats block = away/visitor (index 0), second = home (index 1)
+  if (!hasDetectedSection) {
+    skaterTables.forEach((t, i) => { t.isAway = (i === 0); });
+    goalieTables.forEach((t, i) => { t.isAway = (i === 0); });
   }
 
   const _parseSkaters = (rows, target) => {
@@ -2324,10 +2353,8 @@ function _mso_parseGameDetailHtml(html) {
     }
   };
 
-  if (skaterTables[0]) _parseSkaters(skaterTables[0], homePlayers);
-  if (skaterTables[1]) _parseSkaters(skaterTables[1], awayPlayers);
-  if (goalieTables[0]) _parseGoalies(goalieTables[0], homePlayers);
-  if (goalieTables[1]) _parseGoalies(goalieTables[1], awayPlayers);
+  for (const t of skaterTables) _parseSkaters(t.rows, t.isAway ? awayPlayers : homePlayers);
+  for (const t of goalieTables) _parseGoalies(t.rows, t.isAway ? awayPlayers : homePlayers);
 
   return { homePlayers, awayPlayers };
 }
@@ -2372,7 +2399,7 @@ app.post('/api/admin/import-excel', requireOwner, excelUpload.single('file'), as
       vals.forEach((v, i) => {
         if (v.includes('date') || v.includes('time')) colDateTime   = i;
         if (v.includes('home team') || v === 'home')  colHomeTeam   = i;
-        if (v.includes('away team') || v === 'away')  colAwayTeam   = i;
+        if (v.includes('away team') || v === 'away' || v.includes('visitor') || v === 'vis') colAwayTeam = i;
         if (v.includes('status'))                     colStatus     = i;
         if (v.includes('idgame') || v.includes('id game') || v === 'id') colIdGame = i;
       });
@@ -2389,6 +2416,14 @@ app.post('/api/admin/import-excel', requireOwner, excelUpload.single('file'), as
         if (colHomeScore < 0) colHomeScore = colHomeTeam + 1;
         if (colOT < 0)        colOT        = colHomeTeam + 2;
         if (colAwayScore < 0 && colOT >= 0) colAwayScore = colOT + 1;
+      }
+      // Outer fallback when the away-team column was not found by header name
+      // (e.g. the export labels it "Visitor" and the inner block didn't run)
+      if (colHomeTeam >= 0) {
+        if (colHomeScore < 0) colHomeScore = colHomeTeam + 1;
+        if (colOT < 0)        colOT        = colHomeScore + 1;
+        if (colAwayScore < 0) colAwayScore = colOT + 1;
+        if (colAwayTeam < 0)  colAwayTeam  = colAwayScore + 1;
       }
     }
   });
