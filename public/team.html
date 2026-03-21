@@ -12,16 +12,14 @@
     .sortable-th:hover { color: #58a6ff; }
     .sortable-th.sort-asc::after  { content: ' ▲'; color: #58a6ff; }
     .sortable-th.sort-desc::after { content: ' ▼'; color: #58a6ff; }
-    .recent-game {
-      display: flex; align-items: center; gap: 1rem;
-      padding: 0.6rem 0; border-bottom: 1px solid #21262d;
-      flex-wrap: wrap;
-    }
-    .recent-game:last-child { border-bottom: none; }
-    .rg-score { font-weight: 700; font-size: 1rem; color: #e6edf3; }
-    .rg-opponent { color: #c9d1d9; }
-    .rg-date { color: #8b949e; font-size: 0.85rem; margin-left: auto; }
     .no-stats { color: #8b949e; padding: 1rem 0; }
+    /* Records tabs */
+    .rec-tab { transition: background 0.15s, color 0.15s; }
+    .rec-tab-active { background: #388bfd !important; color: #fff !important; }
+    /* Responsive two-column layout */
+    @media (max-width: 780px) {
+      .team-page-grid { grid-template-columns: 1fr !important; }
+    }
   </style>
 </head>
 <body>

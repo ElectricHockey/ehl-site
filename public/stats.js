@@ -127,7 +127,7 @@ function renderSkaters(league) {
     </tr></thead>
     <tbody>${sorted.map(p => `<tr${playerRowAttrs(p)}>
       <td><a href="player.html?name=${encodeURIComponent(p.name)}" class="player-link">${p.name}</a></td>
-      <td style="text-align:center;">${p.team_logo ? `<img src="${p.team_logo}" style="width:20px;height:20px;object-fit:contain;vertical-align:middle;border-radius:2px;" title="${p.team_name}" />` : '–'}</td>
+      <td style="text-align:center;">${p.team_logo ? `<a href="team.html?id=${p.team_id}" title="${p.team_name}"><img src="${p.team_logo}" style="width:20px;height:20px;object-fit:contain;vertical-align:middle;border-radius:2px;" /></a>` : '–'}</td>
       <td>${p.position || '–'}</td>
       ${SKATER_COLS.map(c => `<td style="${c.style ? c.style(p) : ''}">${c.fmt(p)}</td>`).join('')}
     </tr>`).join('')}</tbody>
@@ -154,7 +154,7 @@ function renderGoalies(league) {
     </tr></thead>
     <tbody>${sorted.map(p => `<tr${playerRowAttrs(p)}>
       <td><a href="player.html?name=${encodeURIComponent(p.name)}" class="player-link">${p.name}</a></td>
-      <td style="text-align:center;">${p.team_logo ? `<img src="${p.team_logo}" style="width:20px;height:20px;object-fit:contain;vertical-align:middle;border-radius:2px;" title="${p.team_name}" />` : '–'}</td>
+      <td style="text-align:center;">${p.team_logo ? `<a href="team.html?id=${p.team_id}" title="${p.team_name}"><img src="${p.team_logo}" style="width:20px;height:20px;object-fit:contain;vertical-align:middle;border-radius:2px;" /></a>` : '–'}</td>
       ${GOALIE_COLS.map(c => `<td style="${c.style ? c.style(p) : ''}">${c.fmt(p)}</td>`).join('')}
     </tr>`).join('')}</tbody>
   </table></div>`;

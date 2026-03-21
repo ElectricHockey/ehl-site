@@ -761,7 +761,102 @@ app.get('/api/teams/:id/stats', (req, res) => {
     WHERE ts.team_id = ? ORDER BY ts.role
   `).all(req.params.id);
 
-  res.json({ team, roster, skaterStats, goalieStats, recentGames, staff });
+  // W-L-OT record for selected season (or all-time)
+  const record = db.prepare(`
+    SELECT
+      SUM(CASE WHEN (home_team_id=@id AND home_score>away_score) OR (away_team_id=@id AND away_score>home_score) THEN 1 ELSE 0 END) AS wins,
+      SUM(CASE WHEN (home_team_id=@id AND home_score<away_score AND is_overtime=0) OR (away_team_id=@id AND away_score<home_score AND is_overtime=0) THEN 1 ELSE 0 END) AS losses,
+      SUM(CASE WHEN (home_team_id=@id AND home_score<away_score AND is_overtime=1) OR (away_team_id=@id AND away_score<home_score AND is_overtime=1) THEN 1 ELSE 0 END) AS otl
+    FROM games
+    WHERE (home_team_id=@id OR away_team_id=@id) AND status='complete'
+    ${seasonId ? 'AND season_id=@sid' : ''}
+  `).get(seasonId ? { id: req.params.id, sid: seasonId } : { id: req.params.id });
+
+  // Latest 5 transactions for this team
+  const transactions = db.prepare(`
+    SELECT so.id, so.created_at, u.username AS player_name,
+      ft.id AS from_team_id, ft.name AS from_team_name, ft.logo_url AS from_team_logo,
+      t.id AS to_team_id, t.name AS to_team_name, t.logo_url AS to_team_logo
+    FROM signing_offers so
+    JOIN users u ON so.user_id = u.id
+    JOIN teams t ON so.team_id = t.id
+    LEFT JOIN players p ON p.user_id = so.user_id AND p.is_rostered = 1 AND p.team_id != so.team_id
+    LEFT JOIN teams ft ON ft.id = p.team_id
+    WHERE so.team_id = ? AND so.status = 'accepted'
+    ORDER BY so.created_at DESC LIMIT 10
+  `).all(req.params.id);
+
+  // Upcoming games (scheduled, not yet played)
+  const upcoming = db.prepare(`
+    SELECT g.id, g.date,
+      ht.id AS home_team_id, ht.name AS home_team_name, ht.logo_url AS home_logo,
+      at.id AS away_team_id, at.name AS away_team_name, at.logo_url AS away_logo
+    FROM games g
+    JOIN teams ht ON g.home_team_id = ht.id
+    JOIN teams at ON g.away_team_id = at.id
+    WHERE (g.home_team_id = ? OR g.away_team_id = ?) AND g.status = 'scheduled'
+    ORDER BY g.date ASC LIMIT 5
+  `).all(req.params.id, req.params.id);
+
+  res.json({ team, roster, skaterStats, goalieStats, recentGames, staff, record, transactions, upcoming });
+});
+
+// ── Team records ────────────────────────────────────────────────────────────
+
+app.get('/api/teams/:id/records', (req, res) => {
+  const id = req.params.id;
+  const team = db.prepare('SELECT id FROM teams WHERE id = ?').get(id);
+  if (!team) return res.status(404).json({ error: 'Team not found' });
+
+  function careerRecord(col, agg, pos, orderDir) {
+    const where = pos === 'G' ? "gps.position = 'G'" : "gps.position != 'G'";
+    return db.prepare(`
+      SELECT gps.player_name AS name,
+        ${agg} AS value,
+        COUNT(DISTINCT gps.game_id) AS gp
+      FROM game_player_stats gps
+      JOIN games g ON gps.game_id = g.id
+      WHERE gps.team_id = ? AND ${where} AND g.status = 'complete'
+      GROUP BY gps.player_name
+      ORDER BY value ${orderDir}, gp DESC LIMIT 1
+    `).get(id);
+  }
+
+  function singleSeasonRecord(col, agg, pos, orderDir) {
+    const where = pos === 'G' ? "gps.position = 'G'" : "gps.position != 'G'";
+    return db.prepare(`
+      SELECT gps.player_name AS name,
+        g.season_id, COALESCE(s.name, 'No Season') AS season_name,
+        ${agg} AS value,
+        COUNT(DISTINCT gps.game_id) AS gp
+      FROM game_player_stats gps
+      JOIN games g ON gps.game_id = g.id
+      LEFT JOIN seasons s ON g.season_id = s.id
+      WHERE gps.team_id = ? AND ${where} AND g.status = 'complete'
+      GROUP BY gps.player_name, g.season_id
+      ORDER BY value ${orderDir}, gp DESC LIMIT 1
+    `).get(id);
+  }
+
+  const career = {
+    pts:         careerRecord('points',      "SUM(gps.goals + gps.assists)", 'S', 'DESC'),
+    goals:       careerRecord('goals',       "SUM(gps.goals)",               'S', 'DESC'),
+    plus_minus:  careerRecord('plus_minus',  "SUM(gps.plus_minus)",          'S', 'DESC'),
+    save_pct:    careerRecord('save_pct',    "CASE WHEN SUM(gps.shots_against)>0 THEN ROUND(CAST(SUM(gps.saves) AS REAL)/SUM(gps.shots_against),3) ELSE NULL END", 'G', 'DESC'),
+    gaa:         careerRecord('gaa',         "CASE WHEN SUM(gps.toi)>0 THEN ROUND(SUM(gps.goals_against)*3600.0/SUM(gps.toi),2) ELSE NULL END",                    'G', 'ASC'),
+    goalie_wins: careerRecord('goalie_wins', "SUM(gps.goalie_wins)",          'G', 'DESC'),
+  };
+
+  const single = {
+    pts:         singleSeasonRecord('points',      "SUM(gps.goals + gps.assists)", 'S', 'DESC'),
+    goals:       singleSeasonRecord('goals',       "SUM(gps.goals)",               'S', 'DESC'),
+    plus_minus:  singleSeasonRecord('plus_minus',  "SUM(gps.plus_minus)",          'S', 'DESC'),
+    save_pct:    singleSeasonRecord('save_pct',    "CASE WHEN SUM(gps.shots_against)>0 THEN ROUND(CAST(SUM(gps.saves) AS REAL)/SUM(gps.shots_against),3) ELSE NULL END", 'G', 'DESC'),
+    gaa:         singleSeasonRecord('gaa',         "CASE WHEN SUM(gps.toi)>0 THEN ROUND(SUM(gps.goals_against)*3600.0/SUM(gps.toi),2) ELSE NULL END",                    'G', 'ASC'),
+    goalie_wins: singleSeasonRecord('goalie_wins', "SUM(gps.goalie_wins)",          'G', 'DESC'),
+  };
+
+  res.json({ career, single });
 });
 
 // ── Players ────────────────────────────────────────────────────────────────
@@ -1089,6 +1184,7 @@ app.get('/api/stats/leaders', (req, res) => {
   const skaters = db.prepare(`
     SELECT
       gps.player_name AS name,
+      rp.team_id AS team_id,
       COALESCE(t.name, 'FA') AS team_name,
       t.logo_url AS team_logo,
       t.color1 AS team_color1,
@@ -1141,6 +1237,7 @@ app.get('/api/stats/leaders', (req, res) => {
   const goalies = db.prepare(`
     SELECT
       gps.player_name AS name,
+      rp.team_id AS team_id,
       COALESCE(t.name, 'FA') AS team_name,
       t.logo_url AS team_logo,
       t.color1 AS team_color1,
