@@ -1116,3 +1116,84 @@ document.getElementById('site-logo-form').addEventListener('submit', async e => 
     msg.textContent = 'Network error – could not reach the server';
   }
 });
+
+// ── Import tab ────────────────────────────────────────────────────────────
+
+function showImportStatus(msg, ok) {
+  const el = document.getElementById('import-status');
+  if (!el) return;
+  el.style.display = 'block';
+  el.style.background = ok ? 'rgba(63,185,80,0.12)' : 'rgba(248,81,73,0.12)';
+  el.style.border = ok ? '1px solid rgba(63,185,80,0.4)' : '1px solid rgba(248,81,73,0.4)';
+  el.style.color = ok ? '#3fb950' : '#f85149';
+  el.innerHTML = msg;
+}
+
+async function sendImport(data) {
+  const token = localStorage.getItem('admin_token');
+  try {
+    const res = await fetch('/api/admin/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Token': token },
+      body: JSON.stringify(data),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (res.ok && json.ok) {
+      const s = json.summary || {};
+      showImportStatus(
+        `✅ Import complete!<br>` +
+        `Seasons created: <b>${s.seasons_created}</b> &nbsp;|&nbsp; ` +
+        `Existing: <b>${s.seasons_existing}</b><br>` +
+        `Teams created: <b>${s.teams_created}</b><br>` +
+        `Games created: <b>${s.games_created}</b> &nbsp;|&nbsp; ` +
+        `Skipped (duplicate): <b>${s.games_skipped}</b><br>` +
+        `Player stat rows: <b>${s.stats_rows}</b>`,
+        true
+      );
+    } else {
+      showImportStatus(`❌ Import failed: ${json.error || res.status}`, false);
+    }
+  } catch (e) {
+    showImportStatus(`❌ Network error: ${e.message}`, false);
+  }
+}
+
+async function runImport() {
+  const fileInput = document.getElementById('import-file');
+  if (!fileInput || !fileInput.files.length) {
+    showImportStatus('❌ Please select a JSON file first.', false);
+    return;
+  }
+  const file = fileInput.files[0];
+  if (file.size > 10 * 1024 * 1024) {
+    showImportStatus('❌ File too large (max 10 MB).', false);
+    return;
+  }
+  let data;
+  try {
+    const text = await file.text();
+    data = JSON.parse(text);
+  } catch {
+    showImportStatus('❌ Invalid JSON – could not parse the file.', false);
+    return;
+  }
+  showImportStatus('⏳ Importing…', true);
+  await sendImport(data);
+}
+
+async function runImportText() {
+  const textarea = document.getElementById('import-json-text');
+  if (!textarea || !textarea.value.trim()) {
+    showImportStatus('❌ Please paste JSON data first.', false);
+    return;
+  }
+  let data;
+  try {
+    data = JSON.parse(textarea.value.trim());
+  } catch {
+    showImportStatus('❌ Invalid JSON – check your pasted text.', false);
+    return;
+  }
+  showImportStatus('⏳ Importing…', true);
+  await sendImport(data);
+}

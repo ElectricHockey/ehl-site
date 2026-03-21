@@ -951,11 +951,38 @@ app.get('/api/players/profile/:name', (req, res) => {
     ORDER BY g.date DESC, g.id DESC LIMIT 5
   `).all(name);
 
-  if (!player && seasonTeamStats.length === 0) {
+  // Historical season stats (from season_player_stats, for imported seasons)
+  const historicalStats = db.prepare(`
+    SELECT sps.season_id, COALESCE(s.name,'No Season') AS season_name,
+      COALESCE(s.league_type,'') AS league_type,
+      t.id AS team_id, COALESCE(t.name,'FA') AS team_name,
+      t.logo_url AS team_logo, t.color1 AS team_color1, t.color2 AS team_color2,
+      sps.position, sps.games_played AS gp,
+      sps.goals, sps.assists, (sps.goals + sps.assists) AS points,
+      sps.plus_minus, sps.pim, sps.shots, sps.pp_goals, sps.sh_goals, sps.gwg,
+      sps.saves, sps.save_pct, sps.goals_against,
+      sps.goalie_wins, sps.goalie_losses, sps.shutouts, sps.gaa,
+      0 AS is_playoff, 1 AS is_historical
+    FROM season_player_stats sps
+    LEFT JOIN seasons s ON s.id = sps.season_id
+    LEFT JOIN teams t ON t.id = sps.team_id
+    WHERE sps.player_name = ?
+    ORDER BY sps.season_id DESC
+  `).all(name);
+
+  // Merge: add historical rows only for seasons not already covered by game stats
+  const coveredSeasonIds = new Set(seasonTeamStats.map(r => r.season_id));
+  const mergedStats = [
+    ...seasonTeamStats.map(r => ({ ...r, is_historical: 0 })),
+    ...historicalStats.filter(r => !coveredSeasonIds.has(r.season_id)),
+  ];
+  mergedStats.sort((a, b) => (b.season_id || 0) - (a.season_id || 0));
+
+  if (!player && mergedStats.length === 0) {
     return res.status(404).json({ error: 'Player not found' });
   }
 
-  res.json({ player: player || null, isGoalie, seasonTeamStats, lastGames });
+  res.json({ player: player || null, isGoalie, seasonTeamStats: mergedStats, lastGames });
 });
 
 // List all registered users (for admin to pick an owner / for GMs to sign players)
@@ -1275,10 +1302,49 @@ app.get('/api/stats/leaders', (req, res) => {
     GROUP BY gps.player_name ORDER BY save_pct DESC
   `).all(...p);
 
+  // If a specific season was requested and it has no game_player_stats,
+  // fall back to season_player_stats (imported historical data).
+  if (seasonId && skaters.length === 0 && goalies.length === 0) {
+    const histSkaters = db.prepare(`
+      SELECT sps.player_name AS name,
+        sps.team_id, COALESCE(t.name,'FA') AS team_name,
+        t.logo_url AS team_logo, t.color1 AS team_color1, t.color2 AS team_color2,
+        sps.position, sps.games_played AS gp,
+        sps.goals, sps.assists, (sps.goals+sps.assists) AS points,
+        sps.plus_minus, sps.shots, 0 AS hits, sps.pim,
+        sps.pp_goals, sps.sh_goals, sps.gwg, 0 AS toi, 0 AS apt,
+        0 AS penalties_drawn, 0 AS faceoff_wins, 0 AS faceoff_total,
+        0 AS blocked_shots, NULL AS fow_pct, NULL AS shot_pct, NULL AS pass_pct_calc,
+        0 AS deflections, 0 AS interceptions, 0 AS giveaways, 0 AS takeaways,
+        0 AS pass_attempts, 0 AS pass_completions, 0 AS hat_tricks,
+        0 AS overall_rating, 0 AS offensive_rating, 0 AS defensive_rating, 0 AS team_play_rating,
+        0 AS shot_attempts
+      FROM season_player_stats sps
+      LEFT JOIN teams t ON t.id = sps.team_id
+      WHERE sps.season_id = ? AND (sps.position IS NULL OR sps.position != 'G')
+      ORDER BY points DESC, goals DESC
+    `).all(seasonId);
+    const histGoalies = db.prepare(`
+      SELECT sps.player_name AS name,
+        sps.team_id, COALESCE(t.name,'FA') AS team_name,
+        t.logo_url AS team_logo, t.color1 AS team_color1, t.color2 AS team_color2,
+        sps.games_played AS gp, sps.goals, sps.assists,
+        sps.saves, sps.save_pct, sps.goals_against,
+        0 AS shots_against, sps.gaa, 0 AS toi, sps.shutouts,
+        sps.goalie_wins, sps.goalie_losses, 0 AS goalie_otw, 0 AS goalie_otl,
+        0 AS penalty_shot_attempts, 0 AS penalty_shot_ga,
+        0 AS breakaway_shots, 0 AS breakaway_saves,
+        0 AS overall_rating, 0 AS offensive_rating, 0 AS defensive_rating, 0 AS team_play_rating
+      FROM season_player_stats sps
+      LEFT JOIN teams t ON t.id = sps.team_id
+      WHERE sps.season_id = ? AND sps.position = 'G'
+      ORDER BY sps.save_pct DESC
+    `).all(seasonId);
+    return res.json({ skaters: histSkaters, goalies: histGoalies });
+  }
+
   res.json({ skaters, goalies });
 });
-
-// ── Admin: unrostered stats alert ──────────────────────────────────────────
 
 app.get('/api/admin/unrostered-stats', requireOwner, (req, res) => {
   const rows = db.prepare(`
@@ -1833,6 +1899,199 @@ app.delete('/api/admin/game-admins/:userId', requireOwner, (req, res) => {
     if (session.userId === user.id) adminSessions.delete(token);
   }
   res.json({ ok: true });
+});
+
+// ── Historical data import ─────────────────────────────────────────────────
+// POST /api/admin/import  — owner-only bulk import endpoint.
+// Accepts JSON produced by scripts/scrape-mystatsonline.js (or hand-crafted):
+// {
+//   "seasons": [
+//     {
+//       "name": "Season 1",
+//       "league_type": "threes",          // optional: "threes" | "sixes" | ""
+//       "games": [                         // optional array of game results
+//         {
+//           "date": "2022-01-15",
+//           "home_team": "Team A",
+//           "away_team": "Team B",
+//           "home_score": 5,
+//           "away_score": 3,
+//           "is_overtime": false           // optional
+//         }
+//       ],
+//       "player_stats": [                  // optional season-level aggregate stats
+//         {
+//           "team": "Team A",
+//           "player_name": "PlayerX",
+//           "position": "C",               // "G" for goalies
+//           "games_played": 10,
+//           "goals": 5, "assists": 8,
+//           "plus_minus": 3, "pim": 4,
+//           "shots": 30, "pp_goals": 1, "sh_goals": 0, "gwg": 1,
+//           // Goalie-only fields:
+//           "saves": 0, "save_pct": null, "goals_against": 0,
+//           "goalie_wins": 0, "goalie_losses": 0, "shutouts": 0, "gaa": null
+//         }
+//       ]
+//     }
+//   ]
+// }
+app.post('/api/admin/import', requireOwner, (req, res) => {
+  const { seasons } = req.body || {};
+  if (!Array.isArray(seasons) || seasons.length === 0) {
+    return res.status(400).json({ error: 'Request body must contain a non-empty "seasons" array.' });
+  }
+
+  const findTeam    = db.prepare('SELECT id FROM teams WHERE name = ?');
+  const insertTeam  = db.prepare('INSERT INTO teams (name, conference, division, league_type, color1, color2) VALUES (?, \'\', \'\', ?, \'\', \'\')');
+  const findSeason  = db.prepare('SELECT id FROM seasons WHERE name = ?');
+  const insertSeason = db.prepare('INSERT INTO seasons (name, is_active, league_type) VALUES (?, 0, ?)');
+  const findGame    = db.prepare('SELECT id FROM games WHERE home_team_id=? AND away_team_id=? AND date=?');
+  const insertGame  = db.prepare(`
+    INSERT INTO games (home_team_id, away_team_id, home_score, away_score, date, status, season_id, is_overtime)
+    VALUES (?, ?, ?, ?, ?, 'complete', ?, ?)
+  `);
+  const deleteSPS   = db.prepare('DELETE FROM season_player_stats WHERE season_id = ? AND player_name = ?');
+  const insertSPS   = db.prepare(`
+    INSERT INTO season_player_stats
+      (season_id, team_id, player_name, position, games_played,
+       goals, assists, plus_minus, pim, shots, pp_goals, sh_goals, gwg,
+       saves, save_pct, goals_against, goalie_wins, goalie_losses, shutouts, gaa, source)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'mystatsonline')
+  `);
+
+  const summary = { seasons_created: 0, seasons_existing: 0, teams_created: 0, games_created: 0, games_skipped: 0, stats_rows: 0 };
+
+  const teamCache = new Map(); // name → id
+
+  function getOrCreateTeam(name, leagueType) {
+    if (!name) return null;
+    if (teamCache.has(name)) return teamCache.get(name);
+    let row = findTeam.get(name);
+    if (!row) {
+      const result = insertTeam.run(name, leagueType || '');
+      teamCache.set(name, result.lastInsertRowid);
+      summary.teams_created++;
+      return result.lastInsertRowid;
+    }
+    teamCache.set(name, row.id);
+    return row.id;
+  }
+
+  const doImport = db.transaction(() => {
+    for (const s of seasons) {
+      const sName       = String(s.name || '').trim();
+      const leagueType  = String(s.league_type || '').trim();
+      if (!sName) continue;
+
+      let seasonId;
+      const existingSeason = findSeason.get(sName);
+      if (existingSeason) {
+        seasonId = existingSeason.id;
+        summary.seasons_existing++;
+      } else {
+        seasonId = insertSeason.run(sName, leagueType).lastInsertRowid;
+        summary.seasons_created++;
+      }
+
+      // Import games
+      for (const g of (s.games || [])) {
+        const homeId = getOrCreateTeam(g.home_team, leagueType);
+        const awayId = getOrCreateTeam(g.away_team, leagueType);
+        if (!homeId || !awayId) continue;
+        const date = String(g.date || '').trim();
+        if (!date) continue;
+        const existing = findGame.get(homeId, awayId, date);
+        if (existing) { summary.games_skipped++; continue; }
+        insertGame.run(homeId, awayId, g.home_score || 0, g.away_score || 0, date, seasonId, g.is_overtime ? 1 : 0);
+        summary.games_created++;
+      }
+
+      // Import season-level player stats
+      for (const ps of (s.player_stats || [])) {
+        const pName = String(ps.player_name || '').trim();
+        if (!pName) continue;
+        const teamId = ps.team ? getOrCreateTeam(ps.team, leagueType) : null;
+        deleteSPS.run(seasonId, pName);
+        insertSPS.run(
+          seasonId, teamId, pName,
+          ps.position || '',
+          ps.games_played || 0,
+          ps.goals || 0, ps.assists || 0,
+          ps.plus_minus || 0, ps.pim || 0,
+          ps.shots || 0, ps.pp_goals || 0, ps.sh_goals || 0, ps.gwg || 0,
+          ps.saves || 0,
+          ps.save_pct != null ? ps.save_pct : null,
+          ps.goals_against || 0,
+          ps.goalie_wins || 0, ps.goalie_losses || 0, ps.shutouts || 0,
+          ps.gaa != null ? ps.gaa : null
+        );
+        summary.stats_rows++;
+      }
+    }
+  });
+
+  try {
+    doImport();
+    res.json({ ok: true, summary });
+  } catch (err) {
+    console.error('[import] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Historical stats: season_player_stats reader ──────────────────────────
+// GET /api/stats/historical?season_id=X
+// Returns season_player_stats rows for seasons that have no game_player_stats.
+app.get('/api/stats/historical', (req, res) => {
+  const seasonId = req.query.season_id ? Number(req.query.season_id) : null;
+  const sf = seasonId ? 'AND sps.season_id = ?' : '';
+  const params = seasonId ? [seasonId] : [];
+
+  const skaters = db.prepare(`
+    SELECT sps.player_name AS name, sps.season_id,
+      COALESCE(s.name,'') AS season_name, COALESCE(s.league_type,'') AS league_type,
+      t.id AS team_id, COALESCE(t.name,'FA') AS team_name,
+      t.logo_url AS team_logo, t.color1 AS team_color1, t.color2 AS team_color2,
+      sps.position, sps.games_played AS gp,
+      sps.goals, sps.assists, (sps.goals + sps.assists) AS points,
+      sps.plus_minus, sps.pim, sps.shots,
+      sps.pp_goals, sps.sh_goals, sps.gwg,
+      0 AS overall_rating, 0 AS offensive_rating, 0 AS defensive_rating, 0 AS team_play_rating,
+      CASE WHEN sps.shots > 0 THEN ROUND(sps.goals*100.0/sps.shots,1) ELSE NULL END AS shot_pct,
+      NULL AS fow_pct, NULL AS pass_pct_calc,
+      0 AS hits, 0 AS toi, 0 AS apt, 0 AS blocked_shots,
+      0 AS faceoff_wins, 0 AS faceoff_total,
+      0 AS deflections, 0 AS interceptions, 0 AS giveaways, 0 AS takeaways,
+      0 AS pass_attempts, 0 AS pass_completions, 0 AS hat_tricks, 0 AS penalties_drawn,
+      0 AS shot_attempts
+    FROM season_player_stats sps
+    LEFT JOIN teams t ON t.id = sps.team_id
+    LEFT JOIN seasons s ON s.id = sps.season_id
+    WHERE (sps.position IS NULL OR sps.position = '' OR sps.position != 'G') ${sf}
+    ORDER BY points DESC, goals DESC
+  `).all(...params);
+
+  const goalies = db.prepare(`
+    SELECT sps.player_name AS name, sps.season_id,
+      COALESCE(s.name,'') AS season_name, COALESCE(s.league_type,'') AS league_type,
+      t.id AS team_id, COALESCE(t.name,'FA') AS team_name,
+      t.logo_url AS team_logo, t.color1 AS team_color1, t.color2 AS team_color2,
+      sps.games_played AS gp, sps.goals, sps.assists,
+      sps.saves, sps.save_pct, sps.goals_against,
+      sps.goalie_wins, sps.goalie_losses, sps.shutouts, sps.gaa,
+      0 AS overall_rating, 0 AS shots_against, 0 AS toi,
+      0 AS penalty_shot_attempts, 0 AS penalty_shot_ga,
+      0 AS breakaway_shots, 0 AS breakaway_saves,
+      0 AS goalie_otw, 0 AS goalie_otl
+    FROM season_player_stats sps
+    LEFT JOIN teams t ON t.id = sps.team_id
+    LEFT JOIN seasons s ON s.id = sps.season_id
+    WHERE sps.position = 'G' ${sf}
+    ORDER BY sps.save_pct DESC
+  `).all(...params);
+
+  res.json({ skaters, goalies });
 });
 
 // ── Global error handler ───────────────────────────────────────────────────

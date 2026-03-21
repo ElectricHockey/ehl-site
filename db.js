@@ -211,6 +211,38 @@ try { db.exec('ALTER TABLE seasons ADD COLUMN is_playoff INTEGER DEFAULT 0'); } 
 try { db.exec('ALTER TABLE playoffs ADD COLUMN playoff_season_id INTEGER'); } catch (_) {}
 try { db.exec('ALTER TABLE games ADD COLUMN is_forfeit INTEGER DEFAULT 0'); } catch (_) {}
 
+// ── Historical import table ────────────────────────────────────────────────
+// Stores season-level aggregate stats imported from external sources (e.g. mystatsonline).
+// Used when individual game_player_stats are unavailable for older seasons.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS season_player_stats (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    season_id       INTEGER NOT NULL,
+    team_id         INTEGER,
+    player_name     TEXT    NOT NULL,
+    position        TEXT    DEFAULT '',
+    games_played    INTEGER DEFAULT 0,
+    goals           INTEGER DEFAULT 0,
+    assists         INTEGER DEFAULT 0,
+    plus_minus      INTEGER DEFAULT 0,
+    pim             INTEGER DEFAULT 0,
+    shots           INTEGER DEFAULT 0,
+    pp_goals        INTEGER DEFAULT 0,
+    sh_goals        INTEGER DEFAULT 0,
+    gwg             INTEGER DEFAULT 0,
+    saves           INTEGER DEFAULT 0,
+    save_pct        REAL,
+    goals_against   INTEGER DEFAULT 0,
+    goalie_wins     INTEGER DEFAULT 0,
+    goalie_losses   INTEGER DEFAULT 0,
+    shutouts        INTEGER DEFAULT 0,
+    gaa             REAL,
+    source          TEXT    DEFAULT 'import',
+    FOREIGN KEY (season_id) REFERENCES seasons(id) ON DELETE CASCADE,
+    FOREIGN KEY (team_id)   REFERENCES teams(id)
+  );
+`);
+
 // ── Seed teams ──────────────────────────────────────────────────────────────
 // Teams listed here are upserted by name on every startup (INSERT OR IGNORE),
 // so they will be added to an existing DB without duplicating existing rows.

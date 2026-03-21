@@ -95,6 +95,7 @@
         <button class="admin-tab-btn" data-tab="playoffs" data-owner-only onclick="showAdminTab('playoffs')">🏆 Playoffs</button>
         <button class="admin-tab-btn" data-tab="site-logo" data-owner-only onclick="showAdminTab('site-logo')">🖼 Logo</button>
         <button class="admin-tab-btn" data-tab="game-admins" data-owner-only onclick="showAdminTab('game-admins')">👥 Game Admins</button>
+        <button class="admin-tab-btn" data-tab="import" data-owner-only onclick="showAdminTab('import')">📥 Import</button>
       </div>
 
       <div id="status-msg" style="display:none;padding:0.5rem 1rem;border-radius:6px;margin-bottom:1rem;font-size:0.88rem;"></div>
@@ -401,6 +402,89 @@
         <!-- Current game admins list -->
         <h3 style="font-size:1rem;margin-bottom:0.5rem;">Current Game Admins</h3>
         <div id="game-admins-list"><p style="color:#8b949e;font-size:0.88rem;">Loading…</p></div>
+      </div>
+
+      <!-- ── Import tab ────────────────────────────────────── -->
+      <div id="admin-tab-import" class="admin-section">
+        <h2>Import Historical Data</h2>
+        <p style="color:#8b949e;font-size:0.9rem;max-width:680px;margin-bottom:1.25rem;">
+          Import past seasons, game results and player stats from
+          <strong>mystatsonline.com</strong> or any compatible JSON file.<br>
+          Run the scraper script first:
+          <code style="background:#21262d;padding:0.15rem 0.5rem;border-radius:4px;">node scripts/scrape-mystatsonline.js 73879</code>
+          then upload the generated <code>import-data.json</code> below.
+        </p>
+
+        <!-- File upload -->
+        <div class="form-section" style="max-width:520px;margin-bottom:1.25rem;">
+          <h3 style="font-size:1rem;margin-bottom:0.75rem;">Upload JSON File</h3>
+          <div style="display:flex;gap:0.75rem;align-items:center;flex-wrap:wrap;">
+            <input type="file" id="import-file" accept=".json"
+              style="flex:1;min-width:200px;background:#21262d;border:1px solid #30363d;border-radius:6px;padding:0.35rem 0.6rem;color:#e6edf3;font-size:0.88rem;" />
+            <button onclick="runImport()">📥 Import</button>
+          </div>
+          <p style="color:#8b949e;font-size:0.8rem;margin-top:0.5rem;">
+            Maximum file size: 10 MB. Only JSON files are accepted.
+          </p>
+        </div>
+
+        <!-- Or paste JSON -->
+        <div class="form-section" style="max-width:680px;margin-bottom:1.25rem;">
+          <h3 style="font-size:1rem;margin-bottom:0.5rem;">Or Paste JSON</h3>
+          <textarea id="import-json-text" rows="8"
+            placeholder='{"seasons":[{"name":"Season 1","league_type":"threes","games":[],"player_stats":[]}]}'
+            style="width:100%;background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:0.6rem 0.75rem;color:#e6edf3;font-size:0.82rem;font-family:monospace;resize:vertical;box-sizing:border-box;"></textarea>
+          <button style="margin-top:0.5rem;" onclick="runImportText()">📥 Import Pasted JSON</button>
+        </div>
+
+        <div id="import-status" style="display:none;padding:0.75rem 1rem;border-radius:6px;font-size:0.88rem;max-width:520px;margin-bottom:1rem;"></div>
+
+        <!-- Format reference -->
+        <details style="max-width:680px;">
+          <summary style="cursor:pointer;color:#58a6ff;font-size:0.88rem;margin-bottom:0.5rem;">📋 JSON Format Reference</summary>
+          <pre style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:1rem;font-size:0.78rem;overflow-x:auto;color:#8b949e;">{
+  "seasons": [
+    {
+      "name": "Season 1",              // required
+      "league_type": "threes",         // "threes" | "sixes" | "" (optional)
+      "games": [                       // optional — game results
+        {
+          "date": "2022-01-15",        // YYYY-MM-DD
+          "home_team": "Team A",
+          "away_team": "Team B",
+          "home_score": 5,
+          "away_score": 3,
+          "is_overtime": false         // optional
+        }
+      ],
+      "player_stats": [                // optional — season aggregate stats
+        {
+          "team": "Team A",
+          "player_name": "PlayerX",
+          "position": "C",             // "G" for goalies
+          "games_played": 10,
+          "goals": 5,
+          "assists": 8,
+          "plus_minus": 3,
+          "pim": 4,
+          "shots": 30,
+          "pp_goals": 1,
+          "sh_goals": 0,
+          "gwg": 1,
+          // Goalie-only (optional):
+          "saves": 180,
+          "save_pct": 0.912,
+          "goals_against": 17,
+          "goalie_wins": 7,
+          "goalie_losses": 3,
+          "shutouts": 1,
+          "gaa": 2.15
+        }
+      ]
+    }
+  ]
+}</pre>
+        </details>
       </div>
 
       <!-- ── Edit Player Modal (shared, not inside any tab) ─── -->
