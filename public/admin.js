@@ -1238,7 +1238,7 @@ async function runExcelImport() {
   fd.append('league_id',   leagueId.trim());
 
   try {
-    const token = localStorage.getItem('adminToken') || '';
+    const token = getAdminToken();
     const res = await fetch('/api/admin/import-excel', {
       method: 'POST',
       headers: { 'X-Admin-Token': token },
