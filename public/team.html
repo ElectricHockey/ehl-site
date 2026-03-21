@@ -20,6 +20,8 @@
     @media (max-width: 780px) {
       .team-page-grid { grid-template-columns: 1fr !important; }
     }
+    /* Prevent roster player stat row from forcing width */
+    .team-page-grid > div { min-width: 0; overflow: hidden; }
   </style>
 </head>
 <body>

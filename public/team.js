@@ -285,9 +285,9 @@ async function loadTeamPage() {
 
       <div id="season-selector-container" style="margin-bottom:1rem;"></div>
 
-      <div style="display:grid;grid-template-columns:1fr 340px;gap:1.5rem;align-items:start;" class="team-page-grid">
+      <div style="display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:1.25rem;align-items:start;" class="team-page-grid">
         <!-- LEFT: Roster + Stats -->
-        <div>`;
+        <div style="min-width:0;overflow:hidden;">`;
 
     // ── ROSTER (grouped by position) ──
     const posOrder = { C: 0, LW: 1, RW: 2, LD: 3, RD: 4, G: 5 };
@@ -396,7 +396,7 @@ async function loadTeamPage() {
     html += `</div><!-- end left -->
 
         <!-- RIGHT: Schedule + News -->
-        <div>`;
+        <div style="min-width:0;">`;
 
     // ── Schedule widget ──
     const allGames = [...recentGames, ...(upcoming || [])].sort((a, b) => {
