@@ -48,6 +48,45 @@ Teams are only inserted **when the database is empty**, so adding entries here w
 
 > **Logos and EA Club IDs** — These can't be set in the seed (logos are file uploads, EA IDs are looked up per club). Set them in the **Admin panel** after the server starts.
 
+## Importing historical stats from mystatsonline.com
+
+Use the included scraper to pull past seasons (schedule, scores, and player stats) out of mystatsonline.com and import them via the Admin → Import tab.
+
+### Basic usage
+
+```bash
+node scripts/scrape-mystatsonline.js <IDLeague>
+# e.g.
+node scripts/scrape-mystatsonline.js 73879
+```
+
+This writes `import-data.json` in the current directory.  Specify a different output file as a second argument:
+
+```bash
+node scripts/scrape-mystatsonline.js 73879 my-data.json
+```
+
+### If the scraper says "No seasons found"
+
+The scraper tries several strategies to auto-detect the available seasons from the league home page.  If every strategy fails you can bypass auto-detection by supplying the season ID directly with `--season` (or `-s`):
+
+```bash
+node scripts/scrape-mystatsonline.js 73879 --season <IDSeason>
+# e.g.
+node scripts/scrape-mystatsonline.js 73879 --season 12345
+```
+
+To find the `IDSeason` value: open the league home page in your browser (`https://www.mystatsonline.com/hockey/visitor/league/home/home_hockey.aspx?IDLeague=73879`), navigate to a season, and copy the number after `IDSeason=` in the URL.
+
+You can scrape one season at a time and re-run with different `--season` values to build up the full `import-data.json`.
+
+### After scraping
+
+1. Open the generated JSON and set `"league_type"` on each season to `"threes"` or `"sixes"`.
+2. Log in to **Admin → Import** and upload the file.
+
+---
+
 ## Setting up live EA match history
 
 Each EHL team can be linked to an EA Sports NHL Pro Clubs club by assigning its **EA Club ID**:
