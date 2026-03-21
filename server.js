@@ -2203,17 +2203,42 @@ function _mso_num(val) {
 function _mso_parseGameDetailHtml(html) {
   const homePlayers = [];
   const awayPlayers = [];
-  // Collect tables with their document position so we can detect team-section context
-  const tableRe = /<table[\s\S]*?<\/table>/gi;
-  let m;
+  // Extract only leaf tables (innermost tables that contain no nested <table>).
+  // The MSO game-score page wraps stats tables inside layout tables; the old
+  // lazy regex stopped at the FIRST </table> and handed us a mangled outer-table
+  // chunk instead of the actual data table.  A stack-based scan fixes this.
   const rawTables = [];
-  while ((m = tableRe.exec(html)) !== null) {
-    rawTables.push({ tableHtml: m[0], start: m.index });
+  {
+    const lc = html.toLowerCase();
+    let pos = 0;
+    while (pos < lc.length) {
+      const tStart = lc.indexOf('<table', pos);
+      if (tStart === -1) break;
+      const tOpenEnd = lc.indexOf('>', tStart);
+      if (tOpenEnd === -1) break;
+      let depth = 1, scanPos = tOpenEnd + 1, tEnd = -1;
+      while (scanPos < lc.length) {
+        const nextOpen  = lc.indexOf('<table', scanPos);
+        const nextClose = lc.indexOf('</table', scanPos);
+        if (nextClose === -1) break;
+        if (nextOpen !== -1 && nextOpen < nextClose) { depth++; scanPos = nextOpen + 1; }
+        else { depth--; if (depth === 0) { tEnd = nextClose + 8; break; } scanPos = nextClose + 1; }
+      }
+      if (tEnd === -1) { pos++; continue; }
+      const tableHtml = html.slice(tStart, tEnd);
+      // Only keep leaf tables (no nested <table> inside the opening tag's content)
+      if (!/<table/i.test(tableHtml.slice(tableHtml.indexOf('>') + 1))) {
+        rawTables.push({ tableHtml, start: tStart });
+      }
+      pos = tStart + 1; // advance by 1 so we also descend into any nested tables
+    }
+    rawTables.sort((a, b) => a.start - b.start);
   }
 
-  // Walk tables in document order.  The HTML between consecutive tables often
-  // contains a heading that says "Visitor/Away" or "Home".  MSO convention is
-  // to list the away/visiting team first, so we default sectionIsAway = true.
+  // Walk leaf tables in document order.  The HTML between consecutive leaf
+  // tables contains the section headings ("Visitor"/"Home") that tell us which
+  // team each table belongs to.  MSO lists the visiting team first, so we
+  // default sectionIsAway = true.
   let sectionIsAway = true;
   let hasDetectedSection = false;
   let prevEnd = 0;
@@ -2240,11 +2265,11 @@ function _mso_parseGameDetailHtml(html) {
     const hasSaves         = headers.some(h => h === 'sv' || h === 'saves' || h === 'svs');
     const isGoalie = (hasGoalieNameCol || hasShotsAgainst) && hasSaves;
 
-    const hasPlayerCol = headers.some(h => h === 'players' || h === 'player' || h === 'name' || h === 'skater');
-    const hasPosCol    = headers.some(h => h === 'pos' || h === 'position');
-    const hasGoalsCol  = headers.some(h => h === 'g' || h === 'goals');
-    const hasAssistsCol= headers.some(h => h === 'a' || h === 'assists');
-    const isSkater = hasPlayerCol && hasPosCol && hasGoalsCol && hasAssistsCol;
+    const hasPlayerCol  = headers.some(h => h === 'players' || h === 'player' || h === 'name' || h === 'skater');
+    const hasGoalsCol   = headers.some(h => h === 'g' || h === 'goals');
+    const hasAssistsCol = headers.some(h => h === 'a' || h === 'assists');
+    // Position column is not always present (e.g. 3-on-3 formats) — don't require it
+    const isSkater = hasPlayerCol && hasGoalsCol && hasAssistsCol;
 
     if (isGoalie)      goalieTables.push({ rows, isAway: sectionIsAway });
     else if (isSkater) skaterTables.push({ rows, isAway: sectionIsAway });
@@ -2596,7 +2621,10 @@ app.post('/api/admin/import-excel', requireOwner, excelUpload.single('file'), as
         dbId = existing.id;
         summary.games_skipped++;
       } else {
-        const status = /complete/i.test(g.status) ? 'complete' : (g.status || 'complete');
+        const statusRaw = (g.status || '').toLowerCase();
+        const status = /forfeit/i.test(statusRaw) ? 'forfeit'
+                     : /complete/i.test(statusRaw) ? 'complete'
+                     : (g.status || 'complete');
         dbId = insertGame.run(homeId, awayId, g.home_score, g.away_score, g.date, status, seasonId, g.is_overtime).lastInsertRowid;
         summary.games_created++;
       }
@@ -2608,7 +2636,7 @@ app.post('/api/admin/import-excel', requireOwner, excelUpload.single('file'), as
   // ── Fetch player stats from mystatsonline (async, per-game) ───────────
   if (leagueId) {
     for (const { dbId, homeId, awayId, game } of gameIds) {
-      if (!game.idGame) continue;
+      if (!game.idGame || /forfeit/i.test(game.status || '')) continue;
       const url = `https://www.mystatsonline.com/hockey/visitor/league/schedule_scores/game_score_hockey.aspx?IDLeague=${leagueId}&IDGame=${game.idGame}`;
       try {
         const { status, body } = await _mso_fetchUrl(url);
