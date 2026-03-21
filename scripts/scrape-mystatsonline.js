@@ -391,10 +391,16 @@ async function scrapePlayerStats(leagueId, seasonId) {
     `${BASE}/stats/stats_hockey.aspx?IDLeague=${leagueId}&IDSeason=${seasonId}`,
     `${BASE}/stats/stats_hockey.aspx?IDLeague=${leagueId}&IDSeason=${seasonId}&type=skaters`,
     `${BASE}/stats/skater_stats.aspx?IDLeague=${leagueId}&IDSeason=${seasonId}`,
+    `${BASE}/stats/scoring.aspx?IDLeague=${leagueId}&IDSeason=${seasonId}`,
+    `${BASE}/stats/player_stats.aspx?IDLeague=${leagueId}&IDSeason=${seasonId}`,
+    `${BASE}/schedule_scores/stats_hockey.aspx?IDLeague=${leagueId}&IDSeason=${seasonId}`,
   ];
   const goalUrls = [
     `${BASE}/stats/stats_goalie.aspx?IDLeague=${leagueId}&IDSeason=${seasonId}`,
     `${BASE}/stats/goalie_stats.aspx?IDLeague=${leagueId}&IDSeason=${seasonId}`,
+    `${BASE}/stats/goalie.aspx?IDLeague=${leagueId}&IDSeason=${seasonId}`,
+    `${BASE}/stats/stats_goalie_hockey.aspx?IDLeague=${leagueId}&IDSeason=${seasonId}`,
+    `${BASE}/schedule_scores/stats_goalie.aspx?IDLeague=${leagueId}&IDSeason=${seasonId}`,
   ];
 
   const skaters = [];
@@ -424,22 +430,25 @@ function parseSkaterStatsHtml(html) {
   const stats = [];
   const rows = findTableByHeaders(html, 'player', 'g', 'a') ||
                findTableByHeaders(html, 'name', 'goals') ||
-               findTableByHeaders(html, 'player', 'pts');
+               findTableByHeaders(html, 'player', 'pts') ||
+               findTableByHeaders(html, 'player', 'assists') ||
+               findTableByHeaders(html, 'name', 'pts') ||
+               findTableByHeaders(html, 'skater', 'g');
   if (!rows || rows.length < 2) return stats;
 
   const headers = rows[0].map(h => h.toLowerCase());
-  const playerIdx  = colIdx(headers, 'player', 'name');
+  const playerIdx  = colIdx(headers, 'player', 'name', 'skater');
   const teamIdx    = colIdx(headers, 'team');
   const posIdx     = colIdx(headers, 'pos', 'position');
-  const gpIdx      = colIdx(headers, 'gp', 'games');
+  const gpIdx      = colIdx(headers, 'gp', 'games played', 'games');
   const gIdx       = colIdx(headers, 'g', 'goals');
   const aIdx       = colIdx(headers, 'a', 'assists');
   const pmIdx      = colIdx(headers, '+/-', 'plus/minus', 'plusminus');
-  const pimIdx     = colIdx(headers, 'pim', 'penalties');
-  const shotIdx    = colIdx(headers, 'sog', 'shots');
-  const ppgIdx     = colIdx(headers, 'ppg', 'pp goals', 'pp g');
-  const shgIdx     = colIdx(headers, 'shg', 'sh goals', 'sh g');
-  const gwgIdx     = colIdx(headers, 'gwg', 'gw goals', 'game winning');
+  const pimIdx     = colIdx(headers, 'pim', 'penalties in minutes', 'penalties');
+  const shotIdx    = colIdx(headers, 'sog', 'shots on goal', 'shots');
+  const ppgIdx     = colIdx(headers, 'ppg', 'pp goals', 'pp g', 'power play goals');
+  const shgIdx     = colIdx(headers, 'shg', 'sh goals', 'sh g', 'short handed goals');
+  const gwgIdx     = colIdx(headers, 'gwg', 'gw goals', 'game winning', 'game winning goals');
 
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i];
@@ -469,19 +478,22 @@ function parseGoalieStatsHtml(html) {
   const stats = [];
   const rows = findTableByHeaders(html, 'player', 'gaa') ||
                findTableByHeaders(html, 'goalie', 'saves') ||
-               findTableByHeaders(html, 'player', 'sv%');
+               findTableByHeaders(html, 'player', 'sv%') ||
+               findTableByHeaders(html, 'goalie', 'gaa') ||
+               findTableByHeaders(html, 'name', 'saves') ||
+               findTableByHeaders(html, 'player', 'goals against');
   if (!rows || rows.length < 2) return stats;
 
   const headers = rows[0].map(h => h.toLowerCase());
   const playerIdx = colIdx(headers, 'player', 'name', 'goalie');
   const teamIdx   = colIdx(headers, 'team');
-  const gpIdx     = colIdx(headers, 'gp', 'games');
+  const gpIdx     = colIdx(headers, 'gp', 'games played', 'games');
   const wIdx      = colIdx(headers, 'w', 'wins');
   const lIdx      = colIdx(headers, 'l', 'losses');
   const gaIdx     = colIdx(headers, 'ga', 'goals against');
-  const savesIdx  = colIdx(headers, 'saves', 'svs');
-  const svpIdx    = colIdx(headers, 'sv%', 'save%', 'save pct');
-  const gaaIdx    = colIdx(headers, 'gaa', 'goals against avg');
+  const savesIdx  = colIdx(headers, 'saves', 'svs', 'sv');
+  const svpIdx    = colIdx(headers, 'sv%', 'save%', 'save pct', 'save percentage');
+  const gaaIdx    = colIdx(headers, 'gaa', 'goals against avg', 'goals against average');
   const soIdx     = colIdx(headers, 'so', 'shutouts');
 
   for (let i = 1; i < rows.length; i++) {
@@ -540,16 +552,21 @@ async function scrapeStatsFromGameDetails(games) {
       if (status !== 200) continue;
       const { homePlayers, awayPlayers } = parseGameDetailHtml(body);
       const merge = (players, teamName) => {
-        for (const p of players) {
-          const key = `${p.player_name}|${teamName}`;
-          const prev = statsMap.get(key);
-          // Games are processed in date order, so only replace when the new entry
-          // has strictly more points — this keeps the most-recent non-regression.
-          if (!prev || (p.goals + p.assists) > (prev.goals + prev.assists)) {
-            statsMap.set(key, { ...p, team: teamName });
+          for (const p of players) {
+            const key = `${p.player_name}|${teamName}`;
+            const prev = statsMap.get(key);
+            // Games are sorted oldest → newest. Always overwrite with the latest
+            // entry so we end up with the most up-to-date cumulative season stats.
+            // For skaters, guard against a rare data-lag regression (keep if the
+            // new entry has at least as many points as the previous one).
+            // Goalies always have 0 G+A so we always keep the latest game.
+            const isGoalie = p.position === 'G';
+            if (!prev || isGoalie ||
+                (p.goals + p.assists) >= (prev.goals + prev.assists)) {
+              statsMap.set(key, { ...p, team: teamName });
+            }
           }
-        }
-      };
+        };
       merge(homePlayers, game.home_team);
       merge(awayPlayers, game.away_team);
     } catch { /* skip this game */ }
@@ -582,17 +599,20 @@ function parseGameDetailHtml(html) {
     if (rows.length < 2) continue;
     const headers = rows[0].map(h => h.toLowerCase());
 
-    // Identify skater table: has "players"/"player" + "pos" + "g" + "a"
-    const isSkater = headers.some(h => h === 'players' || h === 'player') &&
-                     headers.some(h => h === 'pos' || h === 'position') &&
-                     headers.some(h => h === 'g') &&
-                     headers.some(h => h === 'a');
+    // Identify goalie table first (before skater, to avoid mis-classification):
+    //   needs a "goalies"/"goalie" header OR a shots-against column + saves column
+    const hasGoalieNameCol = headers.some(h => h === 'goalies' || h === 'goalie');
+    const hasShotsAgainst  = headers.some(h => h === 'sa' || h.includes('shots against') || h.includes('shots a'));
+    const hasSaves         = headers.some(h => h === 'sv' || h === 'saves' || h === 'svs');
+    const isGoalie = (hasGoalieNameCol || hasShotsAgainst) && hasSaves;
 
-    // Identify goalie table: has "goalies"/"goalie" (or "players") + "sa" + "sv"
-    const isGoalie = (headers.some(h => h === 'goalies' || h === 'goalie') ||
-                      headers.some(h => h === 'players' || h === 'player')) &&
-                     headers.some(h => h === 'sa' || h.includes('shots against') || h.includes('shots a')) &&
-                     headers.some(h => h === 'sv' || h === 'saves');
+    // Identify skater table:
+    //   needs a player-name column + a position column + goals column + assists column
+    const hasPlayerCol  = headers.some(h => h === 'players' || h === 'player' || h === 'name' || h === 'skater');
+    const hasPosCol     = headers.some(h => h === 'pos' || h === 'position');
+    const hasGoalsCol   = headers.some(h => h === 'g' || h === 'goals');
+    const hasAssistsCol = headers.some(h => h === 'a' || h === 'assists');
+    const isSkater = hasPlayerCol && hasPosCol && hasGoalsCol && hasAssistsCol;
 
     if (isGoalie) {
       goalieTables.push(rows);

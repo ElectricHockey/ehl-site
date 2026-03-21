@@ -1936,7 +1936,7 @@ app.delete('/api/admin/game-admins/:userId', requireOwner, (req, res) => {
 //     }
 //   ]
 // }
-app.post('/api/admin/import', requireOwner, (req, res) => {
+app.post('/api/admin/import', requireAdmin, (req, res) => {
   const { seasons } = req.body || {};
   if (!Array.isArray(seasons) || seasons.length === 0) {
     return res.status(400).json({ error: 'Request body must contain a non-empty "seasons" array.' });
