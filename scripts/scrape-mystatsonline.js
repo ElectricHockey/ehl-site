@@ -197,6 +197,9 @@ async function getSeasons(html) {
 
 async function scrapeSchedule(leagueId, seasonId) {
   const urls = [
+    // The real schedule+scores page (primary)
+    `${BASE}/schedule_scores/schedule.aspx?IDLeague=${leagueId}&IDSeason=${seasonId}`,
+    // Legacy / alternative paths (fallback)
     `${BASE}/schedule/schedule.aspx?IDLeague=${leagueId}&IDSeason=${seasonId}`,
     `${BASE}/schedule/results.aspx?IDLeague=${leagueId}&IDSeason=${seasonId}`,
     `${BASE}/home/home_hockey.aspx?IDLeague=${leagueId}&IDSeason=${seasonId}`,
@@ -230,6 +233,25 @@ function parseScheduleHtml(html) {
   const aScoreIdx = colIdx(headers, 'away score', 'v score', 'visitor g', 'vg', 'ag');
   const otIdx     = colIdx(headers, 'ot', 'overtime');
 
+  // Also extract raw rows so we can grab embedded links per row
+  const tableRe = /<table[\s\S]*?<\/table>/gi;
+  const rawTableMatches = [];
+  let tm;
+  while ((tm = tableRe.exec(html)) !== null) rawTableMatches.push(tm[0]);
+
+  // Find the raw table HTML that gave us `rows` (match by header row length)
+  let rawTable = '';
+  for (const t of rawTableMatches) {
+    const r = parseTableHtml(t);
+    if (r.length >= 2 && r[0].length === rows[0].length) { rawTable = t; break; }
+  }
+
+  // Pull raw <tr> elements so we can detect IDGame links per row
+  const rawRows = [];
+  const trRe = /<tr[\s\S]*?<\/tr>/gi;
+  let trM;
+  while ((trM = trRe.exec(rawTable)) !== null) rawRows.push(trM[0]);
+
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i];
     const dateStr = dateIdx >= 0 ? row[dateIdx] : '';
@@ -259,9 +281,27 @@ function parseScheduleHtml(html) {
     if (!date) continue;
 
     const isOT = otIdx >= 0 && row[otIdx] && row[otIdx].trim() !== '' && row[otIdx] !== '0';
-    games.push({ date, home_team: home.trim(), away_team: away.trim(), home_score: hScore, away_score: aScore, is_overtime: isOT });
+
+    // Try to extract a game-detail link for this row
+    let detailUrl = null;
+    if (rawRows[i]) {
+      detailUrl = extractGameDetailUrl(rawRows[i]);
+    }
+
+    games.push({ date, home_team: home.trim(), away_team: away.trim(), home_score: hScore, away_score: aScore, is_overtime: isOT, _detailUrl: detailUrl });
   }
   return games;
+}
+
+/** Extract the first IDGame link found in a chunk of HTML. */
+function extractGameDetailUrl(html) {
+  const m = html.match(/href=["']([^"']*IDGame=(\d+)[^"']*)["']/i);
+  if (!m) return null;
+  const href = m[1];
+  if (href.startsWith('http')) return href;
+  if (href.startsWith('/')) return `https://www.mystatsonline.com${href}`;
+  // Relative path – resolve against the schedule_scores directory
+  return `https://www.mystatsonline.com/hockey/visitor/league/schedule_scores/${href}`;
 }
 
 function normalizeDate(str) {
@@ -412,6 +452,213 @@ function parseGoalieStatsHtml(html) {
   return stats;
 }
 
+// ── Game detail scraping ──────────────────────────────────────────────────
+
+/**
+ * Visit each game's detail page and collect player stats.
+ * mystatsonline game detail pages show SEASON-CUMULATIVE stats for every
+ * player who participated in that game.  Because the numbers grow over time
+ * we keep the entry with the highest G+A (i.e. the most-recent game page)
+ * for each player+team combination.
+ *
+ * Tables appear in document order: home skaters → home goalies →
+ * away skaters → away goalies.
+ */
+async function scrapeStatsFromGameDetails(games) {
+  const gamesWithLinks = games.filter(g => g._detailUrl);
+  if (gamesWithLinks.length === 0) return [];
+
+  // Sort ascending by date so later games overwrite earlier ones
+  gamesWithLinks.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+
+  // key → stat object  (key = "player_name|team")
+  const statsMap = new Map();
+
+  for (let i = 0; i < gamesWithLinks.length; i++) {
+    const game = gamesWithLinks[i];
+    process.stdout.write(`\r     → Game details ${i + 1}/${gamesWithLinks.length}…`);
+    try {
+      const { status, body } = await fetchUrl(game._detailUrl);
+      if (status !== 200) continue;
+      const { homePlayers, awayPlayers } = parseGameDetailHtml(body);
+      const merge = (players, teamName) => {
+        for (const p of players) {
+          const key = `${p.player_name}|${teamName}`;
+          const prev = statsMap.get(key);
+          // Games are processed in date order, so only replace when the new entry
+          // has strictly more points — this keeps the most-recent non-regression.
+          if (!prev || (p.goals + p.assists) > (prev.goals + prev.assists)) {
+            statsMap.set(key, { ...p, team: teamName });
+          }
+        }
+      };
+      merge(homePlayers, game.home_team);
+      merge(awayPlayers, game.away_team);
+    } catch { /* skip this game */ }
+    // Be polite to the server
+    await new Promise(r => setTimeout(r, 300));
+  }
+  process.stdout.write('\n');
+  return Array.from(statsMap.values());
+}
+
+/**
+ * Parse a game detail page HTML.
+ * Returns { homePlayers, awayPlayers } — arrays of player stat objects.
+ *
+ * The page layout (home section first, away second) lets us assign tables
+ * to teams by their order of appearance.
+ */
+function parseGameDetailHtml(html) {
+  const homePlayers = [];
+  const awayPlayers = [];
+
+  // Find all <table> elements in document order
+  const tableRe = /<table[\s\S]*?<\/table>/gi;
+  let m;
+  const skaterTables  = [];  // { rows }
+  const goalieTables  = [];  // { rows }
+
+  while ((m = tableRe.exec(html)) !== null) {
+    const rows = parseTableHtml(m[0]);
+    if (rows.length < 2) continue;
+    const headers = rows[0].map(h => h.toLowerCase());
+
+    // Identify skater table: has "players"/"player" + "pos" + "g" + "a"
+    const isSkater = headers.some(h => h === 'players' || h === 'player') &&
+                     headers.some(h => h === 'pos' || h === 'position') &&
+                     headers.some(h => h === 'g') &&
+                     headers.some(h => h === 'a');
+
+    // Identify goalie table: has "goalies"/"goalie" (or "players") + "sa" + "sv"
+    const isGoalie = (headers.some(h => h === 'goalies' || h === 'goalie') ||
+                      headers.some(h => h === 'players' || h === 'player')) &&
+                     headers.some(h => h === 'sa' || h.includes('shots against') || h.includes('shots a')) &&
+                     headers.some(h => h === 'sv' || h === 'saves');
+
+    if (isGoalie) {
+      goalieTables.push(rows);
+    } else if (isSkater) {
+      skaterTables.push(rows);
+    }
+  }
+
+  // Assign tables: first skater table → home, second → away
+  if (skaterTables[0]) parseSkaterRows(skaterTables[0], homePlayers);
+  if (skaterTables[1]) parseSkaterRows(skaterTables[1], awayPlayers);
+
+  // Assign goalie tables: first → home, second → away
+  if (goalieTables[0]) parseGoalieRows(goalieTables[0], homePlayers);
+  if (goalieTables[1]) parseGoalieRows(goalieTables[1], awayPlayers);
+
+  return { homePlayers, awayPlayers };
+}
+
+function parseSkaterRows(rows, target) {
+  const headers = rows[0].map(h => h.toLowerCase());
+  const playerIdx = colIdx(headers, 'players', 'player', 'name');
+  const posIdx    = colIdx(headers, 'pos', 'position');
+  const gIdx      = colIdx(headers, 'g', 'goals');
+  const aIdx      = colIdx(headers, 'a', 'assists');
+  const sIdx      = colIdx(headers, 's', 'shots');
+  const pimIdx    = colIdx(headers, 'pim');
+  const pmIdx     = colIdx(headers, '+/-', 'plus/minus', 'plusminus');
+  const ppgIdx    = colIdx(headers, 'ppg', 'pp');
+  const shgIdx    = colIdx(headers, 'shg', 'sh');
+  const gwgIdx    = colIdx(headers, 'wg', 'gwg', 'game winning');
+  const hitsIdx   = colIdx(headers, 'hits');
+  const bsIdx     = colIdx(headers, 'bs', 'blocked');
+  const fowIdx    = colIdx(headers, 'fow', 'fo wins', 'faceoff wins');
+  const foIdx     = colIdx(headers, 'fo', 'faceoffs');  // total faceoffs
+  const gvaIdx    = colIdx(headers, 'gva', 'giveaways');
+  const tkaIdx    = colIdx(headers, 'tka', 'takeaways');
+  const toiIdx    = colIdx(headers, 'toi', 'time on ice');
+
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    const name = playerIdx >= 0 ? row[playerIdx] : '';
+    if (!name || name.toLowerCase() === 'total' || name.toLowerCase() === 'totals') continue;
+    const pos = posIdx >= 0 ? row[posIdx].toUpperCase() : 'F';
+    if (pos === 'G') continue; // goalies handled separately
+
+    const foW  = fowIdx >= 0 ? num(row[fowIdx]) : 0;
+    // FO column is total faceoffs; only meaningful when it's a separate column from FOW
+    const foTot = foIdx >= 0 && foIdx !== fowIdx ? num(row[foIdx]) : 0;
+    // faceoff_losses can only be derived when total faceoffs is its own column
+    const foL  = foTot > foW ? foTot - foW : 0;
+
+    target.push({
+      player_name:  name.trim(),
+      position:     pos || 'F',
+      goals:        gIdx   >= 0 ? num(row[gIdx])   : 0,
+      assists:      aIdx   >= 0 ? num(row[aIdx])   : 0,
+      shots:        sIdx   >= 0 ? num(row[sIdx])   : 0,
+      pim:          pimIdx >= 0 ? num(row[pimIdx]) : 0,
+      plus_minus:   pmIdx  >= 0 ? num(row[pmIdx])  : 0,
+      pp_goals:     ppgIdx >= 0 ? num(row[ppgIdx]) : 0,
+      sh_goals:     shgIdx >= 0 ? num(row[shgIdx]) : 0,
+      gwg:          gwgIdx >= 0 ? num(row[gwgIdx]) : 0,
+      hits:         hitsIdx >= 0 ? num(row[hitsIdx]) : 0,
+      blocked_shots: bsIdx  >= 0 ? num(row[bsIdx])   : 0,
+      faceoff_wins: foW,
+      faceoff_losses: foL,
+      giveaways:    gvaIdx >= 0 ? num(row[gvaIdx]) : 0,
+      takeaways:    tkaIdx >= 0 ? num(row[tkaIdx]) : 0,
+      toi:          toiIdx >= 0 ? num(row[toiIdx]) : 0,
+    });
+  }
+}
+
+function parseGoalieRows(rows, target) {
+  const headers = rows[0].map(h => h.toLowerCase());
+  const playerIdx = colIdx(headers, 'goalies', 'goalie', 'players', 'player', 'name');
+  const saIdx  = colIdx(headers, 'sa', 'shots against', 'shots a');
+  const gaIdx  = colIdx(headers, 'ga', 'goals against');
+  const svIdx  = colIdx(headers, 'sv', 'saves');
+  const gaaIdx = colIdx(headers, 'gaa');
+  const svpIdx = colIdx(headers, 'sv%', 'save%', 'save pct');
+  const soIdx  = colIdx(headers, 'so', 'shutouts');
+  const wIdx   = colIdx(headers, 'w', 'wins');
+  const lIdx   = colIdx(headers, 'l', 'losses');
+  const toiIdx = colIdx(headers, 'toi', 'time on ice');
+  const psaIdx = colIdx(headers, 'psa', 'penalty shot attempts');
+  const psgaIdx= colIdx(headers, 'psga', 'penalty shot goals');
+  const otwIdx = colIdx(headers, 'otw', 'ot win');
+  const otlIdx = colIdx(headers, 'otl', 'ot loss');
+
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    const name = playerIdx >= 0 ? row[playerIdx] : '';
+    if (!name || name.toLowerCase() === 'total' || name.toLowerCase() === 'totals') continue;
+
+    const svpRaw = svpIdx >= 0 ? row[svpIdx] : '';
+    const svp = svpRaw
+      ? parseFloat(svpRaw.replace('%', '').trim()) / (svpRaw.includes('%') ? 100 : 1)
+      : null;
+    const gaaRaw = gaaIdx >= 0 ? row[gaaIdx] : '';
+
+    target.push({
+      player_name:   name.trim(),
+      position:      'G',
+      goals:         0,
+      assists:       0,
+      shots_against: saIdx  >= 0 ? num(row[saIdx])  : 0,
+      goals_against: gaIdx  >= 0 ? num(row[gaIdx])  : 0,
+      saves:         svIdx  >= 0 ? num(row[svIdx])  : 0,
+      save_pct:      svp != null && !isNaN(svp) ? Math.round(svp * 1000) / 1000 : null,
+      gaa:           gaaRaw ? parseFloat(gaaRaw) || null : null,
+      shutouts:      soIdx  >= 0 ? num(row[soIdx])  : 0,
+      goalie_wins:   wIdx   >= 0 ? num(row[wIdx])   : 0,
+      goalie_losses: lIdx   >= 0 ? num(row[lIdx])   : 0,
+      goalie_otw:    otwIdx >= 0 ? num(row[otwIdx]) : 0,
+      goalie_otl:    otlIdx >= 0 ? num(row[otlIdx]) : 0,
+      toi:           toiIdx >= 0 ? num(row[toiIdx]) : 0,
+      penalty_shot_attempts: psaIdx  >= 0 ? num(row[psaIdx])  : 0,
+      penalty_shot_ga:       psgaIdx >= 0 ? num(row[psgaIdx]) : 0,
+    });
+  }
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────
 async function main() {
   console.log(`\n🏒 Scraping mystatsonline.com — League ID: ${leagueId}`);
@@ -450,17 +697,29 @@ async function main() {
     // Games
     process.stdout.write('     → Schedule/results…');
     const games = await scrapeSchedule(leagueId, season.value);
-    console.log(` ${games.length} game(s)`);
+    const gamesForOutput = games.map(({ _detailUrl: _ignored, ...g }) => g); // strip internal field
+    const gamesWithLinks = games.filter(g => g._detailUrl);
+    console.log(` ${games.length} game(s)${gamesWithLinks.length > 0 ? ` (${gamesWithLinks.length} with detail links)` : ''}`);
 
-    // Player stats
-    process.stdout.write('     → Player stats…');
-    const playerStats = await scrapePlayerStats(leagueId, season.value);
-    console.log(` ${playerStats.length} player row(s)`);
+    // Player stats — try game detail pages first (the reliable way)
+    let playerStats = [];
+    if (gamesWithLinks.length > 0) {
+      process.stdout.write(`     → Fetching player stats from game detail pages…\n`);
+      playerStats = await scrapeStatsFromGameDetails(games);
+      console.log(`     → Found ${playerStats.length} player row(s) from game details`);
+    }
+
+    // Fall back to the aggregate stats page if we got nothing from game details
+    if (playerStats.length === 0) {
+      process.stdout.write('     → Player stats (aggregate page)…');
+      playerStats = await scrapePlayerStats(leagueId, season.value);
+      console.log(` ${playerStats.length} player row(s)`);
+    }
 
     output.seasons.push({
       name: seasonName,
       league_type: '',   // set manually in the JSON if needed ("threes" or "sixes")
-      games,
+      games: gamesForOutput,
       player_stats: playerStats,
     });
   }
