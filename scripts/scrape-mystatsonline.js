@@ -159,8 +159,20 @@ function parseTableHtml(tableHtml) {
 }
 
 // ── Column index helper ───────────────────────────────────────────────────
+// Always tries exact (case-insensitive) match first so that single- or
+// two-character column names like "G", "A", "S", "SA", "SV" don't
+// accidentally match longer headers (e.g. "S" should NOT match "players").
+// Falls back to substring (includes) matching only for names longer than 2
+// characters, which handles human-readable aliases like 'goals against avg'.
 function colIdx(headers, ...names) {
+  // Pass 1: exact match
   for (const name of names) {
+    const idx = headers.findIndex(h => h.toLowerCase() === name.toLowerCase());
+    if (idx >= 0) return idx;
+  }
+  // Pass 2: substring match (only for names > 2 chars to avoid false hits)
+  for (const name of names) {
+    if (name.length <= 2) continue;
     const idx = headers.findIndex(h => h.toLowerCase().includes(name.toLowerCase()));
     if (idx >= 0) return idx;
   }
@@ -297,7 +309,8 @@ function parseScheduleHtml(html) {
 function extractGameDetailUrl(html) {
   const m = html.match(/href=["']([^"']*IDGame=(\d+)[^"']*)["']/i);
   if (!m) return null;
-  const href = m[1];
+  // Decode HTML entities — hrefs in raw HTML often use &amp; for &
+  let href = m[1].replace(/&amp;/gi, '&');
   if (href.startsWith('http')) return href;
   if (href.startsWith('/')) return `https://www.mystatsonline.com${href}`;
   // Relative path – resolve against the schedule_scores directory
