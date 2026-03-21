@@ -24,12 +24,29 @@ const path   = require('path');
 const { URL } = require('url');
 
 // ── CLI args ──────────────────────────────────────────────────────────────
-const leagueId  = process.argv[2];
-const outFile   = process.argv[3] || 'import-data.json';
+// Usage:
+//   node scrape-mystatsonline.js <IDLeague> [output-file]
+//   node scrape-mystatsonline.js <IDLeague> --season <IDSeason> [output-file]
+const rawArgs = process.argv.slice(2);
+let leagueId       = null;
+let outFile        = 'import-data.json';
+let forcedSeasonId = null;
+
+for (let i = 0; i < rawArgs.length; i++) {
+  if ((rawArgs[i] === '--season' || rawArgs[i] === '-s') && rawArgs[i + 1]) {
+    forcedSeasonId = rawArgs[++i];
+  } else if (!leagueId) {
+    leagueId = rawArgs[i];
+  } else {
+    outFile = rawArgs[i]; // second positional arg = output file (backward-compat)
+  }
+}
 
 if (!leagueId) {
   console.error('Usage: node scripts/scrape-mystatsonline.js <IDLeague> [output-file]');
+  console.error('       node scripts/scrape-mystatsonline.js <IDLeague> --season <IDSeason> [output-file]');
   console.error('Example: node scripts/scrape-mystatsonline.js 73879');
+  console.error('Example: node scripts/scrape-mystatsonline.js 73879 --season 12345');
   process.exit(1);
 }
 
@@ -188,12 +205,40 @@ function num(val) {
 // ── Scraper ───────────────────────────────────────────────────────────────
 
 async function getSeasons(html) {
-  // Try common select names for season dropdown
-  for (const name of ['IDSeason', 'ddlSeason', 'season', 'ddSeason']) {
+  // Pass 1: try common exact name/id values for the season dropdown
+  for (const name of ['IDSeason', 'ddlSeason', 'season', 'ddSeason', 'SeasonID',
+                       'cboSeason', 'seasonid', 'selSeason']) {
     const opts = parseSelectOptions(html, name);
     if (opts.length > 0) return opts;
   }
-  // Fallback: look for links with IDSeason in href
+
+  // Pass 2: find any <select> whose name or id contains "season" (case-insensitive)
+  const anySeasonSelectRe =
+    /<select[^>]*(?:name|id)=["'][^"']*season[^"']*["'][^>]*>([\s\S]*?)<\/select>/gi;
+  let sm;
+  while ((sm = anySeasonSelectRe.exec(html)) !== null) {
+    const opts = [];
+    const optRe = /<option[^>]*value=["']([^"']+)["'][^>]*>([\s\S]*?)<\/option>/gi;
+    let m;
+    while ((m = optRe.exec(sm[1])) !== null) {
+      opts.push({ value: m[1].trim(), label: stripTags(m[2]).trim() });
+    }
+    if (opts.length > 0) return opts;
+  }
+
+  // Pass 3: any <select> that has purely numeric option values (likely a season/year picker)
+  const allSelectRe = /<select[^>]*>([\s\S]*?)<\/select>/gi;
+  while ((sm = allSelectRe.exec(html)) !== null) {
+    const opts = [];
+    const optRe = /<option[^>]*value=["'](\d+)["'][^>]*>([\s\S]*?)<\/option>/gi;
+    let m;
+    while ((m = optRe.exec(sm[1])) !== null) {
+      opts.push({ value: m[1].trim(), label: stripTags(m[2]).trim() });
+    }
+    if (opts.length > 0) return opts;
+  }
+
+  // Pass 4: look for IDSeason= query-string values anywhere in the page
   const seasons = [];
   const re = /IDSeason=(\d+)/g;
   const seen = new Set();
@@ -675,28 +720,43 @@ function parseGoalieRows(rows, target) {
 // ── Main ──────────────────────────────────────────────────────────────────
 async function main() {
   console.log(`\n🏒 Scraping mystatsonline.com — League ID: ${leagueId}`);
+  if (forcedSeasonId) console.log(`   (using forced season ID: ${forcedSeasonId})`);
   console.log('─'.repeat(55));
 
-  // Fetch league home page to get seasons list
-  const homeUrl = `${BASE}/home/home_hockey.aspx?IDLeague=${leagueId}`;
-  console.log(`Fetching league home page…`);
-  let homeHtml;
-  try {
-    const { status, body } = await fetchUrl(homeUrl);
-    if (status !== 200) throw new Error(`HTTP ${status}`);
-    homeHtml = body;
-  } catch (e) {
-    console.error(`❌ Failed to fetch league home page: ${e.message}`);
-    console.error('   Make sure the server has internet access and the league ID is correct.');
-    process.exit(1);
-  }
+  let seasonOpts;
 
-  const seasonOpts = await getSeasons(homeHtml);
-  if (seasonOpts.length === 0) {
-    console.error('❌ No seasons found on the league home page.');
-    console.error('   The page structure may have changed. Try opening the URL manually:');
-    console.error('   ' + homeUrl);
-    process.exit(1);
+  if (forcedSeasonId) {
+    // Skip the home page fetch entirely — use the provided season ID directly
+    seasonOpts = [{ value: forcedSeasonId, label: `Season ${forcedSeasonId}` }];
+  } else {
+    // Fetch league home page to get seasons list
+    const homeUrl = `${BASE}/home/home_hockey.aspx?IDLeague=${leagueId}`;
+    console.log(`Fetching league home page…`);
+    let homeHtml;
+    try {
+      const { status, body } = await fetchUrl(homeUrl);
+      if (status !== 200) throw new Error(`HTTP ${status}`);
+      homeHtml = body;
+    } catch (e) {
+      console.error(`❌ Failed to fetch league home page: ${e.message}`);
+      console.error('   Make sure the server has internet access and the league ID is correct.');
+      process.exit(1);
+    }
+
+    seasonOpts = await getSeasons(homeHtml);
+    if (seasonOpts.length === 0) {
+      console.error('❌ No seasons found on the league home page.');
+      console.error('   The page structure may have changed. Try opening the URL manually:');
+      console.error('   ' + homeUrl);
+      console.error('');
+      console.error('   If you can find the IDSeason value in the URL when browsing the site,');
+      console.error('   you can bypass auto-detection with:');
+      console.error(`   node scripts/scrape-mystatsonline.js ${leagueId} --season <IDSeason>`);
+      console.error('');
+      console.error('   Debug — start of home page response (first 800 chars):');
+      console.error('   ' + homeHtml.substring(0, 800).replace(/\n/g, '\n   '));
+      process.exit(1);
+    }
   }
 
   console.log(`Found ${seasonOpts.length} season(s): ${seasonOpts.map(s => s.label).join(', ')}`);
