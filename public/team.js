@@ -132,7 +132,7 @@ function renderGoalieTable(players) {
 }
 
 // ── Schedule widget ────────────────────────────────────────────────────────
-function renderGameCard(g, team) {
+function renderScheduleRow(g, team) {
   const isHome = g.home_team_id === team.id;
   const myScore  = isHome ? g.home_score : g.away_score;
   const oppScore = isHome ? g.away_score : g.home_score;
@@ -140,36 +140,42 @@ function renderGameCard(g, team) {
   const oppLogo  = isHome ? g.away_logo : g.home_logo;
   const oppId    = isHome ? g.away_team_id : g.home_team_id;
 
-  const isComplete = myScore !== undefined && myScore !== null && g.status === 'complete';
-  const won = isComplete && myScore > oppScore;
+  const isComplete = myScore !== null && myScore !== undefined && g.status === 'complete';
+  const won  = isComplete && myScore > oppScore;
   const lost = isComplete && myScore < oppScore;
-  const borderColor = won ? '#238636' : lost ? '#da3633' : '#30363d';
-  const scoreColor  = won ? '#3fb950' : lost ? '#f85149' : '#e6edf3';
 
-  const oppLogoHtml = oppLogo
-    ? `<img src="${oppLogo}" style="width:22px;height:22px;object-fit:contain;border-radius:3px;vertical-align:middle;" />`
-    : `<span style="font-size:0.7rem;color:#8b949e;">${oppName.substring(0,3).toUpperCase()}</span>`;
+  const scoreColor = won ? '#3fb950' : lost ? '#f85149' : '#e6edf3';
+  const resultBadge = won
+    ? '<span class="badge badge-win">W</span>'
+    : lost
+      ? '<span class="badge badge-loss">L</span>'
+      : '';
 
-  const dateStr = g.date ? g.date.replace('T', ' ').substring(0, 16) : '';
+  const logoHtml = oppLogo
+    ? `<img src="${oppLogo}" style="width:20px;height:20px;object-fit:contain;border-radius:3px;vertical-align:middle;margin-right:0.3rem;" />`
+    : '';
 
-  let content;
-  if (isComplete) {
-    content = `<div style="display:flex;align-items:center;justify-content:space-between;gap:4px;">
-      <a href="team.html?id=${oppId}" style="display:flex;align-items:center;gap:4px;">${oppLogoHtml}</a>
-      <span style="font-weight:700;font-size:1rem;color:${scoreColor};">${myScore} – ${oppScore}${g.is_overtime ? '<span style="font-size:0.65rem;color:#e3b341;margin-left:2px;">OT</span>' : ''}</span>
-    </div>
-    <div style="font-size:0.65rem;color:#8b949e;margin-top:2px;">${dateStr}</div>`;
-  } else {
-    content = `<div style="display:flex;align-items:center;gap:4px;">
-      <a href="team.html?id=${oppId}">${oppLogoHtml}</a>
-      <span style="font-size:0.8rem;color:#c9d1d9;">${isHome ? 'vs' : '@'} ${oppName}</span>
-    </div>
-    <div style="font-size:0.65rem;color:#8b949e;margin-top:2px;">${dateStr}</div>`;
-  }
+  const haStr = isHome ? 'vs' : '@';
 
-  return `<a href="game.html?id=${g.id}" style="display:block;text-decoration:none;background:#161b22;border:1px solid ${borderColor};border-radius:6px;padding:0.4rem 0.5rem;">
-    ${content}
-  </a>`;
+  const scoreHtml = isComplete
+    ? `<span style="font-weight:700;color:${scoreColor};">${myScore}–${oppScore}</span>${g.is_overtime ? '<span style="font-size:0.65rem;color:#e3b341;margin-left:3px;">OT</span>' : ''}`
+    : '<span style="color:#8b949e;">–</span>';
+
+  const statusHtml = isComplete
+    ? resultBadge
+    : '<span class="status-badge status-scheduled" style="font-size:0.7rem;">Sched</span>';
+
+  return `<tr onclick="window.location='game.html?id=${g.id}'" style="cursor:pointer;">
+    <td style="color:#8b949e;white-space:nowrap;font-size:0.78rem;">${g.date || ''}</td>
+    <td style="font-size:0.78rem;color:#8b949e;text-align:center;">${haStr}</td>
+    <td>
+      <a href="team.html?id=${oppId}" style="display:flex;align-items:center;text-decoration:none;color:#c9d1d9;font-size:0.85rem;" onclick="event.stopPropagation()">
+        ${logoHtml}${oppName}
+      </a>
+    </td>
+    <td style="text-align:right;white-space:nowrap;">${scoreHtml}</td>
+    <td style="text-align:right;">${statusHtml}</td>
+  </tr>`;
 }
 
 // ── Team records table ─────────────────────────────────────────────────────
@@ -406,12 +412,16 @@ async function loadTeamPage() {
     // Show last 4 completed + up to 4 upcoming
     const completed = recentGames.slice(0, 8);
 
+    const scheduleRows = [
+      ...completed.map(g => renderScheduleRow(g, team)),
+      ...(upcoming || []).slice(0, 4).map(g => renderScheduleRow(g, team)),
+    ].join('');
+
     html += `<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:1rem;margin-bottom:1rem;">
       <h3 style="color:#58a6ff;margin:0 0 0.75rem;font-size:1rem;">Schedule</h3>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.4rem;">
-        ${completed.map(g => renderGameCard(g, team)).join('')}
-        ${(upcoming || []).slice(0,4).map(g => renderGameCard(g, team)).join('')}
-      </div>
+      <table style="width:100%;border-collapse:collapse;margin-top:0;font-size:0.85rem;">
+        <tbody>${scheduleRows}</tbody>
+      </table>
       <a href="schedule.html" style="display:block;margin-top:0.75rem;font-size:0.82rem;color:#8b949e;text-align:center;">Full Schedule</a>
     </div>`;
 
