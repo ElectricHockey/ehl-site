@@ -406,13 +406,13 @@ function renderPlayerRecords(holdings) {
   }
 
   let html = '';
-  const g3 = groupRows(holdings.filter(h => h.league_type === '3s' || h.scope === 'team'));
+  const g3 = groupRows(threes);
   if (g3.alltime.length || g3.seasonal.length) {
     html += `<h3 style="color:#58a6ff;margin-top:0.5rem;margin-bottom:0.25rem;">3's</h3>`;
     html += buildSection('All-Time Records', g3.alltime);
     html += buildSection('Single-Season Records', g3.seasonal);
   }
-  const g6 = groupRows(holdings.filter(h => h.league_type === '6s'));
+  const g6 = groupRows(sixes);
   if (g6.alltime.length || g6.seasonal.length) {
     html += `<h3 style="color:#58a6ff;margin-top:1rem;margin-bottom:0.25rem;">6's</h3>`;
     html += buildSection('All-Time Records', g6.alltime);
