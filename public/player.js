@@ -395,28 +395,31 @@ function renderPlayerRecords(holdings) {
     </table></div>`;
   }
 
-  const threes = holdings.filter(h => h.league_type === '3s' || h.scope === 'team');
+  const threes = holdings.filter(h => h.league_type === '3s' || (h.scope === 'team' && h.league_type !== '6s'));
   const sixes  = holdings.filter(h => h.league_type === '6s');
 
   // Group by category within each section
   function groupRows(arr) {
-    const alltime  = arr.filter(h => h.category === 'alltime' || h.category === 'team-career');
-    const seasonal = arr.filter(h => h.category === 'seasonal');
-    return { alltime, seasonal };
+    const alltime    = arr.filter(h => h.category === 'alltime' || h.category === 'team-career');
+    const seasonal   = arr.filter(h => h.category === 'seasonal');
+    const singlegame = arr.filter(h => h.category === 'singlegame');
+    return { alltime, seasonal, singlegame };
   }
 
   let html = '';
   const g3 = groupRows(threes);
-  if (g3.alltime.length || g3.seasonal.length) {
+  if (g3.alltime.length || g3.seasonal.length || g3.singlegame.length) {
     html += `<h3 style="color:#58a6ff;margin-top:0.5rem;margin-bottom:0.25rem;">3's</h3>`;
     html += buildSection('All-Time Records', g3.alltime);
     html += buildSection('Single-Season Records', g3.seasonal);
+    html += buildSection('Single-Game Records', g3.singlegame);
   }
   const g6 = groupRows(sixes);
-  if (g6.alltime.length || g6.seasonal.length) {
+  if (g6.alltime.length || g6.seasonal.length || g6.singlegame.length) {
     html += `<h3 style="color:#58a6ff;margin-top:1rem;margin-bottom:0.25rem;">6's</h3>`;
     html += buildSection('All-Time Records', g6.alltime);
     html += buildSection('Single-Season Records', g6.seasonal);
+    html += buildSection('Single-Game Records', g6.singlegame);
   }
   // Team records (scope === 'team', any league type)
   const teamHoldings = holdings.filter(h => h.scope === 'team');

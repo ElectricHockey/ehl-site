@@ -169,6 +169,7 @@ function showAdminTab(name) {
   );
   const sec = document.getElementById(`admin-tab-${name}`);
   if (sec) sec.classList.add('active');
+  if (name === 'records-settings') loadRecordsSettings();
 }
 
 async function adminLogout() {
@@ -1264,4 +1265,47 @@ async function runExcelImport() {
   } catch (e) {
     showXlImportStatus(`❌ Network error: ${e.message}`, false);
   }
+}
+
+
+// ── Records Settings ──────────────────────────────────────────────────────
+
+async function loadRecordsSettings() {
+  try {
+    const res = await fetch(`${API}/admin/records-settings`, { headers: adminHeaders() });
+    if (!res.ok) return;
+    const data = await res.json();
+    const inp = document.getElementById('rec-goalie-min-gp');
+    if (inp) inp.value = data.goalie_season_min_gp ?? 16;
+  } catch (e) { /* silently ignore */ }
+}
+
+async function saveRecordsSettings() {
+  const inp = document.getElementById('rec-goalie-min-gp');
+  const msg = document.getElementById('rec-settings-msg');
+  if (!inp) return;
+  const val = parseInt(inp.value, 10);
+  if (isNaN(val) || val < 1) {
+    msg.textContent = '⚠ Enter a valid number ≥ 1';
+    msg.style.color = '#f85149';
+    return;
+  }
+  try {
+    const res = await fetch(`${API}/admin/records-settings`, {
+      method: 'POST',
+      headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ goalie_season_min_gp: val }),
+    });
+    if (res.ok) {
+      msg.textContent = '✅ Saved';
+      msg.style.color = '#3fb950';
+    } else {
+      msg.textContent = '❌ Error saving';
+      msg.style.color = '#f85149';
+    }
+  } catch (e) {
+    msg.textContent = '❌ Network error';
+    msg.style.color = '#f85149';
+  }
+  setTimeout(() => { if (msg) msg.textContent = ''; }, 3000);
 }
