@@ -909,34 +909,34 @@ app.get('/api/players/profile/:name', (req, res) => {
   `).get(name);
   const isGoalie = posRow && posRow.position === 'G';
 
-  // Per-season per-team splits
-  const seasonTeamStats = isGoalie
-    ? db.prepare(`
-        SELECT g.season_id, COALESCE(s.name,'No Season') AS season_name,
-          COALESCE(s.league_type,'') AS league_type,
-          CASE WHEN g.playoff_series_id IS NOT NULL THEN 1 ELSE 0 END AS is_playoff,
-          ${GOALIE_SELECT}
-        FROM game_player_stats gps
-        JOIN teams t ON gps.team_id = t.id
-        JOIN games g ON gps.game_id = g.id
-        LEFT JOIN seasons s ON g.season_id = s.id
-        WHERE gps.player_name = ? AND gps.position = 'G' AND g.status = 'complete'
-        GROUP BY g.season_id, gps.team_id, CASE WHEN g.playoff_series_id IS NOT NULL THEN 1 ELSE 0 END
-        ORDER BY g.season_id DESC, is_playoff
-      `).all(name)
-    : db.prepare(`
-        SELECT g.season_id, COALESCE(s.name,'No Season') AS season_name,
-          COALESCE(s.league_type,'') AS league_type,
-          CASE WHEN g.playoff_series_id IS NOT NULL THEN 1 ELSE 0 END AS is_playoff,
-          ${SKATER_SELECT}
-        FROM game_player_stats gps
-        JOIN teams t ON gps.team_id = t.id
-        JOIN games g ON gps.game_id = g.id
-        LEFT JOIN seasons s ON g.season_id = s.id
-        WHERE gps.player_name = ? AND gps.position != 'G' AND g.status = 'complete'
-        GROUP BY g.season_id, gps.team_id, CASE WHEN g.playoff_series_id IS NOT NULL THEN 1 ELSE 0 END
-        ORDER BY g.season_id DESC, is_playoff
-      `).all(name);
+  // Per-season per-team splits – always fetch both modes
+  const rawGoalieStats = db.prepare(`
+      SELECT g.season_id, COALESCE(s.name,'No Season') AS season_name,
+        COALESCE(s.league_type,'') AS league_type,
+        CASE WHEN g.playoff_series_id IS NOT NULL THEN 1 ELSE 0 END AS is_playoff,
+        ${GOALIE_SELECT}
+      FROM game_player_stats gps
+      JOIN teams t ON gps.team_id = t.id
+      JOIN games g ON gps.game_id = g.id
+      LEFT JOIN seasons s ON g.season_id = s.id
+      WHERE gps.player_name = ? AND gps.position = 'G' AND g.status = 'complete'
+      GROUP BY g.season_id, gps.team_id, CASE WHEN g.playoff_series_id IS NOT NULL THEN 1 ELSE 0 END
+      ORDER BY g.season_id DESC, is_playoff
+    `).all(name);
+
+  const rawSkaterStats = db.prepare(`
+      SELECT g.season_id, COALESCE(s.name,'No Season') AS season_name,
+        COALESCE(s.league_type,'') AS league_type,
+        CASE WHEN g.playoff_series_id IS NOT NULL THEN 1 ELSE 0 END AS is_playoff,
+        ${SKATER_SELECT}
+      FROM game_player_stats gps
+      JOIN teams t ON gps.team_id = t.id
+      JOIN games g ON gps.game_id = g.id
+      LEFT JOIN seasons s ON g.season_id = s.id
+      WHERE gps.player_name = ? AND gps.position != 'G' AND g.status = 'complete'
+      GROUP BY g.season_id, gps.team_id, CASE WHEN g.playoff_series_id IS NOT NULL THEN 1 ELSE 0 END
+      ORDER BY g.season_id DESC, is_playoff
+    `).all(name);
 
   // Last 5 games
   const lastGames = db.prepare(`
@@ -985,19 +985,27 @@ app.get('/api/players/profile/:name', (req, res) => {
     ORDER BY sps.season_id DESC
   `).all(name);
 
-  // Merge: add historical rows only for seasons not already covered by game stats
-  const coveredSeasonIds = new Set(seasonTeamStats.map(r => r.season_id));
-  const mergedStats = [
-    ...seasonTeamStats.map(r => ({ ...r, is_historical: 0 })),
-    ...historicalStats.filter(r => !coveredSeasonIds.has(r.season_id)),
-  ];
-  mergedStats.sort((a, b) => (b.season_id || 0) - (a.season_id || 0));
+  // Merge historical rows for seasons not already covered by game stats
+  function mergeWithHistorical(gameStats, histFilter) {
+    const covered = new Set(gameStats.map(r => r.season_id));
+    const merged = [
+      ...gameStats.map(r => ({ ...r, is_historical: 0 })),
+      ...historicalStats.filter(r => histFilter(r) && !covered.has(r.season_id)),
+    ];
+    merged.sort((a, b) => (b.season_id || 0) - (a.season_id || 0));
+    return merged;
+  }
 
-  if (!player && mergedStats.length === 0) {
+  const goalieStats  = mergeWithHistorical(rawGoalieStats,  r => r.position === 'G');
+  const skaterStats  = mergeWithHistorical(rawSkaterStats,  r => r.position !== 'G');
+  // Keep seasonTeamStats for backward compat (used for 404 check + hero stats)
+  const seasonTeamStats = isGoalie ? goalieStats : skaterStats;
+
+  if (!player && seasonTeamStats.length === 0 && skaterStats.length === 0 && goalieStats.length === 0) {
     return res.status(404).json({ error: 'Player not found' });
   }
 
-  res.json({ player: player || null, isGoalie, seasonTeamStats: mergedStats, lastGames });
+  res.json({ player: player || null, isGoalie, skaterStats, goalieStats, seasonTeamStats, lastGames });
 });
 
 // List all registered users (for admin to pick an owner / for GMs to sign players)

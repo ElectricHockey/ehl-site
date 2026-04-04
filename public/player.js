@@ -258,6 +258,7 @@ function renderLastGames(lastGames, name, isGoalie) {
     const oppScore = onHomeTeam ? g.away_score : g.home_score;
     const won = myScore > oppScore;
     const result = won ? `<span class="result-w">W</span>` : `<span class="result-l">L</span>`;
+    const posCell = `<td style="text-align:center;font-size:0.8rem;color:#8b949e;">${g.position || '–'}</td>`;
     const score = `${myScore}–${oppScore}${g.is_overtime ? ' OT' : ''}`;
     const date = g.date ? new Date(g.date + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';
     const ovr = computeOvr(g);
@@ -276,7 +277,7 @@ function renderLastGames(lastGames, name, isGoalie) {
       const bksvp = g.breakaway_shots > 0 ? (g.breakaway_saves / g.breakaway_shots).toFixed(3).replace(/^0(?=\.)/, '') : '–';
       return `<tr>
         <td>${date}</td><td>${result}</td><td>${gameLink}</td><td>${opponent}</td>
-        ${ovrCell}${ratingCells}
+        ${posCell}${ovrCell}${ratingCells}
         <td>${g.goals || 0}</td><td>${g.assists || 0}</td>
         <td>${g.shots_against || 0}</td><td>${g.goals_against || 0}</td>
         <td><strong>${svp}</strong></td>
@@ -295,7 +296,7 @@ function renderLastGames(lastGames, name, isGoalie) {
         ? ((g.goals / g.shots) * 100).toFixed(1) + '%' : '–';
       return `<tr>
         <td>${date}</td><td>${result}</td><td>${gameLink}</td><td>${opponent}</td>
-        ${ovrCell}${ratingCells}
+        ${posCell}${ovrCell}${ratingCells}
         <td>${g.goals || 0}</td><td>${g.assists || 0}</td>
         <td><strong>${(g.goals || 0) + (g.assists || 0)}</strong></td>
         <td>${(g.plus_minus || 0) >= 0 ? '+' : ''}${g.plus_minus || 0}</td>
@@ -346,6 +347,7 @@ function renderLastGames(lastGames, name, isGoalie) {
   return `<div style="overflow-x:auto;max-width:100%;"><table class="last-games-table">
     <thead><tr>
       <th>Date</th><th></th><th>Score</th><th>Opponent</th>
+      <th data-tip="Position played">POS</th>
       <th data-tip="Overall Rating (avg. of OFFR + DR + TPR)">OVR</th>
       ${isGoalie ? goalieHead : skaterHead}
     </tr></thead>
@@ -392,6 +394,36 @@ function renderLeagueSections(seasonTeamStats, lastGames, isGoalie) {
     </div>`;
 }
 
+// ── Skater / Goalie tab switcher ───────────────────────────────────────────
+
+function renderPlayerModeTabs(skaterStats, goalieStats, lastGames, defaultIsGoalie) {
+  const hasSkater = skaterStats.length > 0;
+  const hasGoalie = goalieStats.length > 0;
+
+  const skaterActive = !defaultIsGoalie || !hasGoalie;
+  const goalieActive = !skaterActive;
+
+  const skaterBtnClass = `sg-tab${skaterActive ? ' sg-tab-active' : ''}`;
+  const goalieBtnClass = `sg-tab${goalieActive ? ' sg-tab-active' : ''}`;
+
+  const skaterContent = hasSkater
+    ? renderLeagueSections(skaterStats, lastGames, false)
+    : '<p style="color:#8b949e;padding:1rem 0;">No skater stats on file.</p>';
+
+  const goalieContent = hasGoalie
+    ? renderLeagueSections(goalieStats, lastGames, true)
+    : '<p style="color:#8b949e;padding:1rem 0;">No goalie stats on file.</p>';
+
+  return `
+    <div class="sg-tabs">
+      <button class="${skaterBtnClass}" data-sg="skater">⛸ Skater</button>
+      <button class="${goalieBtnClass}" data-sg="goalie">🥅 Goalie</button>
+    </div>
+    <div id="sg-panel-skater" style="${goalieActive ? 'display:none;' : ''}">${skaterContent}</div>
+    <div id="sg-panel-goalie" style="${skaterActive ? 'display:none;' : ''}">${goalieContent}</div>
+  `;
+}
+
 // ── Main ───────────────────────────────────────────────────────────────────
 
 async function loadPlayer() {
@@ -410,7 +442,7 @@ async function loadPlayer() {
       root.innerHTML = `<p class="error">${err.error || 'Player not found.'}</p>`;
       return;
     }
-    const { player, isGoalie, seasonTeamStats, lastGames } = await res.json();
+    const { player, isGoalie, skaterStats, goalieStats, seasonTeamStats, lastGames } = await res.json();
 
     document.title = `${name} – EHL`;
 
@@ -499,24 +531,38 @@ async function loadPlayer() {
           </div>
         </aside>
         <div class="phl-main">
-          ${renderLeagueSections(seasonTeamStats, lastGames, isGoalie)}
+          ${renderPlayerModeTabs(skaterStats || [], goalieStats || [], lastGames, isGoalie)}
         </div>
       </div>
     `;
 
     root.innerHTML = html;
 
-    // Wire up league-type tab buttons (including Records and Awards)
-    root.querySelectorAll('.lt-tab').forEach(btn => {
+    // Wire up Skater / Goalie top-level tabs
+    root.querySelectorAll('.sg-tab').forEach(btn => {
       btn.addEventListener('click', () => {
-        const lt = btn.dataset.lt;
-        // Only act on known keys to avoid selector injection
-        if (!LT_TABS.some(t => t.key === lt) && !LT_EXTRA_TABS.includes(lt)) return;
-        root.querySelectorAll('.lt-tab').forEach(b => b.classList.remove('lt-tab-active'));
-        btn.classList.add('lt-tab-active');
-        root.querySelectorAll('.lt-panel').forEach(p => { p.style.display = 'none'; });
-        const panel = root.querySelector(`#lt-panel-${lt}`);
+        const sg = btn.dataset.sg;
+        if (sg !== 'skater' && sg !== 'goalie') return;
+        root.querySelectorAll('.sg-tab').forEach(b => b.classList.remove('sg-tab-active'));
+        btn.classList.add('sg-tab-active');
+        root.querySelectorAll('[id^="sg-panel-"]').forEach(p => { p.style.display = 'none'; });
+        const panel = root.querySelector(`#sg-panel-${sg}`);
         if (panel) panel.style.display = '';
+      });
+    });
+
+    // Wire up league-type tab buttons scoped to their parent sg-panel
+    root.querySelectorAll('[id^="sg-panel-"]').forEach(sgPanel => {
+      sgPanel.querySelectorAll('.lt-tab').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const lt = btn.dataset.lt;
+          if (!LT_TABS.some(t => t.key === lt) && !LT_EXTRA_TABS.includes(lt)) return;
+          sgPanel.querySelectorAll('.lt-tab').forEach(b => b.classList.remove('lt-tab-active'));
+          btn.classList.add('lt-tab-active');
+          sgPanel.querySelectorAll('.lt-panel').forEach(p => { p.style.display = 'none'; });
+          const panel = sgPanel.querySelector(`#lt-panel-${lt}`);
+          if (panel) panel.style.display = '';
+        });
       });
     });
   } catch (err) {
