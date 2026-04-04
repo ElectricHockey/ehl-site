@@ -103,7 +103,7 @@ function renderAllTime(career) {
     buildRow('Penalties Drawn',  career.penalties_drawn,   null,  gpMeta),
   ];
   const goalieRows = [
-    buildRow('GP',               career.goalie_gp,         null,  () => ''),
+    buildRow('GP',               career.goalie_gp,         null,  null),
     buildRow('Wins',             career.goalie_wins,       null,  gpMeta),
     buildRow('Saves',            career.saves,             null,  gpMeta),
     buildRow('Shutouts',         career.shutouts,          null,  gpMeta),
