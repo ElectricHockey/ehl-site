@@ -26,6 +26,8 @@
 
   // ── Rating colour helpers ───────────────────────────────────────────────
 
+  // Returns the overall rating for a player.  Uses the EA-stored overall_rating when
+  // available (most accurate), falling back to an average of the component ratings.
   function computeOvr(p) {
     if (p.overall_rating && p.overall_rating > 0) return p.overall_rating;
     const vals = [p.offensive_rating, p.defensive_rating, p.team_play_rating]
