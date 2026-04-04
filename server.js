@@ -1001,7 +1001,7 @@ app.get('/api/players/profile/:name', (req, res) => {
   // Keep seasonTeamStats for backward compat (used for 404 check + hero stats)
   const seasonTeamStats = isGoalie ? goalieStats : skaterStats;
 
-  if (!player && seasonTeamStats.length === 0 && skaterStats.length === 0 && goalieStats.length === 0) {
+  if (!player && skaterStats.length === 0 && goalieStats.length === 0) {
     return res.status(404).json({ error: 'Player not found' });
   }
 
