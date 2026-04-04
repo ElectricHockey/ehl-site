@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Records – EHL</title>
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    .records-page { max-width: 900px; margin: 0 auto; padding: 1.5rem 1rem; }
+    .records-page h1 { color: #58a6ff; margin-bottom: 1rem; }
+
+    /* League-type switcher (3's / 6's) */
+    .league-tab-bar { display: flex; gap: 0.5rem; margin-bottom: 1.2rem; }
+    .league-tab-btn {
+      padding: 0.4rem 1.1rem; border-radius: 6px; border: 1px solid #30363d;
+      background: #161b22; color: #8b949e; cursor: pointer; font-size: 0.9rem;
+    }
+    .league-tab-btn.active { background: #1f6feb; border-color: #1f6feb; color: #e6edf3; }
+
+    /* Category tabs (All Time / Seasonal / Single Game) */
+    .rec-category-bar { display: flex; gap: 0; border-bottom: 2px solid #30363d; margin-bottom: 1.25rem; }
+    .rec-cat-btn {
+      padding: 0.5rem 1.2rem; background: transparent; border: none;
+      color: #8b949e; cursor: pointer; font-size: 0.88rem; border-bottom: 2px solid transparent; margin-bottom: -2px;
+    }
+    .rec-cat-btn.active { color: #58a6ff; border-bottom-color: #58a6ff; font-weight: 600; }
+
+    .rec-section-title { color: #8b949e; font-size: 0.75rem; text-transform: uppercase; letter-spacing: .05em; margin: 1.25rem 0 0.4rem; }
+    .rec-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+    .rec-table th { color: #8b949e; text-align: left; padding: 0.3rem 0.5rem; font-size: 0.75rem; border-bottom: 2px solid #30363d; }
+    .rec-table td { padding: 0.45rem 0.5rem; border-bottom: 1px solid #21262d; }
+    .rec-val { font-weight: 700; color: #e3b341; }
+    .rec-meta { color: #8b949e; font-size: 0.78rem; }
+    .player-link { color: #58a6ff; text-decoration: none; }
+    .player-link:hover { text-decoration: underline; }
+    #records-root .loading { color: #8b949e; padding: 2rem 0; }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="index.html" class="brand">
+      <img id="nav-logo" src="" alt="EHL" style="height:32px;display:none;" />
+      <span id="nav-title">EHL</span>
+    </a>
+    <a href="index.html">Home</a>
+    <a href="schedule.html">Schedule</a>
+    <div class="nav-dropdown">
+      <a href="standings.html">Standings ▾</a>
+      <div class="nav-dropdown-menu">
+        <a href="recent-scores.html">🏒 Recent Scores</a>
+      </div>
+    </div>
+    <a href="stats.html">Stats</a>
+    <a href="players.html">Players</a>
+    <a href="records.html" class="active">Records</a>
+    <a href="admin.html" id="nav-admin-link" style="display:none">Admin</a>
+    <a href="register.html" class="nav-portal">Player Portal</a>
+  </nav>
+
+  <div class="records-page">
+    <h1>League Records</h1>
+    <div class="league-tab-bar">
+      <button class="league-tab-btn active" data-lt="3s">3's</button>
+      <button class="league-tab-btn" data-lt="6s">6's</button>
+    </div>
+    <div class="rec-category-bar">
+      <button class="rec-cat-btn active" data-cat="alltime">All Time</button>
+      <button class="rec-cat-btn" data-cat="seasonal">Seasonal</button>
+      <button class="rec-cat-btn" data-cat="singlegame">Single Game</button>
+    </div>
+    <div id="records-root"><p class="loading">Loading…</p></div>
+  </div>
+
+  <script src="nav.js"></script>
+  <script src="records.js"></script>
+</body>
+</html>

@@ -874,6 +874,216 @@ app.get('/api/teams/:id/records', (req, res) => {
   res.json({ career, single });
 });
 
+// ── League-wide records ────────────────────────────────────────────────────
+
+app.get('/api/records', (req, res) => {
+  const lt = req.query.league_type || null; // '3s' | '6s' | null for both
+  const ltFilter = lt ? 'AND COALESCE(s.league_type,\'\') = ?' : '';
+  const p1 = lt ? [lt] : [];
+
+  function leagueCareerRecord(agg, pos, orderDir) {
+    const where = pos === 'G' ? "gps.position = 'G'" : "gps.position != 'G'";
+    return db.prepare(`
+      SELECT gps.player_name AS name, t.name AS team_name,
+        ${agg} AS value,
+        COUNT(DISTINCT gps.game_id) AS gp
+      FROM game_player_stats gps
+      JOIN games g ON gps.game_id = g.id
+      JOIN teams t ON gps.team_id = t.id
+      LEFT JOIN seasons s ON g.season_id = s.id
+      WHERE ${where} AND g.status = 'complete' ${ltFilter}
+      GROUP BY gps.player_name
+      ORDER BY value ${orderDir}, gp DESC LIMIT 1
+    `).get(...p1);
+  }
+
+  function leagueSeasonRecord(agg, pos, orderDir) {
+    const where = pos === 'G' ? "gps.position = 'G'" : "gps.position != 'G'";
+    return db.prepare(`
+      SELECT gps.player_name AS name, t.name AS team_name,
+        g.season_id, COALESCE(s.name,'No Season') AS season_name,
+        ${agg} AS value,
+        COUNT(DISTINCT gps.game_id) AS gp
+      FROM game_player_stats gps
+      JOIN games g ON gps.game_id = g.id
+      JOIN teams t ON gps.team_id = t.id
+      LEFT JOIN seasons s ON g.season_id = s.id
+      WHERE ${where} AND g.status = 'complete' ${ltFilter}
+      GROUP BY gps.player_name, g.season_id
+      ORDER BY value ${orderDir}, gp DESC LIMIT 1
+    `).get(...p1);
+  }
+
+  function leagueSingleGameRecord(col, pos, orderDir) {
+    const where = pos === 'G' ? "gps.position = 'G'" : "gps.position != 'G'";
+    return db.prepare(`
+      SELECT gps.player_name AS name, t.name AS team_name,
+        g.id AS game_id, g.date,
+        ht.name AS home_team, at.name AS away_team,
+        gps.${col} AS value
+      FROM game_player_stats gps
+      JOIN games g ON gps.game_id = g.id
+      JOIN teams t ON gps.team_id = t.id
+      JOIN teams ht ON g.home_team_id = ht.id
+      JOIN teams at ON g.away_team_id = at.id
+      LEFT JOIN seasons s ON g.season_id = s.id
+      WHERE ${where} AND g.status = 'complete' ${ltFilter}
+      ORDER BY value ${orderDir}, g.date DESC LIMIT 1
+    `).get(...p1);
+  }
+
+  const career = {
+    pts:         leagueCareerRecord("SUM(gps.goals + gps.assists)",  'S', 'DESC'),
+    goals:       leagueCareerRecord("SUM(gps.goals)",                'S', 'DESC'),
+    assists:     leagueCareerRecord("SUM(gps.assists)",              'S', 'DESC'),
+    plus_minus:  leagueCareerRecord("SUM(gps.plus_minus)",           'S', 'DESC'),
+    pim:         leagueCareerRecord("SUM(gps.pim)",                  'S', 'DESC'),
+    hits:        leagueCareerRecord("SUM(gps.hits)",                 'S', 'DESC'),
+    shots:       leagueCareerRecord("SUM(gps.shots)",                'S', 'DESC'),
+    save_pct:    leagueCareerRecord("CASE WHEN SUM(gps.shots_against)>0 THEN ROUND(CAST(SUM(gps.saves) AS REAL)/SUM(gps.shots_against),3) ELSE NULL END", 'G', 'DESC'),
+    gaa:         leagueCareerRecord("CASE WHEN SUM(gps.toi)>0 THEN ROUND(SUM(gps.goals_against)*3600.0/SUM(gps.toi),2) ELSE NULL END",                    'G', 'ASC'),
+    goalie_wins: leagueCareerRecord("SUM(gps.goalie_wins)",           'G', 'DESC'),
+    shutouts:    leagueCareerRecord("SUM(gps.shutouts)",              'G', 'DESC'),
+  };
+
+  const seasonal = {
+    pts:         leagueSeasonRecord("SUM(gps.goals + gps.assists)",  'S', 'DESC'),
+    goals:       leagueSeasonRecord("SUM(gps.goals)",                'S', 'DESC'),
+    assists:     leagueSeasonRecord("SUM(gps.assists)",              'S', 'DESC'),
+    plus_minus:  leagueSeasonRecord("SUM(gps.plus_minus)",           'S', 'DESC'),
+    pim:         leagueSeasonRecord("SUM(gps.pim)",                  'S', 'DESC'),
+    hits:        leagueSeasonRecord("SUM(gps.hits)",                 'S', 'DESC'),
+    shots:       leagueSeasonRecord("SUM(gps.shots)",                'S', 'DESC'),
+    save_pct:    leagueSeasonRecord("CASE WHEN SUM(gps.shots_against)>0 THEN ROUND(CAST(SUM(gps.saves) AS REAL)/SUM(gps.shots_against),3) ELSE NULL END", 'G', 'DESC'),
+    gaa:         leagueSeasonRecord("CASE WHEN SUM(gps.toi)>0 THEN ROUND(SUM(gps.goals_against)*3600.0/SUM(gps.toi),2) ELSE NULL END",                    'G', 'ASC'),
+    goalie_wins: leagueSeasonRecord("SUM(gps.goalie_wins)",           'G', 'DESC'),
+    shutouts:    leagueSeasonRecord("SUM(gps.shutouts)",              'G', 'DESC'),
+  };
+
+  const singleGame = {
+    goals:       leagueSingleGameRecord('goals',        'S', 'DESC'),
+    assists:     leagueSingleGameRecord('assists',      'S', 'DESC'),
+    pts:         null, // computed below
+    plus_minus:  leagueSingleGameRecord('plus_minus',  'S', 'DESC'),
+    hits:        leagueSingleGameRecord('hits',         'S', 'DESC'),
+    shots:       leagueSingleGameRecord('shots',        'S', 'DESC'),
+    pim:         leagueSingleGameRecord('pim',          'S', 'DESC'),
+    saves:       leagueSingleGameRecord('saves',        'G', 'DESC'),
+    goals_against: leagueSingleGameRecord('goals_against', 'G', 'ASC'),
+  };
+
+  // Single game pts (goals+assists in one game)
+  const ltFilterSg = lt ? 'AND COALESCE(s.league_type,\'\') = ?' : '';
+  singleGame.pts = db.prepare(`
+    SELECT gps.player_name AS name, t.name AS team_name,
+      g.id AS game_id, g.date,
+      ht.name AS home_team, at.name AS away_team,
+      (gps.goals + gps.assists) AS value
+    FROM game_player_stats gps
+    JOIN games g ON gps.game_id = g.id
+    JOIN teams t ON gps.team_id = t.id
+    JOIN teams ht ON g.home_team_id = ht.id
+    JOIN teams at ON g.away_team_id = at.id
+    LEFT JOIN seasons s ON g.season_id = s.id
+    WHERE gps.position != 'G' AND g.status = 'complete' ${ltFilterSg}
+    ORDER BY value DESC, g.date DESC LIMIT 1
+  `).get(...p1);
+
+  res.json({ career, seasonal, singleGame });
+});
+
+// ── Player record holdings (which records does this player hold) ────────────
+
+app.get('/api/players/records/:name', (req, res) => {
+  const name = req.params.name;
+  const holdings = [];
+
+  // Helper: check if player holds a league record for a given league_type
+  function checkLeagueRecord(label, agg, pos, orderDir, leagueType, category) {
+    const where = pos === 'G' ? "gps.position = 'G'" : "gps.position != 'G'";
+    const ltFilter = leagueType ? "AND COALESCE(s.league_type,'') = ?" : '';
+    const p = leagueType ? [leagueType] : [];
+    const row = db.prepare(`
+      SELECT gps.player_name AS name, ${agg} AS value, COUNT(DISTINCT gps.game_id) AS gp
+      FROM game_player_stats gps
+      JOIN games g ON gps.game_id = g.id
+      LEFT JOIN seasons s ON g.season_id = s.id
+      WHERE ${where} AND g.status = 'complete' ${ltFilter}
+      GROUP BY gps.player_name ORDER BY value ${orderDir}, gp DESC LIMIT 1
+    `).get(...p);
+    if (row && row.name === name) {
+      holdings.push({ category, label, value: row.value, league_type: leagueType || 'all', scope: 'league' });
+    }
+  }
+
+  function checkSeasonRecord(label, agg, pos, orderDir, leagueType, category) {
+    const where = pos === 'G' ? "gps.position = 'G'" : "gps.position != 'G'";
+    const ltFilter = leagueType ? "AND COALESCE(s.league_type,'') = ?" : '';
+    const p = leagueType ? [leagueType] : [];
+    const row = db.prepare(`
+      SELECT gps.player_name AS name, g.season_id, COALESCE(s.name,'No Season') AS season_name,
+        ${agg} AS value, COUNT(DISTINCT gps.game_id) AS gp
+      FROM game_player_stats gps
+      JOIN games g ON gps.game_id = g.id
+      LEFT JOIN seasons s ON g.season_id = s.id
+      WHERE ${where} AND g.status = 'complete' ${ltFilter}
+      GROUP BY gps.player_name, g.season_id ORDER BY value ${orderDir}, gp DESC LIMIT 1
+    `).get(...p);
+    if (row && row.name === name) {
+      holdings.push({ category, label, value: row.value, season_name: row.season_name, league_type: leagueType || 'all', scope: 'league' });
+    }
+  }
+
+  function checkTeamRecord(label, agg, pos, orderDir, teamId, teamName, mode) {
+    const where = pos === 'G' ? "gps.position = 'G'" : "gps.position != 'G'";
+    const row = db.prepare(`
+      SELECT gps.player_name AS name, ${agg} AS value, COUNT(DISTINCT gps.game_id) AS gp
+      FROM game_player_stats gps
+      JOIN games g ON gps.game_id = g.id
+      WHERE gps.team_id = ? AND ${where} AND g.status = 'complete'
+      GROUP BY gps.player_name ORDER BY value ${orderDir}, gp DESC LIMIT 1
+    `).get(teamId);
+    if (row && row.name === name) {
+      holdings.push({ category: mode, label, value: row.value, team_name: teamName, scope: 'team' });
+    }
+  }
+
+  // League records per league_type
+  for (const lt of ['3s', '6s']) {
+    checkLeagueRecord('Career Pts',         "SUM(gps.goals+gps.assists)",     'S', 'DESC', lt, 'alltime');
+    checkLeagueRecord('Career Goals',       "SUM(gps.goals)",                  'S', 'DESC', lt, 'alltime');
+    checkLeagueRecord('Career Assists',     "SUM(gps.assists)",                'S', 'DESC', lt, 'alltime');
+    checkLeagueRecord('Career +/-',         "SUM(gps.plus_minus)",             'S', 'DESC', lt, 'alltime');
+    checkLeagueRecord('Career Hits',        "SUM(gps.hits)",                   'S', 'DESC', lt, 'alltime');
+    checkLeagueRecord('Career Save%',       "CASE WHEN SUM(gps.shots_against)>0 THEN ROUND(CAST(SUM(gps.saves) AS REAL)/SUM(gps.shots_against),3) ELSE NULL END", 'G', 'DESC', lt, 'alltime');
+    checkLeagueRecord('Career GAA',         "CASE WHEN SUM(gps.toi)>0 THEN ROUND(SUM(gps.goals_against)*3600.0/SUM(gps.toi),2) ELSE NULL END", 'G', 'ASC', lt, 'alltime');
+    checkLeagueRecord('Career Wins',        "SUM(gps.goalie_wins)",            'G', 'DESC', lt, 'alltime');
+    checkLeagueRecord('Career Shutouts',    "SUM(gps.shutouts)",               'G', 'DESC', lt, 'alltime');
+    checkSeasonRecord('Season Pts',         "SUM(gps.goals+gps.assists)",     'S', 'DESC', lt, 'seasonal');
+    checkSeasonRecord('Season Goals',       "SUM(gps.goals)",                  'S', 'DESC', lt, 'seasonal');
+    checkSeasonRecord('Season Assists',     "SUM(gps.assists)",                'S', 'DESC', lt, 'seasonal');
+    checkSeasonRecord('Season Save%',       "CASE WHEN SUM(gps.shots_against)>0 THEN ROUND(CAST(SUM(gps.saves) AS REAL)/SUM(gps.shots_against),3) ELSE NULL END", 'G', 'DESC', lt, 'seasonal');
+    checkSeasonRecord('Season Wins',        "SUM(gps.goalie_wins)",            'G', 'DESC', lt, 'seasonal');
+    checkSeasonRecord('Season Shutouts',    "SUM(gps.shutouts)",               'G', 'DESC', lt, 'seasonal');
+  }
+
+  // Team records for the player's current team
+  const teamRow = db.prepare(`
+    SELECT t.id, t.name FROM players p JOIN teams t ON p.team_id = t.id
+    WHERE p.name = ? AND p.is_rostered = 1 LIMIT 1
+  `).get(name);
+  if (teamRow) {
+    checkTeamRecord('Career Pts',       "SUM(gps.goals+gps.assists)",     'S', 'DESC', teamRow.id, teamRow.name, 'team-career');
+    checkTeamRecord('Career Goals',     "SUM(gps.goals)",                  'S', 'DESC', teamRow.id, teamRow.name, 'team-career');
+    checkTeamRecord('Career Assists',   "SUM(gps.assists)",                'S', 'DESC', teamRow.id, teamRow.name, 'team-career');
+    checkTeamRecord('Career +/-',       "SUM(gps.plus_minus)",             'S', 'DESC', teamRow.id, teamRow.name, 'team-career');
+    checkTeamRecord('Career Wins',      "SUM(gps.goalie_wins)",            'G', 'DESC', teamRow.id, teamRow.name, 'team-career');
+    checkTeamRecord('Career Save%',     "CASE WHEN SUM(gps.shots_against)>0 THEN ROUND(CAST(SUM(gps.saves) AS REAL)/SUM(gps.shots_against),3) ELSE NULL END", 'G', 'DESC', teamRow.id, teamRow.name, 'team-career');
+  }
+
+  res.json({ holdings });
+});
+
 // ── Players ────────────────────────────────────────────────────────────────
 
 app.get('/api/players', (_req, res) => {

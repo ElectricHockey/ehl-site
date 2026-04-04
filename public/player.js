@@ -355,9 +355,83 @@ function renderLastGames(lastGames, name, isGoalie) {
   </table></div>`;
 }
 
+// ── Player record holdings renderer ───────────────────────────────────────
+
+function renderPlayerRecords(holdings) {
+  if (!holdings || holdings.length === 0) {
+    return '<p style="color:#8b949e;padding:1.5rem 0;">This player does not currently hold any records.</p>';
+  }
+
+  function fmtVal(label, value) {
+    if (value === null || value === undefined) return '–';
+    if (label.includes('Save%') || label.includes('save_pct')) return Number(value).toFixed(3);
+    if (label.includes('GAA')) return Number(value).toFixed(2);
+    if (label.includes('+/-')) return value > 0 ? '+' + value : String(value);
+    return String(value);
+  }
+
+  function buildSection(title, rows) {
+    if (rows.length === 0) return '';
+    const trs = rows.map(r => {
+      const scope = r.scope === 'league' ? '🏆 League' : `🏒 ${r.team_name || 'Team'}`;
+      const lt = r.league_type === '3s' ? "3's" : r.league_type === '6s' ? "6's" : '';
+      const extra = r.season_name ? `<span style="color:#8b949e;font-size:0.78rem;">Season: ${r.season_name}</span>` : '';
+      return `<tr>
+        <td style="color:#8b949e;padding:0.4rem 0.5rem;">${r.label}</td>
+        <td style="padding:0.4rem 0.5rem;font-weight:700;color:#e3b341;">${fmtVal(r.label, r.value)}</td>
+        <td style="padding:0.4rem 0.5rem;font-size:0.8rem;color:#58a6ff;">${scope}${lt ? ' · ' + lt : ''}</td>
+        <td style="padding:0.4rem 0.5rem;">${extra}</td>
+      </tr>`;
+    }).join('');
+    return `<p style="color:#8b949e;font-size:0.75rem;text-transform:uppercase;letter-spacing:.05em;margin:1.25rem 0 0.4rem;">${title}</p>
+    <div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:0.88rem;">
+      <thead><tr style="font-size:0.75rem;color:#8b949e;border-bottom:2px solid #30363d;">
+        <th style="padding:0.3rem 0.5rem;text-align:left;">Record</th>
+        <th style="padding:0.3rem 0.5rem;text-align:left;">Value</th>
+        <th style="padding:0.3rem 0.5rem;text-align:left;">Scope</th>
+        <th style="padding:0.3rem 0.5rem;text-align:left;"></th>
+      </tr></thead>
+      <tbody>${trs}</tbody>
+    </table></div>`;
+  }
+
+  const threes = holdings.filter(h => h.league_type === '3s' || h.scope === 'team');
+  const sixes  = holdings.filter(h => h.league_type === '6s');
+
+  // Group by category within each section
+  function groupRows(arr) {
+    const alltime  = arr.filter(h => h.category === 'alltime' || h.category === 'team-career');
+    const seasonal = arr.filter(h => h.category === 'seasonal');
+    return { alltime, seasonal };
+  }
+
+  let html = '';
+  const g3 = groupRows(holdings.filter(h => h.league_type === '3s' || h.scope === 'team'));
+  if (g3.alltime.length || g3.seasonal.length) {
+    html += `<h3 style="color:#58a6ff;margin-top:0.5rem;margin-bottom:0.25rem;">3's</h3>`;
+    html += buildSection('All-Time Records', g3.alltime);
+    html += buildSection('Single-Season Records', g3.seasonal);
+  }
+  const g6 = groupRows(holdings.filter(h => h.league_type === '6s'));
+  if (g6.alltime.length || g6.seasonal.length) {
+    html += `<h3 style="color:#58a6ff;margin-top:1rem;margin-bottom:0.25rem;">6's</h3>`;
+    html += buildSection('All-Time Records', g6.alltime);
+    html += buildSection('Single-Season Records', g6.seasonal);
+  }
+  // Team records (scope === 'team', any league type)
+  const teamHoldings = holdings.filter(h => h.scope === 'team');
+  if (teamHoldings.length) {
+    const { alltime: ta } = groupRows(teamHoldings);
+    html += `<h3 style="color:#58a6ff;margin-top:1rem;margin-bottom:0.25rem;">Team Records</h3>`;
+    html += buildSection('Career Records', ta);
+  }
+
+  return html || '<p style="color:#8b949e;padding:1.5rem 0;">This player does not currently hold any records.</p>';
+}
+
 // ── League-type tab rendering ──────────────────────────────────────────────
 
-function renderLeagueSections(seasonTeamStats, lastGames, isGoalie) {
+function renderLeagueSections(seasonTeamStats, lastGames, isGoalie, holdings) {
   const ltSet = new Set(seasonTeamStats.map(r => r.league_type || ''));
   lastGames.forEach(g => ltSet.add(g.league_type || ''));
 
@@ -387,7 +461,7 @@ function renderLeagueSections(seasonTeamStats, lastGames, isGoalie) {
 
   return `<div class="lt-tabs">${tabButtons}</div>${leaguePanels}
     <div class="lt-panel" id="lt-panel-records" style="display:none;">
-      <p style="color:#8b949e;padding:1.5rem 0;">No records on file.</p>
+      ${renderPlayerRecords(holdings || [])}
     </div>
     <div class="lt-panel" id="lt-panel-awards" style="display:none;">
       <p style="color:#8b949e;padding:1.5rem 0;">No awards on file.</p>
@@ -396,7 +470,7 @@ function renderLeagueSections(seasonTeamStats, lastGames, isGoalie) {
 
 // ── Skater / Goalie tab switcher ───────────────────────────────────────────
 
-function renderPlayerModeTabs(skaterStats, goalieStats, lastGames, defaultIsGoalie) {
+function renderPlayerModeTabs(skaterStats, goalieStats, lastGames, defaultIsGoalie, holdings) {
   const hasSkater = skaterStats.length > 0;
   const hasGoalie = goalieStats.length > 0;
 
@@ -407,11 +481,11 @@ function renderPlayerModeTabs(skaterStats, goalieStats, lastGames, defaultIsGoal
   const goalieBtnClass = `sg-tab${goalieActive ? ' sg-tab-active' : ''}`;
 
   const skaterContent = hasSkater
-    ? renderLeagueSections(skaterStats, lastGames, false)
+    ? renderLeagueSections(skaterStats, lastGames, false, holdings)
     : '<p style="color:#8b949e;padding:1rem 0;">No skater stats on file.</p>';
 
   const goalieContent = hasGoalie
-    ? renderLeagueSections(goalieStats, lastGames, true)
+    ? renderLeagueSections(goalieStats, lastGames, true, holdings)
     : '<p style="color:#8b949e;padding:1rem 0;">No goalie stats on file.</p>';
 
   return `
@@ -443,6 +517,11 @@ async function loadPlayer() {
       return;
     }
     const { player, isGoalie, skaterStats, goalieStats, seasonTeamStats, lastGames } = await res.json();
+
+    // Also fetch record holdings (non-blocking)
+    const recordsRes = await fetch(`${API}/players/records/${encodeURIComponent(name)}`).catch(() => null);
+    const recordsData = recordsRes && recordsRes.ok ? await recordsRes.json().catch(() => null) : null;
+    const holdings = recordsData ? recordsData.holdings : [];
 
     document.title = `${name} – EHL`;
 
@@ -531,7 +610,7 @@ async function loadPlayer() {
           </div>
         </aside>
         <div class="phl-main">
-          ${renderPlayerModeTabs(skaterStats || [], goalieStats || [], lastGames, isGoalie)}
+          ${renderPlayerModeTabs(skaterStats || [], goalieStats || [], lastGames, isGoalie, holdings)}
         </div>
       </div>
     `;
