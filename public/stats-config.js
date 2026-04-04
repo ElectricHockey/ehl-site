@@ -69,10 +69,7 @@ function ovrStyle(v) {
 
 const SKATER_COLS = [
   // ── Ratings ─────────────────────────────────────────────────────────────
-  { key: '_ovr',             label: 'OVR',  tip: 'Overall Rating (avg. of OFFR + DR + TPR)', fmt: p => p._ovr ?? '–',                                                            style: p => 'text-align:center;' + ovrStyle(p._ovr) },
-  { key: 'offensive_rating', label: 'OFFR', tip: 'Offense Rating',                           fmt: p => p.offensive_rating || '–',                                                style: p => 'text-align:center;' + ratingStyle(p.offensive_rating) },
-  { key: 'defensive_rating', label: 'DR',   tip: 'Defense Rating',                           fmt: p => p.defensive_rating || '–',                                                style: p => 'text-align:center;' + ratingStyle(p.defensive_rating) },
-  { key: 'team_play_rating', label: 'TPR',  tip: 'Team Play Rating',                         fmt: p => p.team_play_rating || '–',                                                style: p => 'text-align:center;' + ratingStyle(p.team_play_rating) },
+  { key: '_ovr',             label: 'OVR',  tip: 'Overall Rating', fmt: p => p._ovr ?? '–',                                                            style: p => 'text-align:center;' + ovrStyle(p._ovr) },
   // ── Games ────────────────────────────────────────────────────────────────
   { key: 'gp',              label: 'GP',   tip: 'Games Played',                            fmt: p => p.gp },
   // ── Scoring ──────────────────────────────────────────────────────────────
@@ -115,10 +112,7 @@ const SKATER_COLS = [
 
 const GOALIE_COLS = [
   // ── Ratings ─────────────────────────────────────────────────────────────
-  { key: '_ovr',                 label: 'OVR',  tip: 'Overall Rating (avg. of OFFR + DR + TPR)', fmt: p => p._ovr ?? '–',                                       style: p => 'text-align:center;' + ovrStyle(p._ovr) },
-  { key: 'offensive_rating',     label: 'OFFR', tip: 'Offense Rating',                           fmt: p => p.offensive_rating || '–',                           style: p => 'text-align:center;' + ratingStyle(p.offensive_rating) },
-  { key: 'defensive_rating',     label: 'DR',   tip: 'Defense Rating',                           fmt: p => p.defensive_rating || '–',                           style: p => 'text-align:center;' + ratingStyle(p.defensive_rating) },
-  { key: 'team_play_rating',     label: 'TPR',  tip: 'Team Play Rating',                         fmt: p => p.team_play_rating || '–',                           style: p => 'text-align:center;' + ratingStyle(p.team_play_rating) },
+  { key: '_ovr',                 label: 'OVR',  tip: 'Overall Rating', fmt: p => p._ovr ?? '–',                                       style: p => 'text-align:center;' + ovrStyle(p._ovr) },
   // ── Games ────────────────────────────────────────────────────────────────
   { key: 'gp',                   label: 'GP',   tip: 'Games Played',                            fmt: p => p.gp },
   // ── Scoring ──────────────────────────────────────────────────────────────

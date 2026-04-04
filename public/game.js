@@ -82,8 +82,7 @@ async function loadGame() {
     if (!has_stats) {
       html += '<p style="color:#8b949e;text-align:center;">No player stats were recorded for this game.</p>';
     } else {
-      html += GameStats.renderTeamPanel(game.home_team, home_players || []);
-      html += GameStats.renderTeamPanel(game.away_team, away_players || []);
+      html += GameStats.renderFullGameView(game, home_players || [], away_players || []);
     }
 
     root.innerHTML = html;

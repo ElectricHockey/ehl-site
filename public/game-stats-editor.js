@@ -15,9 +15,6 @@
 
   // ── Column definitions ─────────────────────────────────────────────────
   const GS_COLS = [
-    { l:'OFFR', k:'offensiveRating',      w:42 },
-    { l:'DR',   k:'defensiveRating',      w:42 },
-    { l:'TPR',  k:'teamPlayRating',       w:42 },
     { l:'G',    k:'goals',                w:38 },
     { l:'A',    k:'assists',              w:38 },
     { l:'+/-',  k:'plusMinus',            w:42, mn:-99 },

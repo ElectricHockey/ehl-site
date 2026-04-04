@@ -264,20 +264,13 @@ function renderLastGames(lastGames, name, isGoalie) {
     const ovr = computeOvr(g);
     const ovrCell = `<td style="text-align:center;${ovrStyle(ovr)}">${ovr ?? '–'}</td>`;
     const gameLink = `<a href="game.html?id=${g.game_id}" class="player-link">${score}</a>`;
-    const offr = g.offensive_rating || 0;
-    const dr   = g.defensive_rating || 0;
-    const tpr  = g.team_play_rating  || 0;
-    const ratingCells = `
-      <td style="text-align:center;${ratingStyle(offr)}">${offr || '–'}</td>
-      <td style="text-align:center;${ratingStyle(dr)}">${dr || '–'}</td>
-      <td style="text-align:center;${ratingStyle(tpr)}">${tpr || '–'}</td>`;
 
     if (isGoalie) {
       const svp = g.shots_against > 0 ? (g.saves / g.shots_against).toFixed(3).replace(/^0(?=\.)/, '') : '–';
       const bksvp = g.breakaway_shots > 0 ? (g.breakaway_saves / g.breakaway_shots).toFixed(3).replace(/^0(?=\.)/, '') : '–';
       return `<tr>
         <td>${date}</td><td>${result}</td><td>${gameLink}</td><td>${opponent}</td>
-        ${posCell}${ovrCell}${ratingCells}
+        ${posCell}${ovrCell}
         <td>${g.goals || 0}</td><td>${g.assists || 0}</td>
         <td>${g.shots_against || 0}</td><td>${g.goals_against || 0}</td>
         <td><strong>${svp}</strong></td>
@@ -296,7 +289,7 @@ function renderLastGames(lastGames, name, isGoalie) {
         ? ((g.goals / g.shots) * 100).toFixed(1) + '%' : '–';
       return `<tr>
         <td>${date}</td><td>${result}</td><td>${gameLink}</td><td>${opponent}</td>
-        ${posCell}${ovrCell}${ratingCells}
+        ${posCell}${ovrCell}
         <td>${g.goals || 0}</td><td>${g.assists || 0}</td>
         <td><strong>${(g.goals || 0) + (g.assists || 0)}</strong></td>
         <td>${(g.plus_minus || 0) >= 0 ? '+' : ''}${g.plus_minus || 0}</td>
@@ -315,12 +308,7 @@ function renderLastGames(lastGames, name, isGoalie) {
     }
   }).join('');
 
-  const ratingHead = `
-    <th data-tip="Offense Rating">OFFR</th>
-    <th data-tip="Defense Rating">DR</th>
-    <th data-tip="Team Play Rating">TPR</th>`;
-
-  const skaterHead = `${ratingHead}
+  const skaterHead = `
     <th data-tip="Goals">G</th><th data-tip="Assists">A</th><th data-tip="Points">PTS</th>
     <th data-tip="Plus / Minus">+/-</th>
     <th data-tip="Shots on Goal">SOG</th><th data-tip="Shot Attempts">SAT</th><th data-tip="Shooting %">S%</th>
@@ -335,7 +323,7 @@ function renderLastGames(lastGames, name, isGoalie) {
     <th data-tip="Avg Puck Possession">POSS</th>
     <th data-tip="Time on Ice">TOI</th>`;
 
-  const goalieHead = `${ratingHead}
+  const goalieHead = `
     <th data-tip="Goals">G</th><th data-tip="Assists">A</th>
     <th data-tip="Shots Against">SA</th><th data-tip="Goals Against">GA</th>
     <th data-tip="Save Percentage">SV%</th><th data-tip="Shutouts">SO</th>
@@ -348,7 +336,7 @@ function renderLastGames(lastGames, name, isGoalie) {
     <thead><tr>
       <th>Date</th><th></th><th>Score</th><th>Opponent</th>
       <th data-tip="Position played">POS</th>
-      <th data-tip="Overall Rating (avg. of OFFR + DR + TPR)">OVR</th>
+      <th data-tip="Overall Rating">OVR</th>
       ${isGoalie ? goalieHead : skaterHead}
     </tr></thead>
     <tbody>${rows}</tbody>

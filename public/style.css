@@ -516,6 +516,231 @@ button:hover, .btn:hover { opacity: 0.85; }
 }
 .no-stats { color: #8b949e; font-size: 0.88rem; padding: 0.4rem 0; }
 
+/* ── Full game page two-column layout ───────────────────────── */
+.gs-game-layout {
+  display: flex;
+  gap: 1.25rem;
+  align-items: flex-start;
+}
+.gs-left-col {
+  flex: 0 0 270px;
+  min-width: 240px;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 10px;
+  padding: 0.75rem;
+}
+.gs-right-col {
+  flex: 1;
+  min-width: 0;
+}
+@media (max-width: 860px) {
+  .gs-game-layout { flex-direction: column; }
+  .gs-left-col { flex: none; width: 100%; }
+}
+
+/* ── Donut charts ────────────────────────────────────────────── */
+.gs-donuts-row {
+  display: flex;
+  justify-content: space-around;
+  padding: 0.5rem 0 0.75rem;
+  border-bottom: 1px solid #30363d;
+  margin-bottom: 0.5rem;
+}
+.gs-donut-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+}
+.gs-donut {
+  width: 68px; height: 68px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+}
+.gs-donut-inner {
+  width: 44px; height: 44px;
+  border-radius: 50%;
+  background: #0d1117;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 1px;
+}
+.gs-donut-home  { font-size: 8px; font-weight: 700; color: #c9162b; line-height: 1.2; }
+.gs-donut-away  { font-size: 8px; font-weight: 700; color: #d1d5db; line-height: 1.2; }
+.gs-donut-dash  { font-size: 10px; color: #484f58; }
+.gs-donut-label { font-size: 10px; color: #8b949e; font-weight: 600; letter-spacing: 0.04em; }
+
+/* ── Stat comparison table ───────────────────────────────────── */
+.gs-comparison-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.79rem;
+}
+.gs-stat-row td { padding: 0.3rem 0.35rem; border-bottom: 1px solid #21262d; }
+.gs-stat-name   { text-align: center; color: #8b949e; }
+.gs-stat-val    { text-align: center; color: #e6edf3; font-weight: 500; min-width: 48px; }
+.gs-pim-hi      { color: #f85149 !important; font-weight: 700 !important; }
+
+/* ── Possession pie charts ───────────────────────────────────── */
+.gs-pies-row {
+  display: flex;
+  justify-content: space-around;
+  padding: 0.75rem 0 0.25rem;
+  border-top: 1px solid #30363d;
+  margin-top: 0.5rem;
+}
+.gs-pie-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+}
+.gs-pie {
+  width: 60px; height: 60px;
+  border-radius: 50%;
+}
+.gs-pie-title  { font-size: 10px; color: #3fb950; font-weight: 600; }
+.gs-pie-legend { display: flex; flex-wrap: wrap; gap: 3px; justify-content: center; font-size: 9px; color: #8b949e; }
+.gs-pie-item   { display: flex; align-items: center; gap: 2px; }
+.gs-pie-dot    { width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+
+/* ── Player cards (top 3 stars) ─────────────────────────────── */
+.gs-player-cards {
+  display: flex;
+  gap: 0.65rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+.gs-player-card {
+  flex: 1;
+  min-width: 150px;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  padding: 0.55rem 0.7rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.gs-card-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px; height: 32px;
+  border-radius: 5px;
+  font-size: 0.85rem;
+  font-weight: 800;
+}
+.gs-card-info  { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+.gs-card-name  { font-weight: 700; color: #e6edf3; font-size: 0.88rem; }
+.gs-card-pos   { font-size: 0.72rem; color: #8b949e; }
+.gs-card-stats { display: flex; gap: 0.55rem; flex-wrap: wrap; font-size: 0.77rem; color: #8b949e; }
+.gs-card-stats strong { color: #e6edf3; }
+
+/* ── Combined player/goalie tables ──────────────────────────── */
+.gs-combined-table { min-width: 820px; }
+
+.gs-section-label {
+  font-size: 0.85rem; font-weight: 700; color: #e6edf3;
+  padding: 0.5rem 0 0.3rem;
+  border-bottom: 2px solid #30363d;
+  margin-bottom: 0;
+}
+.gs-section-label-mt { margin-top: 1.25rem; }
+
+.gs-group-header-row th {
+  background: #0d1117;
+  font-size: 0.68rem;
+  color: #8b949e;
+  padding: 0.2rem 0.4rem;
+  border-bottom: 1px solid #30363d;
+}
+.gs-group-head {
+  text-align: center;
+  border-left: 1px solid #30363d;
+  border-right: 1px solid #30363d;
+}
+
+/* Team separator row inside combined table */
+.gs-team-header-row td {
+  background: #1c2128;
+  padding: 0.28rem 0.6rem;
+  border-top: 2px solid #30363d;
+  border-bottom: 1px solid #30363d;
+}
+.gs-team-header-name {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #8b949e;
+}
+
+/* Player cell */
+.gs-col-player      { min-width: 200px; }
+.gs-col-player-head { min-width: 200px; text-align: left !important; }
+.gs-player-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.gs-ovr-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px; height: 28px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+.gs-rating-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 26px;
+  flex-shrink: 0;
+}
+.gs-rbar {
+  height: 4px;
+  background: #21262d;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.gs-rbar-fill  { height: 100%; border-radius: 2px; }
+.gs-rbar-off   { background: #f0883e; }
+.gs-rbar-def   { background: #58a6ff; }
+.gs-row-logo {
+  width: 16px; height: 16px;
+  object-fit: contain;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.gs-player-name-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-width: 0;
+}
+.gs-pname {
+  font-size: 0.8rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gs-pos-tag {
+  font-size: 0.67rem;
+  color: #8b949e;
+  flex-shrink: 0;
+}
+.gs-num {
+  text-align: center;
+  font-size: 0.79rem;
+  padding: 0.3rem 0.4rem;
+  white-space: nowrap;
+}
+.gs-table-row:hover td { background: #1c2128; }
+
 /* ── JS-driven tooltip (escapes overflow containers) ────────── */
 #gs-tooltip {
   position: fixed;
