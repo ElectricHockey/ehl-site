@@ -902,7 +902,8 @@ app.get('/api/records', (req, res) => {
 
   function leagueSeasonRecord(agg, pos, orderDir, minGP) {
     const where = pos === 'G' ? "gps.position = 'G'" : "gps.position != 'G'";
-    const having = minGP ? `HAVING COUNT(DISTINCT gps.game_id) >= ${parseInt(minGP, 10)}` : '';
+    const having = minGP ? 'HAVING COUNT(DISTINCT gps.game_id) >= ?' : '';
+    const params = minGP ? [...p1, minGP] : p1;
     return db.prepare(`
       SELECT gps.player_name AS name, t.name AS team_name,
         g.season_id, COALESCE(s.name,'No Season') AS season_name,
@@ -916,7 +917,7 @@ app.get('/api/records', (req, res) => {
       GROUP BY gps.player_name, g.season_id
       ${having}
       ORDER BY value ${orderDir}, gp DESC LIMIT 1
-    `).get(...p1);
+    `).get(...params);
   }
 
   function leagueSingleGameRecord(col, pos, orderDir) {
@@ -1064,7 +1065,7 @@ app.get('/api/admin/records-settings', requireOwner, (_req, res) => {
 
 app.post('/api/admin/records-settings', requireOwner, (req, res) => {
   const val = parseInt(req.body.goalie_season_min_gp, 10);
-  if (isNaN(val) || val < 0) return res.status(400).json({ error: 'Invalid value' });
+  if (isNaN(val) || val < 1) return res.status(400).json({ error: 'Invalid value' });
   db.prepare("INSERT INTO settings (key, value) VALUES ('goalie_season_min_gp', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(String(val));
   res.json({ goalie_season_min_gp: val });
 });
@@ -1100,7 +1101,8 @@ app.get('/api/players/records/:name', (req, res) => {
     const where = pos === 'G' ? "gps.position = 'G'" : "gps.position != 'G'";
     const ltFilter = leagueType ? "AND COALESCE(s.league_type,'') = ?" : '';
     const p = leagueType ? [leagueType] : [];
-    const having = minGP ? `HAVING COUNT(DISTINCT gps.game_id) >= ${parseInt(minGP, 10)}` : '';
+    const having = minGP ? 'HAVING COUNT(DISTINCT gps.game_id) >= ?' : '';
+    const params = minGP ? [...p, minGP] : p;
     const row = db.prepare(`
       SELECT gps.player_name AS name, g.season_id, COALESCE(s.name,'No Season') AS season_name,
         ${agg} AS value, COUNT(DISTINCT gps.game_id) AS gp
@@ -1109,7 +1111,7 @@ app.get('/api/players/records/:name', (req, res) => {
       LEFT JOIN seasons s ON g.season_id = s.id
       WHERE ${where} AND g.status = 'complete' ${ltFilter}
       GROUP BY gps.player_name, g.season_id ${having} ORDER BY value ${orderDir}, gp DESC LIMIT 1
-    `).get(...p);
+    `).get(...params);
     if (row && row.name === name) {
       holdings.push({ category, label, value: row.value, season_name: row.season_name, league_type: leagueType || 'all', scope: 'league' });
     }
