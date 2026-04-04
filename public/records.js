@@ -19,23 +19,43 @@ function playerLink(name) {
   return `<a class="player-link" href="player.html?name=${encodeURIComponent(name)}">${name}</a>`;
 }
 
-function gameRef(rec) {
-  if (!rec) return '';
-  const d = rec.date ? new Date(rec.date).toLocaleDateString() : '';
-  return `<span class="rec-meta">${rec.home_team || ''} vs ${rec.away_team || ''} ${d}</span>`;
+function gameRef(r) {
+  if (!r) return '';
+  const d = r.date ? new Date(r.date).toLocaleDateString() : '';
+  const label = `${r.home_team || ''} vs ${r.away_team || ''} ${d}`.trim();
+  if (r.game_id) {
+    return `<a class="rec-game-link player-link" href="game.html?id=${r.game_id}">${label}</a>`;
+  }
+  return `<span class="rec-meta">${label}</span>`;
 }
 
 // ── Render helpers ─────────────────────────────────────────────────────────
-function buildRow(label, rec, fmtType, extra) {
-  if (!rec || rec.value === null || rec.value === undefined) {
+// rec may be a single object or an array (tied record holders)
+function buildRow(label, rec, fmtType, extraFn) {
+  const recs = Array.isArray(rec) ? rec : (rec ? [rec] : []);
+  if (recs.length === 0 || recs[0] === null || recs[0].value === null || recs[0].value === undefined) {
     return `<tr><td class="rec-meta">${label}</td><td colspan="3" class="rec-meta">–</td></tr>`;
   }
-  return `<tr>
-    <td class="rec-meta">${label}</td>
-    <td>${playerLink(rec.name)}</td>
-    <td class="rec-val">${fmt(rec.value, fmtType)}</td>
-    <td>${extra || ''}</td>
-  </tr>`;
+  if (recs.length === 1) {
+    const r = recs[0];
+    const extra = extraFn ? extraFn(r) : '';
+    return `<tr>
+      <td class="rec-meta">${label}</td>
+      <td>${playerLink(r.name)}</td>
+      <td class="rec-val">${fmt(r.value, fmtType)}</td>
+      <td>${extra}</td>
+    </tr>`;
+  }
+  // Multiple tied holders – one row per player, label shows "tied" after first
+  return recs.map((r, i) => {
+    const extra = extraFn ? extraFn(r) : '';
+    return `<tr>
+      <td class="rec-meta">${i === 0 ? label : '<span style="color:#8b949e;font-style:italic;font-size:0.82em;">↳ tied</span>'}</td>
+      <td>${playerLink(r.name)}</td>
+      <td class="rec-val">${fmt(r.value, fmtType)}</td>
+      <td>${extra}</td>
+    </tr>`;
+  }).join('');
 }
 
 function table(rows) {
@@ -53,40 +73,43 @@ function section(title) {
 
 // ── Render all-time ────────────────────────────────────────────────────────
 function renderAllTime(career) {
-  function gpMeta(rec) {
-    return rec ? `<span class="rec-meta">GP ${rec.gp || '–'}</span>` : '';
+  function gpMeta(r) {
+    return r ? `<span class="rec-meta">GP ${r.gp || '–'}</span>` : '';
   }
+  const isThrees = _leagueType === 'threes';
   const skaterRows = [
-    buildRow('GP',               career.gp,               null,  gpMeta(career.gp)),
-    buildRow('Points',           career.pts,               null,  gpMeta(career.pts)),
-    buildRow('Goals',            career.goals,             null,  gpMeta(career.goals)),
-    buildRow('Assists',          career.assists,           null,  gpMeta(career.assists)),
-    buildRow('+/-',              career.plus_minus,        'pm',  gpMeta(career.plus_minus)),
-    buildRow('Hits',             career.hits,              null,  gpMeta(career.hits)),
-    buildRow('Shots',            career.shots,             null,  gpMeta(career.shots)),
-    buildRow('Shot Attempts',    career.shot_attempts,     null,  gpMeta(career.shot_attempts)),
-    buildRow('Blocked Shots',    career.blocked_shots,     null,  gpMeta(career.blocked_shots)),
-    buildRow('PIM',              career.pim,               null,  gpMeta(career.pim)),
-    buildRow('PP Goals',         career.pp_goals,          null,  gpMeta(career.pp_goals)),
-    buildRow('SH Goals',         career.sh_goals,          null,  gpMeta(career.sh_goals)),
-    buildRow('GWG',              career.gwg,               null,  gpMeta(career.gwg)),
-    buildRow('Hat Tricks',       career.hat_tricks,        null,  gpMeta(career.hat_tricks)),
-    buildRow('Faceoff Wins',     career.faceoff_wins,      null,  gpMeta(career.faceoff_wins)),
-    buildRow('Deflections',      career.deflections,       null,  gpMeta(career.deflections)),
-    buildRow('Interceptions',    career.interceptions,     null,  gpMeta(career.interceptions)),
-    buildRow('Takeaways',        career.takeaways,         null,  gpMeta(career.takeaways)),
-    buildRow('Giveaways',        career.giveaways,         null,  gpMeta(career.giveaways)),
-    buildRow('Pass Completions', career.pass_completions,  null,  gpMeta(career.pass_completions)),
-    buildRow('Penalties Drawn',  career.penalties_drawn,   null,  gpMeta(career.penalties_drawn)),
+    buildRow('GP',               career.gp,               null,  gpMeta),
+    buildRow('Points',           career.pts,               null,  gpMeta),
+    buildRow('Goals',            career.goals,             null,  gpMeta),
+    buildRow('Assists',          career.assists,           null,  gpMeta),
+    buildRow('+/-',              career.plus_minus,        'pm',  gpMeta),
+    buildRow('Hits',             career.hits,              null,  gpMeta),
+    buildRow('Shots',            career.shots,             null,  gpMeta),
+    buildRow('Shot Attempts',    career.shot_attempts,     null,  gpMeta),
+    buildRow('Blocked Shots',    career.blocked_shots,     null,  gpMeta),
+    buildRow('PIM',              career.pim,               null,  gpMeta),
+    ...(!isThrees ? [
+      buildRow('PP Goals',       career.pp_goals,          null,  gpMeta),
+      buildRow('SH Goals',       career.sh_goals,          null,  gpMeta),
+    ] : []),
+    buildRow('GWG',              career.gwg,               null,  gpMeta),
+    buildRow('Hat Tricks',       career.hat_tricks,        null,  gpMeta),
+    buildRow('Faceoff Wins',     career.faceoff_wins,      null,  gpMeta),
+    buildRow('Deflections',      career.deflections,       null,  gpMeta),
+    buildRow('Interceptions',    career.interceptions,     null,  gpMeta),
+    buildRow('Takeaways',        career.takeaways,         null,  gpMeta),
+    buildRow('Giveaways',        career.giveaways,         null,  gpMeta),
+    buildRow('Pass Completions', career.pass_completions,  null,  gpMeta),
+    buildRow('Penalties Drawn',  career.penalties_drawn,   null,  gpMeta),
   ];
   const goalieRows = [
-    buildRow('GP',               career.goalie_gp,         null,  ''),
-    buildRow('Wins',             career.goalie_wins,       null,  gpMeta(career.goalie_wins)),
-    buildRow('Saves',            career.saves,             null,  gpMeta(career.saves)),
-    buildRow('Shutouts',         career.shutouts,          null,  gpMeta(career.shutouts)),
-    buildRow('PSA',              career.psa,               null,  gpMeta(career.psa)),
-    buildRow('BKSV',             career.bksv,              null,  gpMeta(career.bksv)),
-    buildRow('Goals Against',    career.goals_against,     null,  gpMeta(career.goals_against)),
+    buildRow('GP',               career.goalie_gp,         null,  () => ''),
+    buildRow('Wins',             career.goalie_wins,       null,  gpMeta),
+    buildRow('Saves',            career.saves,             null,  gpMeta),
+    buildRow('Shutouts',         career.shutouts,          null,  gpMeta),
+    buildRow('PSA',              career.psa,               null,  gpMeta),
+    buildRow('BKSV',             career.bksv,              null,  gpMeta),
+    buildRow('Goals Against',    career.goals_against,     null,  gpMeta),
   ];
   return section('Skater Records') + table(skaterRows) +
          section('Goalie Records')  + table(goalieRows);
@@ -94,43 +117,46 @@ function renderAllTime(career) {
 
 // ── Render seasonal ────────────────────────────────────────────────────────
 function renderSeasonal(seasonal, goalieSeasonMinGP) {
-  function meta(rec) {
-    if (!rec) return '';
-    const s = rec.season_name ? `Season: ${rec.season_name}` : '';
-    const g = rec.gp ? `GP ${rec.gp}` : '';
+  function meta(r) {
+    if (!r) return '';
+    const s = r.season_name ? `Season: ${r.season_name}` : '';
+    const g = r.gp ? `GP ${r.gp}` : '';
     return `<span class="rec-meta">${[s, g].filter(Boolean).join(' | ')}</span>`;
   }
+  const isThrees = _leagueType === 'threes';
   const skaterRows = [
-    buildRow('Points',           seasonal.pts,              null,  meta(seasonal.pts)),
-    buildRow('Goals',            seasonal.goals,            null,  meta(seasonal.goals)),
-    buildRow('Assists',          seasonal.assists,          null,  meta(seasonal.assists)),
-    buildRow('+/-',              seasonal.plus_minus,       'pm',  meta(seasonal.plus_minus)),
-    buildRow('Hits',             seasonal.hits,             null,  meta(seasonal.hits)),
-    buildRow('Shots',            seasonal.shots,            null,  meta(seasonal.shots)),
-    buildRow('Shot Attempts',    seasonal.shot_attempts,    null,  meta(seasonal.shot_attempts)),
-    buildRow('Blocked Shots',    seasonal.blocked_shots,    null,  meta(seasonal.blocked_shots)),
-    buildRow('PIM',              seasonal.pim,              null,  meta(seasonal.pim)),
-    buildRow('PP Goals',         seasonal.pp_goals,         null,  meta(seasonal.pp_goals)),
-    buildRow('SH Goals',         seasonal.sh_goals,         null,  meta(seasonal.sh_goals)),
-    buildRow('GWG',              seasonal.gwg,              null,  meta(seasonal.gwg)),
-    buildRow('Hat Tricks',       seasonal.hat_tricks,       null,  meta(seasonal.hat_tricks)),
-    buildRow('Faceoff Wins',     seasonal.faceoff_wins,     null,  meta(seasonal.faceoff_wins)),
-    buildRow('Deflections',      seasonal.deflections,      null,  meta(seasonal.deflections)),
-    buildRow('Interceptions',    seasonal.interceptions,    null,  meta(seasonal.interceptions)),
-    buildRow('Takeaways',        seasonal.takeaways,        null,  meta(seasonal.takeaways)),
-    buildRow('Giveaways',        seasonal.giveaways,        null,  meta(seasonal.giveaways)),
-    buildRow('Pass Completions', seasonal.pass_completions, null,  meta(seasonal.pass_completions)),
-    buildRow('Penalties Drawn',  seasonal.penalties_drawn,  null,  meta(seasonal.penalties_drawn)),
+    buildRow('Points',           seasonal.pts,              null,  meta),
+    buildRow('Goals',            seasonal.goals,            null,  meta),
+    buildRow('Assists',          seasonal.assists,          null,  meta),
+    buildRow('+/-',              seasonal.plus_minus,       'pm',  meta),
+    buildRow('Hits',             seasonal.hits,             null,  meta),
+    buildRow('Shots',            seasonal.shots,            null,  meta),
+    buildRow('Shot Attempts',    seasonal.shot_attempts,    null,  meta),
+    buildRow('Blocked Shots',    seasonal.blocked_shots,    null,  meta),
+    buildRow('PIM',              seasonal.pim,              null,  meta),
+    ...(!isThrees ? [
+      buildRow('PP Goals',       seasonal.pp_goals,         null,  meta),
+      buildRow('SH Goals',       seasonal.sh_goals,         null,  meta),
+    ] : []),
+    buildRow('GWG',              seasonal.gwg,              null,  meta),
+    buildRow('Hat Tricks',       seasonal.hat_tricks,       null,  meta),
+    buildRow('Faceoff Wins',     seasonal.faceoff_wins,     null,  meta),
+    buildRow('Deflections',      seasonal.deflections,      null,  meta),
+    buildRow('Interceptions',    seasonal.interceptions,    null,  meta),
+    buildRow('Takeaways',        seasonal.takeaways,        null,  meta),
+    buildRow('Giveaways',        seasonal.giveaways,        null,  meta),
+    buildRow('Pass Completions', seasonal.pass_completions, null,  meta),
+    buildRow('Penalties Drawn',  seasonal.penalties_drawn,  null,  meta),
   ];
   const minLabel = goalieSeasonMinGP ? ` (min ${goalieSeasonMinGP} GP)` : '';
   const goalieRows = [
-    buildRow('Wins',             seasonal.goalie_wins,      null,  meta(seasonal.goalie_wins)),
-    buildRow('Saves',            seasonal.saves,            null,  meta(seasonal.saves)),
-    buildRow('Shutouts',         seasonal.shutouts,         null,  meta(seasonal.shutouts)),
-    buildRow('PSA',              seasonal.psa,              null,  meta(seasonal.psa)),
-    buildRow('BKSV',             seasonal.bksv,             null,  meta(seasonal.bksv)),
-    buildRow('Goals Against',    seasonal.goals_against,    null,  meta(seasonal.goals_against)),
-    buildRow('Save%' + minLabel, seasonal.save_pct,         'pct3',meta(seasonal.save_pct)),
+    buildRow('Wins',             seasonal.goalie_wins,      null,  meta),
+    buildRow('Saves',            seasonal.saves,            null,  meta),
+    buildRow('Shutouts',         seasonal.shutouts,         null,  meta),
+    buildRow('PSA',              seasonal.psa,              null,  meta),
+    buildRow('BKSV',             seasonal.bksv,             null,  meta),
+    buildRow('Goals Against',    seasonal.goals_against,    null,  meta),
+    buildRow('Save%' + minLabel, seasonal.save_pct,         'pct3',meta),
   ];
   return section('Skater Records') + table(skaterRows) +
          section('Goalie Records')  + table(goalieRows);
@@ -138,34 +164,37 @@ function renderSeasonal(seasonal, goalieSeasonMinGP) {
 
 // ── Render single game ─────────────────────────────────────────────────────
 function renderSingleGame(sg) {
+  const isThrees = _leagueType === 'threes';
   const skaterRows = [
-    buildRow('Points',           sg.pts,              null, gameRef(sg.pts)),
-    buildRow('Goals',            sg.goals,            null, gameRef(sg.goals)),
-    buildRow('Assists',          sg.assists,          null, gameRef(sg.assists)),
-    buildRow('+/-',              sg.plus_minus,       'pm', gameRef(sg.plus_minus)),
-    buildRow('Hits',             sg.hits,             null, gameRef(sg.hits)),
-    buildRow('Shots',            sg.shots,            null, gameRef(sg.shots)),
-    buildRow('Shot Attempts',    sg.shot_attempts,    null, gameRef(sg.shot_attempts)),
-    buildRow('Blocked Shots',    sg.blocked_shots,    null, gameRef(sg.blocked_shots)),
-    buildRow('PIM',              sg.pim,              null, gameRef(sg.pim)),
-    buildRow('PP Goals',         sg.pp_goals,         null, gameRef(sg.pp_goals)),
-    buildRow('SH Goals',         sg.sh_goals,         null, gameRef(sg.sh_goals)),
-    buildRow('GWG',              sg.gwg,              null, gameRef(sg.gwg)),
-    buildRow('Hat Tricks',       sg.hat_tricks,       null, gameRef(sg.hat_tricks)),
-    buildRow('Faceoff Wins',     sg.faceoff_wins,     null, gameRef(sg.faceoff_wins)),
-    buildRow('Deflections',      sg.deflections,      null, gameRef(sg.deflections)),
-    buildRow('Interceptions',    sg.interceptions,    null, gameRef(sg.interceptions)),
-    buildRow('Takeaways',        sg.takeaways,        null, gameRef(sg.takeaways)),
-    buildRow('Giveaways',        sg.giveaways,        null, gameRef(sg.giveaways)),
-    buildRow('Pass Completions', sg.pass_completions, null, gameRef(sg.pass_completions)),
-    buildRow('Penalties Drawn',  sg.penalties_drawn,  null, gameRef(sg.penalties_drawn)),
+    buildRow('Points',           sg.pts,              null, gameRef),
+    buildRow('Goals',            sg.goals,            null, gameRef),
+    buildRow('Assists',          sg.assists,          null, gameRef),
+    buildRow('+/-',              sg.plus_minus,       'pm', gameRef),
+    buildRow('Hits',             sg.hits,             null, gameRef),
+    buildRow('Shots',            sg.shots,            null, gameRef),
+    buildRow('Shot Attempts',    sg.shot_attempts,    null, gameRef),
+    buildRow('Blocked Shots',    sg.blocked_shots,    null, gameRef),
+    buildRow('PIM',              sg.pim,              null, gameRef),
+    ...(!isThrees ? [
+      buildRow('PP Goals',       sg.pp_goals,         null, gameRef),
+      buildRow('SH Goals',       sg.sh_goals,         null, gameRef),
+    ] : []),
+    buildRow('GWG',              sg.gwg,              null, gameRef),
+    buildRow('Hat Tricks',       sg.hat_tricks,       null, gameRef),
+    buildRow('Faceoff Wins',     sg.faceoff_wins,     null, gameRef),
+    buildRow('Deflections',      sg.deflections,      null, gameRef),
+    buildRow('Interceptions',    sg.interceptions,    null, gameRef),
+    buildRow('Takeaways',        sg.takeaways,        null, gameRef),
+    buildRow('Giveaways',        sg.giveaways,        null, gameRef),
+    buildRow('Pass Completions', sg.pass_completions, null, gameRef),
+    buildRow('Penalties Drawn',  sg.penalties_drawn,  null, gameRef),
   ];
   const goalieRows = [
-    buildRow('Saves',            sg.saves,            null, gameRef(sg.saves)),
-    buildRow('Shutouts',         sg.shutouts,         null, gameRef(sg.shutouts)),
-    buildRow('PSA',              sg.psa,              null, gameRef(sg.psa)),
-    buildRow('BKSV',             sg.bksv,             null, gameRef(sg.bksv)),
-    buildRow('Goals Against',    sg.goals_against,    null, gameRef(sg.goals_against)),
+    buildRow('Saves',            sg.saves,            null, gameRef),
+    buildRow('Shutouts',         sg.shutouts,         null, gameRef),
+    buildRow('PSA',              sg.psa,              null, gameRef),
+    buildRow('BKSV',             sg.bksv,             null, gameRef),
+    buildRow('Goals Against',    sg.goals_against,    null, gameRef),
   ];
   return section('Skater Records') + table(skaterRows) +
          section('Goalie Records')  + table(goalieRows);

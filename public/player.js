@@ -375,12 +375,22 @@ function renderPlayerRecords(holdings) {
     const trs = rows.map(r => {
       const scope = r.scope === 'league' ? '🏆 League' : `🏒 ${r.team_name || 'Team'}`;
       const lt = r.league_type === 'threes' ? "3's" : r.league_type === 'sixes' ? "6's" : '';
-      const extra = r.season_name ? `<span style="color:#8b949e;font-size:0.78rem;">Season: ${r.season_name}</span>` : '';
+      let extra = r.season_name ? `<span style="color:#8b949e;font-size:0.78rem;">Season: ${r.season_name}</span>` : '';
+      // Single-game records: show clickable game link
+      if (r.category === 'singlegame' && r.game_id) {
+        const d = r.date ? new Date(r.date).toLocaleDateString() : '';
+        const gameLabel = `${r.home_team || ''} vs ${r.away_team || ''} ${d}`.trim();
+        extra = `<a href="game.html?id=${r.game_id}" class="player-link" style="font-size:0.78rem;">${gameLabel}</a>`;
+      }
+      // Co-holders (tied record)
+      const tiedWith = r.co_holders && r.co_holders.length > 0
+        ? `<span style="color:#8b949e;font-size:0.76rem;display:block;">Tied w/ ${r.co_holders.map(n => `<a href="player.html?name=${encodeURIComponent(n)}" class="player-link">${n}</a>`).join(', ')}</span>`
+        : '';
       return `<tr>
         <td style="color:#8b949e;padding:0.4rem 0.5rem;">${r.label}</td>
         <td style="padding:0.4rem 0.5rem;font-weight:700;color:#e3b341;">${fmtVal(r.label, r.value)}</td>
         <td style="padding:0.4rem 0.5rem;font-size:0.8rem;color:#58a6ff;">${scope}${lt ? ' · ' + lt : ''}</td>
-        <td style="padding:0.4rem 0.5rem;">${extra}</td>
+        <td style="padding:0.4rem 0.5rem;">${extra}${tiedWith}</td>
       </tr>`;
     }).join('');
     return `<p style="color:#8b949e;font-size:0.75rem;text-transform:uppercase;letter-spacing:.05em;margin:1.25rem 0 0.4rem;">${title}</p>
@@ -588,6 +598,11 @@ async function loadPlayer() {
       .map(r => `<div class="phl-info-row"><span class="phl-info-label">${r.label}</span><span class="phl-info-value">${r.value}</span></div>`)
       .join('');
 
+    // Sidebar record holdings summary (for Career Info card)
+    const recordsInfoHtml = holdings.length > 0
+      ? `<div class="phl-info-row"><span class="phl-info-label">Records</span><span class="phl-info-value" style="color:#e3b341;">🏆 ${holdings.length} held</span></div>`
+      : '';
+
     const html = `
       <div class="phl-hero" style="--c1:${c1};--c2:${c2};">
         ${heroLogo}
@@ -610,6 +625,7 @@ async function loadPlayer() {
           <div class="phl-card">
             <h3 class="phl-card-heading">Career Info</h3>
             ${infoHtml}
+            ${recordsInfoHtml}
           </div>
         </aside>
         <div class="phl-main">

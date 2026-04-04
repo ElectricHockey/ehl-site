@@ -884,20 +884,25 @@ app.get('/api/records', (req, res) => {
   const minGPRow = db.prepare("SELECT value FROM settings WHERE key = 'goalie_season_min_gp'").get();
   const goalieSeasonMinGP = minGPRow ? (parseInt(minGPRow.value, 10) || 16) : 16;
 
+  // Returns array of all players tied for the top value (handles ties)
   function leagueCareerRecord(agg, pos, orderDir) {
     const where = pos === 'G' ? "gps.position = 'G'" : "gps.position != 'G'";
     return db.prepare(`
-      SELECT gps.player_name AS name, t.name AS team_name,
-        ${agg} AS value,
-        COUNT(DISTINCT gps.game_id) AS gp
-      FROM game_player_stats gps
-      JOIN games g ON gps.game_id = g.id
-      JOIN teams t ON gps.team_id = t.id
-      LEFT JOIN seasons s ON g.season_id = s.id
-      WHERE ${where} AND g.status = 'complete' ${ltFilter}
-      GROUP BY gps.player_name
-      ORDER BY value ${orderDir}, gp DESC LIMIT 1
-    `).get(...p1);
+      WITH agg_vals AS (
+        SELECT gps.player_name AS name, t.name AS team_name,
+          ${agg} AS value,
+          COUNT(DISTINCT gps.game_id) AS gp
+        FROM game_player_stats gps
+        JOIN games g ON gps.game_id = g.id
+        JOIN teams t ON gps.team_id = t.id
+        LEFT JOIN seasons s ON g.season_id = s.id
+        WHERE ${where} AND g.status = 'complete' ${ltFilter}
+        GROUP BY gps.player_name
+      ),
+      top_val AS (SELECT value FROM agg_vals ORDER BY value ${orderDir} LIMIT 1)
+      SELECT av.* FROM agg_vals av WHERE av.value = (SELECT value FROM top_val)
+      ORDER BY av.gp DESC
+    `).all(...p1);
   }
 
   function leagueSeasonRecord(agg, pos, orderDir, minGP) {
@@ -905,37 +910,45 @@ app.get('/api/records', (req, res) => {
     const having = minGP ? 'HAVING COUNT(DISTINCT gps.game_id) >= ?' : '';
     const params = minGP ? [...p1, minGP] : p1;
     return db.prepare(`
-      SELECT gps.player_name AS name, t.name AS team_name,
-        g.season_id, COALESCE(s.name,'No Season') AS season_name,
-        ${agg} AS value,
-        COUNT(DISTINCT gps.game_id) AS gp
-      FROM game_player_stats gps
-      JOIN games g ON gps.game_id = g.id
-      JOIN teams t ON gps.team_id = t.id
-      LEFT JOIN seasons s ON g.season_id = s.id
-      WHERE ${where} AND g.status = 'complete' ${ltFilter}
-      GROUP BY gps.player_name, g.season_id
-      ${having}
-      ORDER BY value ${orderDir}, gp DESC LIMIT 1
-    `).get(...params);
+      WITH agg_vals AS (
+        SELECT gps.player_name AS name, t.name AS team_name,
+          g.season_id, COALESCE(s.name,'No Season') AS season_name,
+          ${agg} AS value,
+          COUNT(DISTINCT gps.game_id) AS gp
+        FROM game_player_stats gps
+        JOIN games g ON gps.game_id = g.id
+        JOIN teams t ON gps.team_id = t.id
+        LEFT JOIN seasons s ON g.season_id = s.id
+        WHERE ${where} AND g.status = 'complete' ${ltFilter}
+        GROUP BY gps.player_name, g.season_id
+        ${having}
+      ),
+      top_val AS (SELECT value FROM agg_vals ORDER BY value ${orderDir} LIMIT 1)
+      SELECT av.* FROM agg_vals av WHERE av.value = (SELECT value FROM top_val)
+      ORDER BY av.gp DESC
+    `).all(...params);
   }
 
   function leagueSingleGameRecord(col, pos, orderDir) {
     const where = pos === 'G' ? "gps.position = 'G'" : "gps.position != 'G'";
     return db.prepare(`
-      SELECT gps.player_name AS name, t.name AS team_name,
-        g.id AS game_id, g.date,
-        ht.name AS home_team, at2.name AS away_team,
-        gps.${col} AS value
-      FROM game_player_stats gps
-      JOIN games g ON gps.game_id = g.id
-      JOIN teams t ON gps.team_id = t.id
-      JOIN teams ht ON g.home_team_id = ht.id
-      JOIN teams at2 ON g.away_team_id = at2.id
-      LEFT JOIN seasons s ON g.season_id = s.id
-      WHERE ${where} AND g.status = 'complete' ${ltFilter}
-      ORDER BY value ${orderDir}, g.date DESC LIMIT 1
-    `).get(...p1);
+      WITH game_vals AS (
+        SELECT gps.player_name AS name, t.name AS team_name,
+          g.id AS game_id, g.date,
+          ht.name AS home_team, at2.name AS away_team,
+          gps.${col} AS value
+        FROM game_player_stats gps
+        JOIN games g ON gps.game_id = g.id
+        JOIN teams t ON gps.team_id = t.id
+        JOIN teams ht ON g.home_team_id = ht.id
+        JOIN teams at2 ON g.away_team_id = at2.id
+        LEFT JOIN seasons s ON g.season_id = s.id
+        WHERE ${where} AND g.status = 'complete' ${ltFilter}
+      ),
+      top_val AS (SELECT value FROM game_vals ORDER BY value ${orderDir} LIMIT 1)
+      SELECT gv.* FROM game_vals gv WHERE gv.value = (SELECT value FROM top_val)
+      ORDER BY gv.date DESC
+    `).all(...p1);
   }
 
   // All-time skater records (GP included)
@@ -1039,19 +1052,33 @@ app.get('/api/records', (req, res) => {
   // Single-game pts (goals+assists in one game) – requires custom query
   const ltFilterSg = lt ? 'AND COALESCE(s.league_type,\'\') = ?' : '';
   singleGame.pts = db.prepare(`
-    SELECT gps.player_name AS name, t.name AS team_name,
-      g.id AS game_id, g.date,
-      ht.name AS home_team, at2.name AS away_team,
-      (gps.goals + gps.assists) AS value
-    FROM game_player_stats gps
-    JOIN games g ON gps.game_id = g.id
-    JOIN teams t ON gps.team_id = t.id
-    JOIN teams ht ON g.home_team_id = ht.id
-    JOIN teams at2 ON g.away_team_id = at2.id
-    LEFT JOIN seasons s ON g.season_id = s.id
-    WHERE gps.position != 'G' AND g.status = 'complete' ${ltFilterSg}
-    ORDER BY value DESC, g.date DESC LIMIT 1
-  `).get(...p1);
+    WITH game_vals AS (
+      SELECT gps.player_name AS name, t.name AS team_name,
+        g.id AS game_id, g.date,
+        ht.name AS home_team, at2.name AS away_team,
+        (gps.goals + gps.assists) AS value
+      FROM game_player_stats gps
+      JOIN games g ON gps.game_id = g.id
+      JOIN teams t ON gps.team_id = t.id
+      JOIN teams ht ON g.home_team_id = ht.id
+      JOIN teams at2 ON g.away_team_id = at2.id
+      LEFT JOIN seasons s ON g.season_id = s.id
+      WHERE gps.position != 'G' AND g.status = 'complete' ${ltFilterSg}
+    ),
+    top_val AS (SELECT value FROM game_vals ORDER BY value DESC LIMIT 1)
+    SELECT gv.* FROM game_vals gv WHERE gv.value = (SELECT value FROM top_val)
+    ORDER BY gv.date DESC
+  `).all(...p1);
+
+  // Remove PP Goals / SH Goals from 3's league (not tracked in that format)
+  if (lt === 'threes') {
+    career.pp_goals = null;
+    career.sh_goals = null;
+    seasonal.pp_goals = null;
+    seasonal.sh_goals = null;
+    singleGame.pp_goals = null;
+    singleGame.sh_goals = null;
+  }
 
   res.json({ career, seasonal, singleGame, goalieSeasonMinGP });
 });
@@ -1079,21 +1106,28 @@ app.get('/api/players/records/:name', (req, res) => {
   const minGPRow = db.prepare("SELECT value FROM settings WHERE key = 'goalie_season_min_gp'").get();
   const goalieSeasonMinGP = minGPRow ? (parseInt(minGPRow.value, 10) || 16) : 16;
 
-  // Helper: check if player holds a career (all-time) league record
+  // Helper: check if player holds a career (all-time) league record (handles ties)
   function checkLeagueRecord(label, agg, pos, orderDir, leagueType, category) {
     const where = pos === 'G' ? "gps.position = 'G'" : "gps.position != 'G'";
     const ltFilter = leagueType ? "AND COALESCE(s.league_type,'') = ?" : '';
     const p = leagueType ? [leagueType] : [];
-    const row = db.prepare(`
-      SELECT gps.player_name AS name, ${agg} AS value, COUNT(DISTINCT gps.game_id) AS gp
-      FROM game_player_stats gps
-      JOIN games g ON gps.game_id = g.id
-      LEFT JOIN seasons s ON g.season_id = s.id
-      WHERE ${where} AND g.status = 'complete' ${ltFilter}
-      GROUP BY gps.player_name ORDER BY value ${orderDir}, gp DESC LIMIT 1
-    `).get(...p);
-    if (row && row.name === name) {
-      holdings.push({ category, label, value: row.value, league_type: leagueType || 'all', scope: 'league' });
+    const rows = db.prepare(`
+      WITH agg_vals AS (
+        SELECT gps.player_name AS name, ${agg} AS value, COUNT(DISTINCT gps.game_id) AS gp
+        FROM game_player_stats gps
+        JOIN games g ON gps.game_id = g.id
+        LEFT JOIN seasons s ON g.season_id = s.id
+        WHERE ${where} AND g.status = 'complete' ${ltFilter}
+        GROUP BY gps.player_name
+      ),
+      top_val AS (SELECT value FROM agg_vals ORDER BY value ${orderDir} LIMIT 1)
+      SELECT * FROM agg_vals WHERE value = (SELECT value FROM top_val)
+      ORDER BY gp DESC
+    `).all(...p);
+    if (rows.some(r => r.name === name)) {
+      const co_holders = rows.filter(r => r.name !== name).map(r => r.name);
+      const myRow = rows.find(r => r.name === name);
+      holdings.push({ category, label, value: myRow.value, league_type: leagueType || 'all', scope: 'league', co_holders });
     }
   }
 
@@ -1103,17 +1137,24 @@ app.get('/api/players/records/:name', (req, res) => {
     const p = leagueType ? [leagueType] : [];
     const having = minGP ? 'HAVING COUNT(DISTINCT gps.game_id) >= ?' : '';
     const params = minGP ? [...p, minGP] : p;
-    const row = db.prepare(`
-      SELECT gps.player_name AS name, g.season_id, COALESCE(s.name,'No Season') AS season_name,
-        ${agg} AS value, COUNT(DISTINCT gps.game_id) AS gp
-      FROM game_player_stats gps
-      JOIN games g ON gps.game_id = g.id
-      LEFT JOIN seasons s ON g.season_id = s.id
-      WHERE ${where} AND g.status = 'complete' ${ltFilter}
-      GROUP BY gps.player_name, g.season_id ${having} ORDER BY value ${orderDir}, gp DESC LIMIT 1
-    `).get(...params);
-    if (row && row.name === name) {
-      holdings.push({ category, label, value: row.value, season_name: row.season_name, league_type: leagueType || 'all', scope: 'league' });
+    const rows = db.prepare(`
+      WITH agg_vals AS (
+        SELECT gps.player_name AS name, g.season_id, COALESCE(s.name,'No Season') AS season_name,
+          ${agg} AS value, COUNT(DISTINCT gps.game_id) AS gp
+        FROM game_player_stats gps
+        JOIN games g ON gps.game_id = g.id
+        LEFT JOIN seasons s ON g.season_id = s.id
+        WHERE ${where} AND g.status = 'complete' ${ltFilter}
+        GROUP BY gps.player_name, g.season_id ${having}
+      ),
+      top_val AS (SELECT value FROM agg_vals ORDER BY value ${orderDir} LIMIT 1)
+      SELECT * FROM agg_vals WHERE value = (SELECT value FROM top_val)
+      ORDER BY gp DESC
+    `).all(...params);
+    if (rows.some(r => r.name === name)) {
+      const myRow = rows.find(r => r.name === name);
+      const co_holders = rows.filter(r => r.name !== name).map(r => r.name);
+      holdings.push({ category, label, value: myRow.value, season_name: myRow.season_name, league_type: leagueType || 'all', scope: 'league', co_holders });
     }
   }
 
@@ -1121,16 +1162,26 @@ app.get('/api/players/records/:name', (req, res) => {
     const where = pos === 'G' ? "gps.position = 'G'" : "gps.position != 'G'";
     const ltFilter = leagueType ? "AND COALESCE(s.league_type,'') = ?" : '';
     const p = leagueType ? [leagueType] : [];
-    const row = db.prepare(`
-      SELECT gps.player_name AS name, gps.${col} AS value
-      FROM game_player_stats gps
-      JOIN games g ON gps.game_id = g.id
-      LEFT JOIN seasons s ON g.season_id = s.id
-      WHERE ${where} AND g.status = 'complete' ${ltFilter}
-      ORDER BY value ${orderDir}, g.date DESC LIMIT 1
-    `).get(...p);
-    if (row && row.name === name) {
-      holdings.push({ category, label, value: row.value, league_type: leagueType || 'all', scope: 'league' });
+    const rows = db.prepare(`
+      WITH game_vals AS (
+        SELECT gps.player_name AS name, gps.${col} AS value,
+          g.id AS game_id, g.date,
+          ht.name AS home_team, at2.name AS away_team
+        FROM game_player_stats gps
+        JOIN games g ON gps.game_id = g.id
+        JOIN teams ht ON g.home_team_id = ht.id
+        JOIN teams at2 ON g.away_team_id = at2.id
+        LEFT JOIN seasons s ON g.season_id = s.id
+        WHERE ${where} AND g.status = 'complete' ${ltFilter}
+      ),
+      top_val AS (SELECT value FROM game_vals ORDER BY value ${orderDir} LIMIT 1)
+      SELECT * FROM game_vals WHERE value = (SELECT value FROM top_val)
+      ORDER BY date DESC
+    `).all(...p);
+    if (rows.some(r => r.name === name)) {
+      const myRow = rows.find(r => r.name === name);
+      const co_holders = rows.filter(r => r.name !== name).map(r => r.name);
+      holdings.push({ category, label, value: myRow.value, game_id: myRow.game_id, home_team: myRow.home_team, away_team: myRow.away_team, date: myRow.date, league_type: leagueType || 'all', scope: 'league', co_holders });
     }
   }
 
@@ -1161,8 +1212,10 @@ app.get('/api/players/records/:name', (req, res) => {
     checkLeagueRecord('Career Shot Attempts',   "SUM(gps.shot_attempts)",          'S', 'DESC', lt, 'alltime');
     checkLeagueRecord('Career Blocked Shots',   "SUM(gps.blocked_shots)",          'S', 'DESC', lt, 'alltime');
     checkLeagueRecord('Career PIM',             "SUM(gps.pim)",                    'S', 'DESC', lt, 'alltime');
-    checkLeagueRecord('Career PP Goals',        "SUM(gps.pp_goals)",               'S', 'DESC', lt, 'alltime');
-    checkLeagueRecord('Career SH Goals',        "SUM(gps.sh_goals)",               'S', 'DESC', lt, 'alltime');
+    if (lt !== 'threes') {
+      checkLeagueRecord('Career PP Goals',        "SUM(gps.pp_goals)",               'S', 'DESC', lt, 'alltime');
+      checkLeagueRecord('Career SH Goals',        "SUM(gps.sh_goals)",               'S', 'DESC', lt, 'alltime');
+    }
     checkLeagueRecord('Career GWG',             "SUM(gps.gwg)",                    'S', 'DESC', lt, 'alltime');
     checkLeagueRecord('Career Hat Tricks',      "SUM(gps.hat_tricks)",             'S', 'DESC', lt, 'alltime');
     checkLeagueRecord('Career Faceoff Wins',    "SUM(gps.faceoff_wins)",           'S', 'DESC', lt, 'alltime');
@@ -1190,8 +1243,10 @@ app.get('/api/players/records/:name', (req, res) => {
     checkSeasonRecord('Season Shot Attempts',   "SUM(gps.shot_attempts)",          'S', 'DESC', lt, 'seasonal');
     checkSeasonRecord('Season Blocked Shots',   "SUM(gps.blocked_shots)",          'S', 'DESC', lt, 'seasonal');
     checkSeasonRecord('Season PIM',             "SUM(gps.pim)",                    'S', 'DESC', lt, 'seasonal');
-    checkSeasonRecord('Season PP Goals',        "SUM(gps.pp_goals)",               'S', 'DESC', lt, 'seasonal');
-    checkSeasonRecord('Season SH Goals',        "SUM(gps.sh_goals)",               'S', 'DESC', lt, 'seasonal');
+    if (lt !== 'threes') {
+      checkSeasonRecord('Season PP Goals',        "SUM(gps.pp_goals)",               'S', 'DESC', lt, 'seasonal');
+      checkSeasonRecord('Season SH Goals',        "SUM(gps.sh_goals)",               'S', 'DESC', lt, 'seasonal');
+    }
     checkSeasonRecord('Season GWG',             "SUM(gps.gwg)",                    'S', 'DESC', lt, 'seasonal');
     checkSeasonRecord('Season Hat Tricks',      "SUM(gps.hat_tricks)",             'S', 'DESC', lt, 'seasonal');
     checkSeasonRecord('Season Faceoff Wins',    "SUM(gps.faceoff_wins)",           'S', 'DESC', lt, 'seasonal');
@@ -1218,8 +1273,10 @@ app.get('/api/players/records/:name', (req, res) => {
     checkSingleGameRecord('Single Game Shot Attempts',    'shot_attempts',      'S', 'DESC', lt, 'singlegame');
     checkSingleGameRecord('Single Game Blocked Shots',    'blocked_shots',      'S', 'DESC', lt, 'singlegame');
     checkSingleGameRecord('Single Game PIM',              'pim',                'S', 'DESC', lt, 'singlegame');
-    checkSingleGameRecord('Single Game PP Goals',         'pp_goals',           'S', 'DESC', lt, 'singlegame');
-    checkSingleGameRecord('Single Game SH Goals',         'sh_goals',           'S', 'DESC', lt, 'singlegame');
+    if (lt !== 'threes') {
+      checkSingleGameRecord('Single Game PP Goals',         'pp_goals',           'S', 'DESC', lt, 'singlegame');
+      checkSingleGameRecord('Single Game SH Goals',         'sh_goals',           'S', 'DESC', lt, 'singlegame');
+    }
     checkSingleGameRecord('Single Game GWG',              'gwg',                'S', 'DESC', lt, 'singlegame');
     checkSingleGameRecord('Single Game Hat Tricks',       'hat_tricks',         'S', 'DESC', lt, 'singlegame');
     checkSingleGameRecord('Single Game Faceoff Wins',     'faceoff_wins',       'S', 'DESC', lt, 'singlegame');
@@ -1239,17 +1296,27 @@ app.get('/api/players/records/:name', (req, res) => {
 
   // Also check single-game pts (goals+assists) which requires a computed expression
   for (const lt of ['threes', 'sixes']) {
-    const ltFilter = `AND COALESCE(s.league_type,'') = ?`;
-    const row = db.prepare(`
-      SELECT gps.player_name AS name, (gps.goals+gps.assists) AS value
-      FROM game_player_stats gps
-      JOIN games g ON gps.game_id = g.id
-      LEFT JOIN seasons s ON g.season_id = s.id
-      WHERE gps.position != 'G' AND g.status = 'complete' ${ltFilter}
-      ORDER BY value DESC, g.date DESC LIMIT 1
-    `).get(lt);
-    if (row && row.name === name) {
-      holdings.push({ category: 'singlegame', label: 'Single Game Pts', value: row.value, league_type: lt, scope: 'league' });
+    const ltFilterPts = `AND COALESCE(s.league_type,'') = ?`;
+    const rows = db.prepare(`
+      WITH game_vals AS (
+        SELECT gps.player_name AS name, (gps.goals+gps.assists) AS value,
+          g.id AS game_id, g.date,
+          ht.name AS home_team, at2.name AS away_team
+        FROM game_player_stats gps
+        JOIN games g ON gps.game_id = g.id
+        JOIN teams ht ON g.home_team_id = ht.id
+        JOIN teams at2 ON g.away_team_id = at2.id
+        LEFT JOIN seasons s ON g.season_id = s.id
+        WHERE gps.position != 'G' AND g.status = 'complete' ${ltFilterPts}
+      ),
+      top_val AS (SELECT value FROM game_vals ORDER BY value DESC LIMIT 1)
+      SELECT * FROM game_vals WHERE value = (SELECT value FROM top_val)
+      ORDER BY date DESC
+    `).all(lt);
+    if (rows.some(r => r.name === name)) {
+      const myRow = rows.find(r => r.name === name);
+      const co_holders = rows.filter(r => r.name !== name).map(r => r.name);
+      holdings.push({ category: 'singlegame', label: 'Single Game Pts', value: myRow.value, game_id: myRow.game_id, home_team: myRow.home_team, away_team: myRow.away_team, date: myRow.date, league_type: lt, scope: 'league', co_holders });
     }
   }
 
