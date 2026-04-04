@@ -374,7 +374,7 @@ function renderPlayerRecords(holdings) {
     if (rows.length === 0) return '';
     const trs = rows.map(r => {
       const scope = r.scope === 'league' ? '🏆 League' : `🏒 ${r.team_name || 'Team'}`;
-      const lt = r.league_type === '3s' ? "3's" : r.league_type === '6s' ? "6's" : '';
+      const lt = r.league_type === 'threes' ? "3's" : r.league_type === 'sixes' ? "6's" : '';
       const extra = r.season_name ? `<span style="color:#8b949e;font-size:0.78rem;">Season: ${r.season_name}</span>` : '';
       return `<tr>
         <td style="color:#8b949e;padding:0.4rem 0.5rem;">${r.label}</td>
@@ -395,8 +395,8 @@ function renderPlayerRecords(holdings) {
     </table></div>`;
   }
 
-  const threes = holdings.filter(h => h.league_type === '3s' || (h.scope === 'team' && h.league_type !== '6s'));
-  const sixes  = holdings.filter(h => h.league_type === '6s');
+  const threes = holdings.filter(h => h.league_type === 'threes' || (h.scope === 'team' && h.league_type !== 'sixes'));
+  const sixes  = holdings.filter(h => h.league_type === 'sixes');
 
   // Group by category within each section
   function groupRows(arr) {

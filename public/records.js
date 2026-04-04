@@ -1,9 +1,9 @@
 /* records.js – League Records page */
 const API = '/api';
 
-let _leagueType = '3s';
+let _leagueType = 'threes';
 let _category   = 'alltime';
-let _data       = {};   // cache: { '3s': {...}, '6s': {...} }
+let _data       = {};   // cache: { threes: {...}, sixes: {...} }
 
 // ── Format helpers ─────────────────────────────────────────────────────────
 function fmt(v, type) {

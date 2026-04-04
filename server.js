@@ -877,7 +877,7 @@ app.get('/api/teams/:id/records', (req, res) => {
 // ── League-wide records ────────────────────────────────────────────────────
 
 app.get('/api/records', (req, res) => {
-  const lt = req.query.league_type || null; // '3s' | '6s' | null for both
+  const lt = req.query.league_type || null; // 'threes' | 'sixes' | null for both
   const ltFilter = lt ? 'AND COALESCE(s.league_type,\'\') = ?' : '';
   const p1 = lt ? [lt] : [];
 
@@ -1149,7 +1149,7 @@ app.get('/api/players/records/:name', (req, res) => {
   }
 
   // League records per league_type
-  for (const lt of ['3s', '6s']) {
+  for (const lt of ['threes', 'sixes']) {
     // All-time skater records
     checkLeagueRecord('Career GP',              "COUNT(DISTINCT gps.game_id)",     'S', 'DESC', lt, 'alltime');
     checkLeagueRecord('Career Pts',             "SUM(gps.goals+gps.assists)",      'S', 'DESC', lt, 'alltime');
@@ -1238,7 +1238,7 @@ app.get('/api/players/records/:name', (req, res) => {
   }
 
   // Also check single-game pts (goals+assists) which requires a computed expression
-  for (const lt of ['3s', '6s']) {
+  for (const lt of ['threes', 'sixes']) {
     const ltFilter = `AND COALESCE(s.league_type,'') = ?`;
     const row = db.prepare(`
       SELECT gps.player_name AS name, (gps.goals+gps.assists) AS value
