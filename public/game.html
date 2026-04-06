@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Game – EHL</title>
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    .game-header {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 10px;
+      padding: 1.5rem 2rem;
+      margin-bottom: 1.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 1.5rem;
+      flex-wrap: wrap;
+      text-align: center;
+    }
+    .game-team-block { display: flex; flex-direction: column; align-items: center; gap: 0.4rem; min-width: 100px; }
+    .game-team-logo { width: 56px; height: 56px; object-fit: contain; border-radius: 8px; background: #21262d; padding: 4px; }
+    .game-team-name { font-weight: 700; font-size: 1.05rem; color: #e6edf3; }
+    .game-score-block { display: flex; align-items: center; gap: 0.5rem; }
+    .game-score { font-size: 3rem; font-weight: 900; color: #58a6ff; line-height: 1; min-width: 2.5rem; text-align: center; }
+    .game-score.winner { color: #3fb950; }
+    .game-score-sep { font-size: 1.5rem; color: #484f58; font-weight: 700; }
+    .game-meta { color: #8b949e; font-size: 0.82rem; text-align: center; margin-bottom: 1.25rem; }
+    .ot-badge {
+      display: inline-block; font-size: 0.72rem; font-weight: 600;
+      background: #2d1b00; color: #e3b341; border: 1px solid #9e6a03;
+      border-radius: 10px; padding: 0.1rem 0.5rem; margin-left: 0.4rem; vertical-align: middle;
+    }
+    .back-link { color: #58a6ff; font-size: 0.88rem; text-decoration: none; display: inline-block; margin-bottom: 1rem; }
+    .back-link:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="index.html" class="brand">
+      <img src="/api/site-logo" alt="EHL" class="brand-logo" />
+
+    </a>
+    <a href="index.html">Home</a>
+    <a href="schedule.html">Schedule</a>
+    <div class="nav-dropdown">
+      <a href="standings.html">Standings ▾</a>
+      <div class="nav-dropdown-menu">
+        <a href="recent-scores.html">🏒 Recent Scores</a>
+      </div>
+    </div>
+    <a href="stats.html">Stats</a>
+    <a href="records.html">Records</a>
+    <a href="players.html">Players</a>
+    <a href="admin.html" id="nav-admin-link" style="display:none">Admin</a>
+    <a href="register.html" class="nav-portal">Player Portal</a>
+  </nav>
+
+  <div class="container">
+    <a href="recent-scores.html" class="back-link">← Back to Recent Scores</a>
+    <div id="game-root"><p class="loading">Loading game…</p></div>
+  </div>
+
+  <script src="game-stats.js"></script>
+  <script src="game.js"></script>
+  <script src="notifications.js"></script>
+  <script src="nav.js"></script>
+</body>
+</html>

@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EHL – Electric Hockey League</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <nav>
+    <a href="index.html" class="brand">
+      <img src="/api/site-logo" alt="EHL" class="brand-logo" />
+
+    </a>
+    <a href="index.html" class="active">Home</a>
+    <a href="schedule.html">Schedule</a>
+    <div class="nav-dropdown">
+      <a href="standings.html">Standings ▾</a>
+      <div class="nav-dropdown-menu">
+        <a href="recent-scores.html">🏒 Recent Scores</a>
+      </div>
+    </div>
+    <a href="stats.html">Stats</a>
+    <a href="records.html">Records</a>
+    <a href="players.html">Players</a>
+    <a href="admin.html" id="nav-admin-link" style="display:none">Admin</a>
+    <a href="register.html" class="nav-portal">Player Portal</a>
+  </nav>
+
+  <div class="hero hero-compact">
+    <h1>Electric Hockey League</h1>
+    <p>Your hub for league standings, stats and scores.</p>
+
+    <div class="nav-cards">
+      <a class="nav-card" href="schedule.html">
+        <span class="icon">📅</span>
+        <span>Schedule</span>
+      </a>
+      <a class="nav-card" href="standings.html">
+        <span class="icon">🏆</span>
+        <span>Standings</span>
+      </a>
+      <a class="nav-card" href="recent-scores.html">
+        <span class="icon">🏒</span>
+        <span>Recent Scores</span>
+      </a>
+      <a class="nav-card" href="stats.html">
+        <span class="icon">📊</span>
+        <span>Stats</span>
+      </a>
+      <a class="nav-card" href="players.html">
+        <span class="icon">👤</span>
+        <span>Players</span>
+      </a>
+      <a class="nav-card" href="transactions.html">
+        <span class="icon">📋</span>
+        <span>Transactions</span>
+      </a>
+    </div>
+  </div>
+
+  <div class="container">
+    <!-- 3's League Column -->
+    <div class="home-league-header" id="home-threes-header">
+      <img src="/api/site-logo" alt="EHL" class="home-league-logo" />
+      <h2 class="home-league-title">3's League</h2>
+    </div>
+    <div class="home-panels" id="home-panels-threes">
+      <div class="home-panel">
+        <div class="home-panel-header">
+          <span>🏒 Recent Scores</span>
+          <a href="recent-scores.html" class="home-panel-more">All Scores →</a>
+        </div>
+        <div id="home-recent-scores-threes"><p class="loading">Loading…</p></div>
+      </div>
+      <div class="home-panel">
+        <div class="home-panel-header">
+          <span>🏆 Standings</span>
+          <a href="standings.html" class="home-panel-more">Full Table →</a>
+        </div>
+        <div id="home-standings-threes"><p class="loading">Loading…</p></div>
+      </div>
+      <div class="home-panel home-panel-wide">
+        <div class="home-panel-header">
+          <span>📊 Stats Leaders</span>
+          <a href="stats.html" class="home-panel-more">All Stats →</a>
+        </div>
+        <div id="home-leaders-threes"><p class="loading">Loading…</p></div>
+      </div>
+    </div>
+
+    <!-- 6's League Column -->
+    <div class="home-league-header" id="home-sixes-header" style="margin-top:2.5rem;">
+      <img src="/api/site-logo" alt="EHL" class="home-league-logo" />
+      <h2 class="home-league-title">6's League</h2>
+    </div>
+    <div class="home-panels" id="home-panels-sixes">
+      <div class="home-panel">
+        <div class="home-panel-header">
+          <span>🏒 Recent Scores</span>
+          <a href="recent-scores.html" class="home-panel-more">All Scores →</a>
+        </div>
+        <div id="home-recent-scores-sixes"><p class="loading">Loading…</p></div>
+      </div>
+      <div class="home-panel">
+        <div class="home-panel-header">
+          <span>🏆 Standings</span>
+          <a href="standings.html" class="home-panel-more">Full Table →</a>
+        </div>
+        <div id="home-standings-sixes"><p class="loading">Loading…</p></div>
+      </div>
+      <div class="home-panel home-panel-wide">
+        <div class="home-panel-header">
+          <span>📊 Stats Leaders</span>
+          <a href="stats.html" class="home-panel-more">All Stats →</a>
+        </div>
+        <div id="home-leaders-sixes"><p class="loading">Loading…</p></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="notifications.js"></script>
+  <script src="nav.js"></script>
+  <script src="index.js"></script>
+</body>
+</html>

@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stats – EHL</title>
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    .sortable-th {
+      cursor: pointer;
+      user-select: none;
+    }
+    .sortable-th:hover { color: #58a6ff; }
+    /* Use ::before for sort arrows so they don't conflict with [data-tip]::after tooltip */
+    .sortable-th.sort-asc::before  { content: '▲ '; color: #58a6ff; font-size: 0.65em; vertical-align: middle; }
+    .sortable-th.sort-desc::before { content: '▼ '; color: #58a6ff; font-size: 0.65em; vertical-align: middle; }
+    .tab-bar {
+      display: flex; gap: 0.5rem; margin-bottom: 1.5rem;
+    }
+    .tab-btn {
+      padding: 0.45rem 1.2rem; border-radius: 6px;
+      border: 1px solid #30363d; background: #161b22;
+      color: #c9d1d9; cursor: pointer; font-size: 0.9rem;
+    }
+    .tab-btn.active { background: #238636; color: #fff; border-color: #238636; }
+    .tab-btn:hover:not(.active) { background: #21262d; }
+    .tab-section { display: none; }
+    .tab-section.active { display: block; }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="index.html" class="brand">
+      <img src="/api/site-logo" alt="EHL" class="brand-logo" />
+
+    </a>
+    <a href="index.html">Home</a>
+    <a href="schedule.html">Schedule</a>
+    <div class="nav-dropdown">
+      <a href="standings.html">Standings ▾</a>
+      <div class="nav-dropdown-menu">
+        <a href="recent-scores.html">🏒 Recent Scores</a>
+      </div>
+    </div>
+    <a href="stats.html" class="active">Stats</a>
+    <a href="records.html">Records</a>
+    <a href="players.html">Players</a>
+    <a href="admin.html" id="nav-admin-link" style="display:none">Admin</a>
+    <a href="register.html" class="nav-portal">Player Portal</a>
+  </nav>
+
+  <div class="container">
+    <h1 id="page-title">League Statistics</h1>
+    <p style="color:#8b949e;margin-bottom:1rem;">Stats from completed games. Click a column header to sort.</p>
+
+    <div style="margin-bottom:1.25rem;" id="season-selector-container"></div>
+
+    <div class="tab-bar">
+      <button class="tab-btn active" data-tab="skaters" onclick="switchStatsTab('skaters')">Skaters</button>
+      <button class="tab-btn"        data-tab="goalies" onclick="switchStatsTab('goalies')">Goalies</button>
+    </div>
+
+    <div style="margin-bottom:1rem;">
+      <input type="text" id="stats-search" placeholder="🔍 Filter by player name…"
+        style="background:#161b22;border:1px solid #30363d;border-radius:6px;color:#e6edf3;padding:0.45rem 0.75rem;font-size:0.9rem;width:260px;max-width:100%;"
+        oninput="onStatsSearch(this.value)" />
+    </div>
+
+    <div id="tab-skaters" class="tab-section active">
+      <div id="skaters-root"><p class="loading">Loading…</p></div>
+    </div>
+    <div id="tab-goalies" class="tab-section">
+      <div id="goalies-root"><p class="loading">Loading…</p></div>
+    </div>
+  </div>
+
+  <script src="season-selector.js"></script>
+  <script src="league-type.js"></script>
+  <script src="stats-config.js"></script>
+  <script src="stats.js"></script>
+  <script src="notifications.js"></script>
+  <script src="nav.js"></script>
+</body>
+</html>

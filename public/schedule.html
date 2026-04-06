@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Schedule – EHL</title>
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    .game-row { cursor: pointer; }
+    .game-row:hover td { background: #21262d; }
+    .game-row.selected td { background: #1c2a3a; }
+
+    /* ── Date & round section headers ─────────────────────── */
+    .schedule-date-header {
+      font-size: 0.82rem;
+      font-weight: 700;
+      color: #8b949e;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 0.75rem 0 0.25rem;
+      border-top: 1px solid #21262d;
+      margin-top: 0.5rem;
+    }
+    .schedule-date-header:first-child { border-top: none; margin-top: 0; }
+    .schedule-round-header {
+      font-size: 1rem;
+      font-weight: 700;
+      color: #58a6ff;
+      padding: 1.25rem 0 0.4rem;
+      border-top: 2px solid #21262d;
+      margin-top: 0.75rem;
+    }
+    .schedule-round-header:first-child { border-top: none; margin-top: 0; }
+
+    .status-badge {
+      display: inline-block;
+      padding: 0.15rem 0.55rem;
+      border-radius: 12px;
+      font-size: 0.78rem;
+      font-weight: 600;
+    }
+    .status-complete   { background: #1f4b2f; color: #3fb950; }
+    .status-scheduled  { background: #2d2d2d; color: #8b949e; }
+    .status-forfeit    { background: #3d2020; color: #e05c5c; }
+
+    .ea-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      font-size: 0.8rem;
+      padding: 0.15rem 0.55rem;
+      border-radius: 12px;
+    }
+    .ea-badge-linked   { background: #1f4b2f; color: #3fb950; }
+    .ea-badge-unlinked { background: #2d2d2d; color: #8b949e; }
+
+    /* ── Game Detail panel ────────────────────────────────── */
+    #game-detail {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      margin: 0.5rem 0;
+      overflow: hidden;
+    }
+    #game-detail.hidden { display: none; }
+
+    .detail-scoreboard {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 1.5rem;
+      padding: 1rem 1rem 0.25rem;
+      flex-wrap: wrap;
+    }
+    .detail-team-name { font-size: 1.1rem; font-weight: 700; color: #e6edf3; }
+    .detail-score-num { font-size: 2rem; font-weight: 800; color: #58a6ff; min-width: 2rem; text-align: center; }
+    .detail-score-num.detail-score-winner { color: #3fb950; }
+    .detail-vs { color: #8b949e; font-size: 0.9rem; }
+
+    .team-stats-block { padding: 0 1rem 1rem; }
+    .team-stats-block h3 {
+      font-size: 1rem; color: #58a6ff;
+      margin: 1rem 0 0.4rem;
+      border-bottom: 1px solid #21262d;
+      padding-bottom: 0.3rem;
+    }
+    .stats-table { font-size: 0.82rem; }
+    .stats-table thead th { font-size: 0.72rem; }
+    .stats-table td, .stats-table th { padding: 0.4rem 0.6rem; }
+
+    /* ── EA Picker panel ──────────────────────────────────── */
+    #ea-picker {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      margin: 0.5rem 0;
+      overflow: hidden;
+    }
+    #ea-picker.hidden { display: none; }
+
+    .picker-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.8rem 1rem;
+      border-bottom: 1px solid #30363d;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+    .picker-header h3 { margin: 0; font-size: 1rem; color: #e6edf3; }
+    .picker-subtitle  { font-size: 0.85rem; color: #8b949e; }
+
+    .btn-close {
+      background: none;
+      border: none;
+      color: #8b949e;
+      font-size: 1.2rem;
+      cursor: pointer;
+      padding: 0 0.4rem;
+      line-height: 1;
+    }
+    .btn-close:hover { color: #e6edf3; opacity: 1; }
+
+    .ea-match-list { padding: 0.5rem 0; }
+    .ea-match-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 1rem;
+      padding: 0.7rem 1rem;
+      border-bottom: 1px solid #21262d;
+      flex-wrap: wrap;
+    }
+    .ea-match-item:last-child { border-bottom: none; }
+    .ea-match-item.highlight { background: #1a2d20; }
+    .ea-match-item.assigned  { background: #1c2a3a; }
+
+    .ea-match-info { flex: 1; min-width: 180px; }
+    .ea-match-score { font-size: 1.1rem; font-weight: 700; color: #e6edf3; }
+    .ea-match-meta  { font-size: 0.82rem; color: #8b949e; margin-top: 0.15rem; }
+    .ea-match-opponent { color: #c9d1d9; font-size: 0.9rem; margin-top: 0.1rem; }
+    .scheduled-tag {
+      display: inline-block;
+      background: #1f4b2f; color: #3fb950;
+      font-size: 0.72rem; padding: 0.1rem 0.4rem;
+      border-radius: 10px; margin-left: 0.3rem; font-weight: 600;
+    }
+
+    .ea-match-actions { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+    .btn-assign {
+      background: #238636; color: #fff;
+      border: none; border-radius: 6px;
+      padding: 0.35rem 0.8rem; font-size: 0.85rem;
+      cursor: pointer; font-weight: 500;
+    }
+    .btn-assign:hover { opacity: 0.85; }
+    .btn-clear {
+      background: #21262d; color: #c9d1d9;
+      border: 1px solid #30363d; border-radius: 6px;
+      padding: 0.35rem 0.8rem; font-size: 0.85rem; cursor: pointer;
+    }
+    .btn-clear:hover { opacity: 0.85; }
+    .btn-complete {
+      background: #7d3fbf; color: #fff;
+      border: none; border-radius: 6px;
+      padding: 0.35rem 0.8rem; font-size: 0.85rem;
+      cursor: pointer; font-weight: 500;
+    }
+    .btn-complete:hover { opacity: 0.85; }
+
+    .ea-match-stats-toggle {
+      background: none; border: none;
+      color: #58a6ff; font-size: 0.82rem;
+      cursor: pointer; padding: 0; text-decoration: underline;
+    }
+    .ea-match-stats-toggle:hover { opacity: 0.8; }
+    .ea-player-stats { margin-top: 0.5rem; width: 100%; }
+    .ea-player-stats table { font-size: 0.8rem; }
+    .ea-player-stats.hidden { display: none; }
+
+    .picker-empty   { padding: 1rem; color: #8b949e; }
+    .picker-loading { padding: 1rem; color: #8b949e; }
+    .picker-error   { padding: 1rem; color: #f85149; }
+
+    .admin-bar {
+      background: #1c2a3a;
+      border: 1px solid #1f6feb;
+      border-radius: 6px;
+      padding: 0.4rem 0.9rem;
+      margin-bottom: 1rem;
+      font-size: 0.85rem;
+      color: #58a6ff;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+    .admin-bar button {
+      background: none; border: none; color: #8b949e;
+      font-size: 0.82rem; cursor: pointer; padding: 0; text-decoration: underline;
+    }
+    .admin-bar button:hover { color: #e6edf3; }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="index.html" class="brand">
+      <img src="/api/site-logo" alt="EHL" class="brand-logo" />
+
+    </a>
+    <a href="index.html">Home</a>
+    <a href="schedule.html" class="active">Schedule</a>
+    <div class="nav-dropdown">
+      <a href="standings.html">Standings ▾</a>
+      <div class="nav-dropdown-menu">
+        <a href="recent-scores.html">🏒 Recent Scores</a>
+      </div>
+    </div>
+    <a href="stats.html">Stats</a>
+    <a href="records.html">Records</a>
+    <a href="players.html">Players</a>
+    <a href="admin.html" id="nav-admin-link" style="display:none">Admin</a>
+    <a href="register.html" class="nav-portal">Player Portal</a>
+  </nav>
+
+  <div class="container">
+    <h1 id="page-title">Schedule</h1>
+    <div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;">
+      <div id="season-selector-container"></div>
+    </div>
+
+    <div id="admin-bar" style="display:none;" class="admin-bar">
+      🔑 Admin mode active
+      <button onclick="adminLogout()">Log out</button>
+    </div>
+
+    <div id="schedule-root"><p class="loading">Loading schedule…</p></div>
+
+    <!-- Game Detail Panel -->
+    <div id="game-detail" class="hidden">
+      <div class="picker-header">
+        <div>
+          <h3 id="detail-title">Game Details</h3>
+          <div id="detail-subtitle" class="picker-subtitle"></div>
+        </div>
+        <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
+          <button id="detail-pick-btn" class="btn-assign" style="display:none;"
+            data-action="open-picker">🎮 Pick EA Match</button>
+          <button id="detail-complete-btn" class="btn-complete" style="display:none;"
+            data-action="mark-complete">✅ Mark Complete</button>
+          <button id="detail-forfeit-btn" class="btn-secondary" style="display:none;background:#3d2020;color:#e05c5c;border-color:#5c3030;"
+            data-action="mark-forfeit">🏳 Forfeit</button>
+          <button class="btn-close" onclick="closeGameDetail()" title="Close">✕</button>
+        </div>
+      </div>
+      <div id="detail-body"><p class="picker-loading">Loading…</p></div>
+    </div>
+
+    <!-- EA Match Picker (admin only) -->
+    <div id="ea-picker" class="hidden">
+      <div class="picker-header">
+        <div>
+          <h3 id="picker-title">EA Matches</h3>
+          <div class="picker-subtitle" id="picker-subtitle"></div>
+        </div>
+        <button class="btn-close" onclick="closePicker()" title="Close">✕</button>
+      </div>
+      <div id="picker-body"><p class="picker-loading">Loading…</p></div>
+    </div>
+  </div>
+
+  <script src="season-selector.js"></script>
+  <script src="league-type.js"></script>
+  <script src="game-stats.js"></script>
+  <script src="game-stats-editor.js"></script>
+  <script src="schedule.js"></script>
+  <script src="notifications.js"></script>
+  <script src="nav.js"></script>
+</body>
+</html>

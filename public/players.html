@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Players – EHL</title>
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    .players-filter-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.6rem;
+      align-items: center;
+      margin-bottom: 1.25rem;
+    }
+    .players-filter-bar input,
+    .players-filter-bar select {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      color: #e6edf3;
+      padding: 0.45rem 0.75rem;
+      font-size: 0.9rem;
+    }
+    .players-filter-bar input:focus,
+    .players-filter-bar select:focus {
+      outline: none;
+      border-color: #58a6ff;
+    }
+    .players-filter-bar input { flex: 1; min-width: 160px; }
+    .filter-count { color: #8b949e; font-size: 0.85rem; margin-left: auto; }
+    .players-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+    .players-table thead th { font-size: 0.75rem; color: #8b949e; font-weight: 600; padding: 0.4rem 0.6rem; text-align: left; border-bottom: 2px solid #30363d; cursor: pointer; user-select: none; }
+    .players-table thead th:hover { color: #58a6ff; }
+    .players-table thead th.sort-asc::after  { content: ' ▲'; color: #58a6ff; }
+    .players-table thead th.sort-desc::after { content: ' ▼'; color: #58a6ff; }
+    .players-table td { padding: 0.4rem 0.6rem; border-bottom: 1px solid #21262d; }
+    .players-table tbody tr:hover td { background: #1c2128; }
+    .pos-badge {
+      display: inline-block; font-size: 0.72rem; font-weight: 700;
+      padding: 0.1rem 0.4rem; border-radius: 4px;
+      background: #1f2d3d; color: #58a6ff; border: 1px solid #388bfd44;
+    }
+    .fa-badge {
+      font-size: 0.72rem; color: #8b949e;
+      background: #21262d; border: 1px solid #30363d;
+      border-radius: 4px; padding: 0.1rem 0.4rem;
+    }
+    .platform-badge { font-size: 0.72rem; color: #8b949e; }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="index.html" class="brand">
+      <img src="/api/site-logo" alt="EHL" class="brand-logo" />
+
+    </a>
+    <a href="index.html">Home</a>
+    <a href="schedule.html">Schedule</a>
+    <div class="nav-dropdown">
+      <a href="standings.html">Standings ▾</a>
+      <div class="nav-dropdown-menu">
+        <a href="recent-scores.html">🏒 Recent Scores</a>
+      </div>
+    </div>
+    <a href="stats.html">Stats</a>
+    <a href="records.html">Records</a>
+    <a href="players.html" class="active">Players</a>
+    <a href="admin.html" id="nav-admin-link" style="display:none">Admin</a>
+    <a href="register.html" class="nav-portal">Player Portal</a>
+  </nav>
+
+  <div class="container">
+    <h1>Players</h1>
+    <p style="color:#8b949e;margin-bottom:1.25rem;">All registered league players. Click a name to view their profile.</p>
+
+    <div class="players-filter-bar">
+      <input type="text" id="player-search" placeholder="🔍 Search by name…" oninput="applyFilters()" />
+      <select id="player-team-filter" onchange="applyFilters()">
+        <option value="">All Teams</option>
+      </select>
+      <select id="player-pos-filter" onchange="applyFilters()">
+        <option value="">All Positions</option>
+        <option value="C">C – Centre</option>
+        <option value="LW">LW – Left Wing</option>
+        <option value="RW">RW – Right Wing</option>
+        <option value="LD">LD – Left Defence</option>
+        <option value="RD">RD – Right Defence</option>
+        <option value="G">G – Goalie</option>
+      </select>
+      <select id="player-status-filter" onchange="applyFilters()">
+        <option value="">All Players</option>
+        <option value="rostered">Rostered</option>
+        <option value="fa">Free Agents</option>
+      </select>
+      <span class="filter-count" id="player-count"></span>
+    </div>
+
+    <div style="overflow-x:auto;">
+      <table class="players-table" id="players-table">
+        <thead>
+          <tr>
+            <th onclick="sortPlayers('number')">#</th>
+            <th onclick="sortPlayers('name')">Player</th>
+            <th onclick="sortPlayers('team_name')">Team</th>
+            <th onclick="sortPlayers('position')">Pos</th>
+            <th>Platform</th>
+          </tr>
+        </thead>
+        <tbody id="players-tbody">
+          <tr><td colspan="5" style="color:#8b949e;padding:1rem;">Loading players…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script src="players.js"></script>
+  <script src="notifications.js"></script>
+  <script src="nav.js"></script>
+</body>
+</html>

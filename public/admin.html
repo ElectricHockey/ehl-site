@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin – EHL</title>
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    #login-section { max-width:380px;margin:3rem auto;background:#161b22;border:1px solid #30363d;border-radius:10px;padding:2rem 2.5rem; }
+    #login-section h2 { margin-bottom:1rem; }
+    #login-error { color:#f85149;font-size:0.85rem;margin-top:0.5rem;display:none; }
+    .logged-in-bar { background:#1c2a3a;border:1px solid #1f6feb;border-radius:6px;padding:0.5rem 1rem;margin-bottom:1.25rem;font-size:0.85rem;color:#58a6ff;display:flex;align-items:center;gap:1rem; }
+    .logged-in-bar button { background:none;border:none;color:#8b949e;font-size:0.82rem;cursor:pointer;text-decoration:underline;padding:0; }
+    .logo-preview { width:48px;height:48px;object-fit:contain;border-radius:6px;background:#21262d;display:none;margin-top:0.3rem; }
+    .team-logo-sm { width:28px;height:28px;object-fit:contain;border-radius:4px;vertical-align:middle;margin-right:0.4rem; }
+    .season-item { display:flex;align-items:center;gap:0.6rem;padding:0.5rem 0;border-bottom:1px solid #21262d; }
+    .season-item:last-child { border-bottom:none; }
+    .season-active-badge { background:#1f4b2f;color:#3fb950;font-size:0.75rem;padding:0.1rem 0.5rem;border-radius:10px;font-weight:600; }
+    /* Admin tabs */
+    .admin-tab-bar { display:flex;gap:0.4rem;flex-wrap:wrap;margin-bottom:1.5rem;border-bottom:1px solid #30363d;padding-bottom:0.75rem; }
+    .admin-tab-btn { padding:0.4rem 1.1rem;border-radius:20px;border:1px solid #30363d;background:#21262d;color:#8b949e;cursor:pointer;font-size:0.88rem;transition:all 0.15s;white-space:nowrap; }
+    .admin-tab-btn.active { background:#1c2a3a;border-color:#58a6ff;color:#58a6ff; }
+    .admin-tab-btn:hover:not(.active) { border-color:#8b949e;color:#c9d1d9; }
+    .admin-section { display:none; }
+    .admin-section.active { display:block; }
+    /* Admin league switcher */
+    .admin-league-bar { display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;margin-bottom:1rem;padding:0.6rem 0.75rem;background:#161b22;border:1px solid #30363d;border-radius:8px; }
+    .admin-league-btn { display:flex;align-items:center;gap:0.4rem;padding:0.35rem 0.9rem;border-radius:20px;border:1px solid #30363d;background:#21262d;color:#8b949e;cursor:pointer;font-size:0.88rem;font-weight:600;transition:all 0.15s; }
+    .admin-league-btn.active { border-color:#58a6ff;background:#1c2a3a;color:#58a6ff; }
+    .admin-league-btn:hover:not(.active) { border-color:#8b949e;color:#c9d1d9; }
+    .admin-league-btn-logo { width:20px;height:20px;object-fit:contain;border-radius:3px; }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="index.html" class="brand">
+      <img src="/api/site-logo" alt="EHL" class="brand-logo" />
+
+    </a>
+    <a href="index.html">Home</a>
+    <a href="schedule.html">Schedule</a>
+    <div class="nav-dropdown">
+      <a href="standings.html">Standings ▾</a>
+      <div class="nav-dropdown-menu">
+        <a href="recent-scores.html">🏒 Recent Scores</a>
+      </div>
+    </div>
+    <a href="stats.html">Stats</a>
+    <a href="players.html">Players</a>
+    <a href="admin.html" id="nav-admin-link" class="active" style="display:none">Admin</a>
+  </nav>
+
+  <!-- Admin access is granted automatically when the site owner or a promoted
+       game admin is logged in as a player. No separate login form is shown;
+       if access is denied the panel simply does not appear. -->
+  <div id="login-section">
+    <div style="text-align:center;padding:3rem 1rem;color:#8b949e;">
+      <div id="access-checking" style="font-size:0.95rem;">Checking access…</div>
+      <div id="access-denied" style="display:none;">
+        <p style="font-size:1.5rem;margin-bottom:0.5rem;">🔒</p>
+        <p style="font-size:1rem;color:#c9d1d9;margin-bottom:0.5rem;">Access denied.</p>
+        <p style="font-size:0.88rem;">This panel is only available to the site owner and promoted admins.<br>
+        Make sure you are <a href="register.html" style="color:#58a6ff;">logged in to your player account</a>.</p>
+      </div>
+    </div>
+  </div>
+
+  <div id="admin-panel" style="display:none;">
+    <div class="container">
+      <div class="logged-in-bar">🔑 <span id="logged-in-name">Admin</span> <button onclick="adminLogout()">Logout</button></div>
+
+      <h1 style="margin-bottom:1rem;">Admin Panel</h1>
+
+      <!-- ── League switcher ─────────────────────────────────── -->
+      <div class="admin-league-bar" id="admin-league-bar">
+        <span style="color:#8b949e;font-size:0.85rem;white-space:nowrap;">League:</span>
+        <button class="admin-league-btn active" data-league="threes" onclick="setAdminLeague('threes')">
+          <img src="/api/site-logo?type=threes" alt="" class="admin-league-btn-logo" />
+          3's
+        </button>
+        <button class="admin-league-btn" data-league="sixes" onclick="setAdminLeague('sixes')">
+          <img src="/api/site-logo?type=sixes" alt="" class="admin-league-btn-logo" />
+          6's
+        </button>
+      </div>
+
+      <!-- ── Tab bar ──────────────────────────────────────── -->
+      <div class="admin-tab-bar">
+        <button class="admin-tab-btn active" data-tab="seasons" data-owner-only onclick="showAdminTab('seasons')">🗓 Seasons</button>
+        <button class="admin-tab-btn" data-tab="teams" data-owner-only onclick="showAdminTab('teams')">🏒 Teams</button>
+        <button class="admin-tab-btn" data-tab="roster" data-owner-only onclick="showAdminTab('roster')">📋 Rosters</button>
+        <button class="admin-tab-btn" data-tab="reg-players" data-owner-only onclick="showAdminTab('reg-players')">👤 Registered Players</button>
+        <button class="admin-tab-btn" data-tab="players" data-owner-only onclick="showAdminTab('players')">🎮 Players</button>
+        <button class="admin-tab-btn" data-tab="games" onclick="showAdminTab('games')">📅 Games</button>
+        <button class="admin-tab-btn" data-tab="playoffs" data-owner-only onclick="showAdminTab('playoffs')">🏆 Playoffs</button>
+        <button class="admin-tab-btn" data-tab="site-logo" data-owner-only onclick="showAdminTab('site-logo')">🖼 Logo</button>
+        <button class="admin-tab-btn" data-tab="game-admins" data-owner-only onclick="showAdminTab('game-admins')">👥 Game Admins</button>
+        <button class="admin-tab-btn" data-tab="import" data-owner-only onclick="showAdminTab('import')">📥 Import</button>
+        <button class="admin-tab-btn" data-tab="records-settings" data-owner-only onclick="showAdminTab('records-settings')">🏅 Records</button>
+      </div>
+
+      <div id="status-msg" style="display:none;padding:0.5rem 1rem;border-radius:6px;margin-bottom:1rem;font-size:0.88rem;"></div>
+
+      <!-- ── Seasons tab ──────────────────────────────────── -->
+      <div id="admin-tab-seasons" class="admin-section active">
+        <h2>Seasons</h2>
+        <div class="form-section">
+          <form id="season-form">
+            <div class="form-group">
+              <label for="season-name">Season Name</label>
+              <input type="text" id="season-name" placeholder="e.g. 2025-2026 Season" required />
+            </div>
+            <div class="form-group">
+              <label for="season-type">League Type *</label>
+              <select id="season-type" required>
+                <option value="threes">3's (3v3)</option>
+                <option value="sixes">6's (6v6)</option>
+              </select>
+            </div>
+            <div class="form-group" style="flex-direction:column;">
+              <label style="display:flex;align-items:center;gap:0.4rem;cursor:pointer;">
+                <input type="checkbox" id="season-active" />
+                Set as active season
+              </label>
+            </div>
+            <button type="submit">Create Season</button>
+          </form>
+        </div>
+        <div id="seasons-list" style="margin-top:0.75rem;"></div>
+      </div>
+
+      <!-- ── Teams tab ──────────────────────────────────────── -->
+      <div id="admin-tab-teams" class="admin-section">
+        <h2>Teams</h2>
+        <div class="form-section">
+          <form id="team-form" enctype="multipart/form-data">
+            <div class="form-group">
+              <label for="team-name">Name *</label>
+              <input type="text" id="team-name" placeholder="Team name" required />
+            </div>
+            <div class="form-group">
+              <label for="team-conference">Conference <span style="color:#8b949e;font-size:0.8rem;">(optional)</span></label>
+              <input type="text" id="team-conference" placeholder="e.g. Eastern" />
+            </div>
+            <div class="form-group">
+              <label for="team-division">Division <span style="color:#8b949e;font-size:0.8rem;">(optional)</span></label>
+              <input type="text" id="team-division" placeholder="e.g. Atlantic" />
+            </div>
+            <div class="form-group">
+              <label for="team-ea-id">EA Club ID</label>
+              <input type="number" id="team-ea-id" placeholder="e.g. 1055" min="1" style="width:110px;" />
+            </div>
+            <div class="form-group">
+              <label for="team-league-type">League Type *</label>
+              <select id="team-league-type" required>
+                <option value="threes">3's (3v3, max 12)</option>
+                <option value="sixes">6's (6v6, max 20)</option>
+              </select>
+            </div>
+            <div class="form-group" style="flex-direction:column;">
+              <label for="team-color1">Primary Color <span style="color:#8b949e;font-size:0.8rem;">(gradient start)</span></label>
+              <input type="color" id="team-color1" value="#1e3a5f" style="width:56px;height:32px;padding:2px;border-radius:4px;border:1px solid #30363d;background:none;cursor:pointer;" />
+            </div>
+            <div class="form-group" style="flex-direction:column;">
+              <label for="team-color2">Secondary Color <span style="color:#8b949e;font-size:0.8rem;">(gradient end)</span></label>
+              <input type="color" id="team-color2" value="#0d1117" style="width:56px;height:32px;padding:2px;border-radius:4px;border:1px solid #30363d;background:none;cursor:pointer;" />
+            </div>
+            <div class="form-group" style="flex-direction:column;">
+              <label for="team-logo">Team Logo <span style="color:#8b949e;font-size:0.8rem;">(optional, max 2 MB)</span></label>
+              <input type="file" id="team-logo" accept="image/*" onchange="previewLogo(this,'logo-preview-new')" style="color:#c9d1d9;" />
+              <img id="logo-preview-new" class="logo-preview" alt="logo preview" />
+            </div>
+            <button type="submit">Add Team</button>
+          </form>
+        </div>
+        <table id="teams-table">
+          <thead><tr><th>Logo</th><th>Colors</th><th>Name</th><th>Type</th><th>Conference</th><th>Division</th><th>EA Club ID</th><th>Owner</th><th>Action</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <!-- ── Roster tab ──────────────────────────────────────── -->
+      <div id="admin-tab-roster" class="admin-section">
+        <h2>Roster Management</h2>
+        <div class="form-section" style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;">
+          <label for="roster-team-select" style="color:#8b949e;font-size:0.9rem;">Team:</label>
+          <select id="roster-team-select" onchange="loadRoster()" style="background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.35rem 0.6rem;min-width:180px;">
+            <option value="">— Select a team —</option>
+          </select>
+        </div>
+        <div id="roster-body"></div>
+      </div>
+
+      <!-- ── Registered Players tab ──────────────────────── -->
+      <div id="admin-tab-reg-players" class="admin-section">
+        <h2>Registered Players <span id="unrostered-badge" style="display:none;background:#4b1f1f;color:#f85149;font-size:0.75rem;border-radius:10px;padding:0.15rem 0.55rem;font-weight:600;margin-left:0.4rem;"></span></h2>
+        <div id="unrostered-warning" style="display:none;background:#2d1b00;border:1px solid #9e6a03;border-radius:8px;padding:0.75rem 1rem;margin-bottom:1rem;color:#e3b341;font-size:0.88rem;"></div>
+        <table id="reg-players-table">
+          <thead><tr><th>Gamertag</th><th>Position</th><th>Platform</th><th>Discord</th><th>Team</th><th>Rostered</th><th>Assign Owner</th><th>Edit</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <!-- ── Players tab ────────────────────────────────── -->
+      <div id="admin-tab-players" class="admin-section">
+        <h2>Players</h2>
+        <div class="form-section">
+          <form id="player-form">
+            <div class="form-group"><label for="player-name">Name</label><input type="text" id="player-name" placeholder="Player name" required /></div>
+            <div class="form-group"><label for="player-team">Team</label><select id="player-team"><option value="">— No Team —</option></select></div>
+            <div class="form-group"><label for="player-position">Position</label><input type="text" id="player-position" placeholder="e.g. C" /></div>
+            <div class="form-group"><label for="player-number">#</label><input type="number" id="player-number" placeholder="Jersey #" min="1" max="99" style="width:80px;" /></div>
+            <div class="form-group"><label for="player-discord">Discord</label><input type="text" id="player-discord" placeholder="Discord username" /></div>
+            <div class="form-group"><label for="player-discord-id">Discord ID</label><input type="text" id="player-discord-id" placeholder="e.g. 123456789012345678" /></div>
+            <button type="submit">Add Player</button>
+          </form>
+        </div>
+        <table id="players-table">
+          <thead><tr><th>ID</th><th>#</th><th>Name</th><th>Position</th><th>Team</th><th>Discord</th><th>Actions</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <!-- ── Games tab ──────────────────────────────────── -->
+      <div id="admin-tab-games" class="admin-section">
+        <h2>Games</h2>
+        <div class="form-section">
+          <form id="game-form">
+            <div class="form-group"><label for="game-season">Season</label><select id="game-season"><option value="">— No Season —</option></select></div>
+            <div class="form-group"><label for="game-date">Date</label><input type="date" id="game-date" required /></div>
+            <div class="form-group"><label for="game-home">Home Team</label><select id="game-home" required><option value="">Select team</option></select></div>
+            <div class="form-group"><label for="game-home-score">Home Score</label><input type="number" id="game-home-score" value="0" min="0" style="width:70px;" /></div>
+            <div class="form-group"><label for="game-away">Away Team</label><select id="game-away" required><option value="">Select team</option></select></div>
+            <div class="form-group"><label for="game-away-score">Away Score</label><input type="number" id="game-away-score" value="0" min="0" style="width:70px;" /></div>
+            <div class="form-group"><label for="game-status-select">Status</label>
+              <select id="game-status-select">
+                <option value="scheduled">Scheduled</option>
+                <option value="complete">Complete</option>
+              </select>
+            </div>
+            <div class="form-group" style="flex-direction:column;">
+              <label style="display:flex;align-items:center;gap:0.4rem;cursor:pointer;">
+                <input type="checkbox" id="game-overtime" />
+                Overtime game
+              </label>
+            </div>
+            <button type="submit">Add Game</button>
+          </form>
+        </div>
+        <table id="games-table">
+          <thead><tr><th>ID</th><th>Date</th><th>Home</th><th>Score</th><th>Away</th><th>Season</th><th>Status</th><th>Actions</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <!-- ── Playoffs tab ──────────────────────────────────── -->
+      <div id="admin-tab-playoffs" class="admin-section">
+        <h2>Playoffs</h2>
+
+        <!-- Create form -->
+        <div class="form-section">
+          <h3 style="margin-bottom:0.75rem;font-size:1rem;">Create Playoff Bracket</h3>
+          <form id="playoff-form">
+            <div class="form-group">
+              <label for="po-season">Season *</label>
+              <select id="po-season" required><option value="">— Select Season —</option></select>
+            </div>
+            <div class="form-group">
+              <label for="po-qualify">Teams that qualify *</label>
+              <select id="po-qualify" required style="width:100px;">
+                <option value="2">2</option>
+                <option value="3">3</option>
+                <option value="4">4</option>
+                <option value="5">5</option>
+                <option value="6">6</option>
+                <option value="7">7</option>
+                <option value="8" selected>8</option>
+                <option value="10">10</option>
+                <option value="12">12</option>
+                <option value="16">16</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="po-min-gp">Min. games played to qualify for roster</label>
+              <input type="number" id="po-min-gp" value="0" min="0" style="width:80px;" />
+            </div>
+            <div class="form-group">
+              <label for="po-series-length">Series length (best of)</label>
+              <select id="po-series-length" style="width:100px;">
+                <option value="3">3</option>
+                <option value="5">5</option>
+                <option value="7" selected>7</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="po-start-date">Round 1 start date *</label>
+              <input type="date" id="po-start-date" required style="width:160px;" />
+            </div>
+            <button type="submit">🏒 Generate Bracket</button>
+          </form>
+        </div>
+
+        <!-- Existing playoffs list -->
+        <div id="playoffs-list" style="margin-top:1.5rem;"></div>
+      </div>
+
+      <!-- ── Site Logo tab ────────────────────────────────── -->
+      <div id="admin-tab-site-logo" class="admin-section">
+        <h2>Site Logo</h2>
+        <p style="color:#8b949e;font-size:0.9rem;margin-bottom:1.25rem;">
+          Upload logos for each league. The 3's and 6's logos are used on the league tab buttons.
+          The main site logo is used in the top-left nav and as a fallback.
+          Supported formats: PNG, JPG, GIF, WebP, SVG (max 10 MB).
+        </p>
+
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1.25rem;">
+
+          <!-- 3's League Logo -->
+          <div class="form-section">
+            <h3 style="margin-bottom:0.75rem;">🏒 3's League Logo</h3>
+            <div style="margin-bottom:0.75rem;">
+              <p style="font-size:0.82rem;color:#8b949e;margin-bottom:0.4rem;">Current:</p>
+              <img id="current-logo-threes" src="/api/site-logo?type=threes" alt="3's logo"
+                style="max-height:80px;max-width:180px;object-fit:contain;background:#21262d;border-radius:6px;padding:6px;display:block;" />
+            </div>
+            <form id="logo-form-threes" data-league="threes">
+              <div class="form-group" style="flex-direction:column;margin-bottom:0.75rem;">
+                <label for="logo-file-threes">New Image</label>
+                <input type="file" id="logo-file-threes" accept="image/*" required
+                  onchange="previewLeagueLogo(this,'logo-preview-threes')" style="color:#c9d1d9;" />
+                <img id="logo-preview-threes" alt="preview"
+                  style="max-height:80px;max-width:180px;object-fit:contain;background:#21262d;border-radius:6px;padding:6px;margin-top:0.4rem;display:none;" />
+              </div>
+              <button type="submit">Upload 3's Logo</button>
+              <span id="logo-msg-threes" style="margin-left:0.75rem;font-size:0.85rem;"></span>
+            </form>
+          </div>
+
+          <!-- 6's League Logo -->
+          <div class="form-section">
+            <h3 style="margin-bottom:0.75rem;">🏒 6's League Logo</h3>
+            <div style="margin-bottom:0.75rem;">
+              <p style="font-size:0.82rem;color:#8b949e;margin-bottom:0.4rem;">Current:</p>
+              <img id="current-logo-sixes" src="/api/site-logo?type=sixes" alt="6's logo"
+                style="max-height:80px;max-width:180px;object-fit:contain;background:#21262d;border-radius:6px;padding:6px;display:block;" />
+            </div>
+            <form id="logo-form-sixes" data-league="sixes">
+              <div class="form-group" style="flex-direction:column;margin-bottom:0.75rem;">
+                <label for="logo-file-sixes">New Image</label>
+                <input type="file" id="logo-file-sixes" accept="image/*" required
+                  onchange="previewLeagueLogo(this,'logo-preview-sixes')" style="color:#c9d1d9;" />
+                <img id="logo-preview-sixes" alt="preview"
+                  style="max-height:80px;max-width:180px;object-fit:contain;background:#21262d;border-radius:6px;padding:6px;margin-top:0.4rem;display:none;" />
+              </div>
+              <button type="submit">Upload 6's Logo</button>
+              <span id="logo-msg-sixes" style="margin-left:0.75rem;font-size:0.85rem;"></span>
+            </form>
+          </div>
+
+          <!-- Main / Nav Logo -->
+          <div class="form-section">
+            <h3 style="margin-bottom:0.75rem;">🌐 Main Site Logo</h3>
+            <p style="font-size:0.82rem;color:#8b949e;margin-bottom:0.75rem;">Used in the top-left nav and as a fallback when a league logo is not set.</p>
+            <div style="margin-bottom:0.75rem;">
+              <p style="font-size:0.82rem;color:#8b949e;margin-bottom:0.4rem;">Current:</p>
+              <img id="current-site-logo-preview" src="/api/site-logo" alt="Current logo"
+                style="max-height:80px;max-width:180px;object-fit:contain;background:#21262d;border-radius:6px;padding:6px;display:block;" />
+            </div>
+            <form id="site-logo-form">
+              <div class="form-group" style="flex-direction:column;margin-bottom:0.75rem;">
+                <label for="site-logo-file">New Logo Image</label>
+                <input type="file" id="site-logo-file" accept="image/*" required
+                  onchange="previewSiteLogo(this)" style="color:#c9d1d9;" />
+                <img id="site-logo-preview-new" alt="preview"
+                  style="max-height:80px;max-width:180px;object-fit:contain;background:#21262d;border-radius:6px;padding:6px;margin-top:0.4rem;display:none;" />
+              </div>
+              <button type="submit">Upload Main Logo</button>
+              <span id="site-logo-msg" style="margin-left:0.75rem;font-size:0.85rem;"></span>
+            </form>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- ── Game Admins tab ────────────────────────────────── -->
+      <div id="admin-tab-game-admins" class="admin-section">
+        <h2>Game Admins</h2>
+        <p style="color:#8b949e;font-size:0.9rem;margin-bottom:1rem;">
+          Game admins can log in and enter game results and scores.
+          They cannot manage teams, players, seasons, or site settings.
+        </p>
+
+        <!-- Add game admin form -->
+        <div class="form-section" style="max-width:420px;margin-bottom:1.5rem;">
+          <h3 style="margin-bottom:0.75rem;font-size:1rem;">Add Game Admin</h3>
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+            <input type="text" id="game-admin-search" placeholder="Search by gamertag…"
+              style="flex:1;min-width:160px;" oninput="searchUsersForAdmin()" />
+          </div>
+          <div id="game-admin-search-results" style="margin-top:0.5rem;"></div>
+        </div>
+
+        <!-- Current game admins list -->
+        <h3 style="font-size:1rem;margin-bottom:0.5rem;">Current Game Admins</h3>
+        <div id="game-admins-list"><p style="color:#8b949e;font-size:0.88rem;">Loading…</p></div>
+      </div>
+
+      <!-- ── Import tab ────────────────────────────────────── -->
+      <div id="admin-tab-import" class="admin-section">
+        <h2>Import Historical Data</h2>
+        <p style="color:#8b949e;font-size:0.9rem;max-width:680px;margin-bottom:1.25rem;">
+          Import past seasons, game results and player stats from
+          <strong>mystatsonline.com</strong> or any compatible JSON file.<br>
+          Run the scraper script first:
+          <code style="background:#21262d;padding:0.15rem 0.5rem;border-radius:4px;">node scripts/scrape-mystatsonline.js 73879</code>
+          then upload the generated <code>import-data.json</code> below.
+        </p>
+
+        <!-- File upload -->
+        <div class="form-section" style="max-width:520px;margin-bottom:1.25rem;">
+          <h3 style="font-size:1rem;margin-bottom:0.75rem;">Upload JSON File</h3>
+          <div style="display:flex;gap:0.75rem;align-items:center;flex-wrap:wrap;">
+            <input type="file" id="import-file" accept=".json"
+              style="flex:1;min-width:200px;background:#21262d;border:1px solid #30363d;border-radius:6px;padding:0.35rem 0.6rem;color:#e6edf3;font-size:0.88rem;" />
+            <button onclick="runImport()">📥 Import</button>
+          </div>
+          <p style="color:#8b949e;font-size:0.8rem;margin-top:0.5rem;">
+            Maximum file size: 10 MB. Only JSON files are accepted.
+          </p>
+        </div>
+
+        <!-- Or paste JSON -->
+        <div class="form-section" style="max-width:680px;margin-bottom:1.25rem;">
+          <h3 style="font-size:1rem;margin-bottom:0.5rem;">Or Paste JSON</h3>
+          <textarea id="import-json-text" rows="8"
+            placeholder='{"seasons":[{"name":"Season 1","league_type":"threes","games":[],"player_stats":[]}]}'
+            style="width:100%;background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:0.6rem 0.75rem;color:#e6edf3;font-size:0.82rem;font-family:monospace;resize:vertical;box-sizing:border-box;"></textarea>
+          <button style="margin-top:0.5rem;" onclick="runImportText()">📥 Import Pasted JSON</button>
+        </div>
+
+        <div id="import-status" style="display:none;padding:0.75rem 1rem;border-radius:6px;font-size:0.88rem;max-width:520px;margin-bottom:1rem;"></div>
+
+        <!-- Format reference -->
+        <details style="max-width:680px;">
+          <summary style="cursor:pointer;color:#58a6ff;font-size:0.88rem;margin-bottom:0.5rem;">📋 JSON Format Reference</summary>
+          <pre style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:1rem;font-size:0.78rem;overflow-x:auto;color:#8b949e;">{
+  "seasons": [
+    {
+      "name": "Season 1",              // required
+      "league_type": "threes",         // "threes" | "sixes" | "" (optional)
+      "games": [                       // optional — game results
+        {
+          "date": "2022-01-15",        // YYYY-MM-DD
+          "home_team": "Team A",
+          "away_team": "Team B",
+          "home_score": 5,
+          "away_score": 3,
+          "is_overtime": false         // optional
+        }
+      ],
+      "player_stats": [                // optional — season aggregate stats
+        {
+          "team": "Team A",
+          "player_name": "PlayerX",
+          "position": "C",             // "G" for goalies
+          "games_played": 10,
+          "goals": 5,
+          "assists": 8,
+          "plus_minus": 3,
+          "pim": 4,
+          "shots": 30,
+          "pp_goals": 1,
+          "sh_goals": 0,
+          "gwg": 1,
+          // Goalie-only (optional):
+          "saves": 180,
+          "save_pct": 0.912,
+          "goals_against": 17,
+          "goalie_wins": 7,
+          "goalie_losses": 3,
+          "shutouts": 1,
+          "gaa": 2.15
+        }
+      ]
+    }
+  ]
+}</pre>
+        </details>
+
+        <!-- ── Excel Schedule Import ───────────────────────────── -->
+        <hr style="border:none;border-top:1px solid #30363d;margin:1.75rem 0;" />
+        <h2 style="margin-bottom:0.5rem;">Import from Excel Schedule</h2>
+        <p style="color:#8b949e;font-size:0.9rem;max-width:680px;margin-bottom:1.25rem;">
+          Upload an Excel schedule exported from <strong>mystatsonline.com</strong>.<br>
+          The server will read each game row and automatically fetch per-game player stats
+          directly from the mystatsonline game-score page using the <code>IDGame</code> column.<br>
+          Expected columns: <em>Date/Time · Home team · Home score · OT · Away score · Away team · Location · Status · IDGame</em>
+        </p>
+
+        <div class="form-section" style="max-width:580px;margin-bottom:1.25rem;">
+          <h3 style="font-size:1rem;margin-bottom:0.75rem;">Season Info</h3>
+          <div class="form-group" style="flex-direction:column;margin-bottom:0.75rem;">
+            <label for="xl-season-name">Season name <span style="color:#f85149;">*</span></label>
+            <input type="text" id="xl-season-name" placeholder="e.g. Season 5 – Fall 2024"
+              style="background:#21262d;border:1px solid #30363d;border-radius:6px;padding:0.4rem 0.7rem;color:#e6edf3;font-size:0.9rem;max-width:360px;" />
+          </div>
+          <div style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:0.75rem;">
+            <div class="form-group" style="flex-direction:column;flex:1;min-width:140px;">
+              <label for="xl-league-type">League type</label>
+              <select id="xl-league-type"
+                style="background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.4rem 0.7rem;font-size:0.9rem;">
+                <option value="">– unset –</option>
+                <option value="threes">3's (Threes)</option>
+                <option value="sixes">6's (Sixes)</option>
+              </select>
+            </div>
+            <div class="form-group" style="flex-direction:column;flex:1;min-width:160px;">
+              <label for="xl-league-id">mystatsonline League ID</label>
+              <input type="text" id="xl-league-id" placeholder="e.g. 73879"
+                style="background:#21262d;border:1px solid #30363d;border-radius:6px;padding:0.4rem 0.7rem;color:#e6edf3;font-size:0.9rem;" />
+              <span style="color:#8b949e;font-size:0.78rem;margin-top:0.25rem;">Used to fetch per-game player stats (leave blank to skip).</span>
+            </div>
+          </div>
+          <h3 style="font-size:1rem;margin-bottom:0.75rem;">Excel File</h3>
+          <div style="display:flex;gap:0.75rem;align-items:center;flex-wrap:wrap;">
+            <input type="file" id="xl-import-file" accept=".xlsx,.xls"
+              style="flex:1;min-width:200px;background:#21262d;border:1px solid #30363d;border-radius:6px;padding:0.35rem 0.6rem;color:#e6edf3;font-size:0.88rem;" />
+            <button onclick="runExcelImport()">📊 Import Excel</button>
+          </div>
+          <p style="color:#8b949e;font-size:0.8rem;margin-top:0.5rem;">
+            Accepts <code>.xlsx</code> files. Maximum 20 MB.<br>
+            <strong>Note:</strong> Fetching player stats from mystatsonline may take a minute or two for large schedules.
+          </p>
+        </div>
+
+        <div id="xl-import-status" style="display:none;padding:0.75rem 1rem;border-radius:6px;font-size:0.88rem;max-width:560px;margin-bottom:1rem;white-space:pre-wrap;"></div>
+      </div>
+
+      <!-- ── Edit Player Modal (shared, not inside any tab) ─── -->
+      <div id="edit-player-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:9998;align-items:center;justify-content:center;">
+        <div style="background:#161b22;border:1px solid #30363d;border-radius:10px;padding:1.5rem 2rem;min-width:320px;max-width:440px;width:90%;">
+          <h3 id="ep-title" style="margin:0 0 1rem;">Edit Player Profile</h3>
+          <input type="hidden" id="ep-id" />
+          <input type="hidden" id="ep-type" value="user" />
+          <!-- Custom-player-only fields -->
+          <div id="ep-row-name" class="form-group" style="flex-direction:column;margin-bottom:0.6rem;display:none;">
+            <label for="ep-name">Name</label>
+            <input type="text" id="ep-name" />
+          </div>
+          <!-- Registered-user-only fields -->
+          <div id="ep-row-username" class="form-group" style="flex-direction:column;margin-bottom:0.6rem;">
+            <label for="ep-username">Gamertag</label>
+            <input type="text" id="ep-username" />
+          </div>
+          <div id="ep-row-platform" class="form-group" style="flex-direction:column;margin-bottom:0.6rem;">
+            <label for="ep-platform">Platform</label>
+            <select id="ep-platform" style="background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.35rem 0.6rem;">
+              <option value="xbox">Xbox</option>
+              <option value="psn">PlayStation (PSN)</option>
+            </select>
+          </div>
+          <!-- Shared fields -->
+          <div class="form-group" style="flex-direction:column;margin-bottom:0.6rem;">
+            <label for="ep-position">Position</label>
+            <select id="ep-position" style="background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.35rem 0.6rem;">
+              <option value="">— None —</option>
+              <option value="C">C — Centre</option>
+              <option value="LW">LW — Left Wing</option>
+              <option value="RW">RW — Right Wing</option>
+              <option value="LD">LD — Left Defence</option>
+              <option value="RD">RD — Right Defence</option>
+              <option value="G">G — Goalie</option>
+            </select>
+          </div>
+          <!-- Registered-user-only -->
+          <div id="ep-row-email" class="form-group" style="flex-direction:column;margin-bottom:0.6rem;">
+            <label for="ep-email">Email</label>
+            <input type="email" id="ep-email" placeholder="optional" />
+          </div>
+          <!-- Shared -->
+          <div class="form-group" style="flex-direction:column;margin-bottom:0.6rem;">
+            <label for="ep-discord">Discord</label>
+            <input type="text" id="ep-discord" placeholder="e.g. username or username#1234" />
+          </div>
+          <!-- Custom-player-only fields -->
+          <div id="ep-row-number" class="form-group" style="flex-direction:column;margin-bottom:0.6rem;display:none;">
+            <label for="ep-number">Jersey #</label>
+            <input type="number" id="ep-number" min="1" max="99" placeholder="optional" />
+          </div>
+          <div id="ep-row-discordid" class="form-group" style="flex-direction:column;margin-bottom:0.6rem;display:none;">
+            <label for="ep-discord-id">Discord ID <span style="color:#8b949e;font-size:0.78rem;">(used to auto-link on registration)</span></label>
+            <input type="text" id="ep-discord-id" placeholder="e.g. 123456789012345678" />
+          </div>
+          <div id="ep-error" style="color:#f85149;font-size:0.83rem;margin-bottom:0.5rem;display:none;"></div>
+          <div style="display:flex;gap:0.5rem;margin-top:0.75rem;">
+            <button onclick="savePlayerEdit()">Save Changes</button>
+            <button class="btn-secondary" onclick="closeEditModal()">Cancel</button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── Records Settings Tab ─────────────────────────────────────── -->
+      <div id="admin-tab-records-settings" class="admin-section">
+        <h2>Records Settings</h2>
+        <p style="color:#8b949e;font-size:0.9rem;margin-bottom:1.25rem;">
+          Configure the minimum games played requirement for goalie seasonal records (e.g. Save%).
+        </p>
+        <div class="form-section" style="max-width:400px;">
+          <div class="form-group" style="flex-direction:column;margin-bottom:1rem;">
+            <label for="rec-goalie-min-gp">Min. Games Played for Goalie Seasonal Records</label>
+            <input type="number" id="rec-goalie-min-gp" value="16" min="1" max="999" style="width:100px;" />
+            <span style="color:#8b949e;font-size:0.8rem;margin-top:0.3rem;">Goalies must have played at least this many games in a season to qualify for Save% records.</span>
+          </div>
+          <button onclick="saveRecordsSettings()">Save Settings</button>
+          <span id="rec-settings-msg" style="margin-left:0.75rem;font-size:0.85rem;"></span>
+        </div>
+      </div>
+
+  <script src="notifications.js"></script>
+  <script src="game-stats-editor.js"></script>
+  <script src="admin.js"></script>
+  <script src="nav.js"></script>
+</body>
+</html>
