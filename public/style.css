@@ -310,10 +310,10 @@ button:hover, .btn:hover { opacity: 0.85; }
 
 /* ── Team colour gradient rows ─────────────────────────────────────────────── */
 .team-row {
-  background: linear-gradient(90deg, rgba(var(--c1),0.18) 0%, rgba(var(--c2),0.10) 60%, transparent 100%);
+  background: linear-gradient(90deg, rgba(var(--c1),0.28) 0%, rgba(var(--c2),0.20) 50%, transparent 100%);
 }
 .team-row:hover {
-  background: linear-gradient(90deg, rgba(var(--c1),0.30) 0%, rgba(var(--c2),0.18) 60%, transparent 100%);
+  background: linear-gradient(90deg, rgba(var(--c1),0.42) 0%, rgba(var(--c2),0.32) 50%, transparent 100%);
 }
 
 /* ── League type section headings (dual 3's/6's layout) ──────────────────── */

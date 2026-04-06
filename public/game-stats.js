@@ -334,20 +334,10 @@
   // ── Top player cards ─────────────────────────────────────────────────────
 
   function renderPlayerCards(game, homeNorm, awayNorm) {
-    function bestSkater(list) {
-      return list.filter(p => (p.position || '').toUpperCase() !== 'G')
-        .sort((a, b) => (b.points - a.points) || (b.goals - a.goals) || ((computeOvr(b) || 0) - (computeOvr(a) || 0)))[0];
-    }
-    function bestGoalie(list) {
-      return list.filter(p => (p.position || '').toUpperCase() === 'G')
-        .sort((a, b) => (b.save_pct || 0) - (a.save_pct || 0))[0];
-    }
-
-    const candidates = [
-      bestSkater(homeNorm),
-      bestSkater(awayNorm),
-      bestGoalie([...homeNorm, ...awayNorm]),
-    ].filter(Boolean);
+    const allPlayers = [...homeNorm, ...awayNorm];
+    const candidates = allPlayers
+      .sort((a, b) => (computeOvr(b) || 0) - (computeOvr(a) || 0))
+      .slice(0, 3);
 
     if (!candidates.length) return '';
 
