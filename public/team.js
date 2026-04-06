@@ -168,7 +168,7 @@ function renderScheduleRow(g, team) {
   return `<tr onclick="window.location='game.html?id=${g.id}'" style="cursor:pointer;">
     <td style="color:#8b949e;white-space:nowrap;font-size:0.78rem;">${g.date || ''}</td>
     <td style="font-size:0.78rem;color:#8b949e;text-align:center;">${haStr}</td>
-    <td>
+    <td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
       <a href="team.html?id=${oppId}" style="display:flex;align-items:center;text-decoration:none;color:#c9d1d9;font-size:0.85rem;" onclick="event.stopPropagation()">
         ${logoHtml}${oppName}
       </a>
@@ -419,9 +419,11 @@ async function loadTeamPage() {
 
     html += `<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:1rem;margin-bottom:1rem;">
       <h3 style="color:#58a6ff;margin:0 0 0.75rem;font-size:1rem;">Schedule</h3>
-      <table style="width:100%;border-collapse:collapse;margin-top:0;font-size:0.85rem;">
-        <tbody>${scheduleRows}</tbody>
-      </table>
+      <div style="overflow-x:auto;">
+        <table style="width:100%;min-width:320px;border-collapse:collapse;margin-top:0;font-size:0.85rem;">
+          <tbody>${scheduleRows}</tbody>
+        </table>
+      </div>
       <a href="schedule.html" style="display:block;margin-top:0.75rem;font-size:0.82rem;color:#8b949e;text-align:center;">Full Schedule</a>
     </div>`;
 
