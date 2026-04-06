@@ -1,0 +1,5 @@
+node_modules/
+*.db
+# Uploaded team logos (keep the directory via .gitkeep)
+public/uploads/*
+!public/uploads/.gitkeep
