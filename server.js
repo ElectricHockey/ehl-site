@@ -183,18 +183,36 @@ function isOwnerUser(user) {
 // ── Discord OAuth2 ─────────────────────────────────────────────────────────
 const DISCORD_CLIENT_ID     = process.env.DISCORD_CLIENT_ID     || '1379545091927965767';
 const DISCORD_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || 'hP2korc5GbEuCkbLPEfxyWLxNk8ql-Y6';
-const DISCORD_REDIRECT_URI  = process.env.DISCORD_REDIRECT_URI  || 'http://localhost:3000/api/discord/callback';
+// Leave blank to auto-detect from the incoming request (required for Vercel).
+const DISCORD_REDIRECT_URI  = process.env.DISCORD_REDIRECT_URI  || '';
 
-// Short-lived in-memory state stores (cleaned on use / TTL)
-const discordOAuthStates   = new Map(); // state  → { mode, userId, expires }
-const pendingDiscordLinks  = new Map(); // token  → { discord_id, discord, expires }
+// ── Stateless signed-token helpers for Discord OAuth ──────────────────────
+// On Vercel serverless each invocation may run in a different instance, so
+// in-memory Maps are unreliable.  Instead we HMAC-sign the payload into the
+// OAuth `state` parameter (and into the pending-link token) so no server-side
+// storage is needed.
+const DISCORD_STATE_SECRET = process.env.DISCORD_STATE_SECRET
+  || process.env.ADMIN_PASSWORD
+  || 'ehl-discord-state-default';
 
-// Periodically evict expired Discord OAuth state / pending-link entries
-setInterval(() => {
-  const now = Date.now();
-  for (const [k, v] of discordOAuthStates)  if (now > v.expires) discordOAuthStates.delete(k);
-  for (const [k, v] of pendingDiscordLinks) if (now > v.expires) pendingDiscordLinks.delete(k);
-}, 5 * 60 * 1000);
+function _signPayload(payload) {
+  const json = JSON.stringify(payload);
+  const b64 = Buffer.from(json).toString('base64url');
+  const sig = crypto.createHmac('sha256', DISCORD_STATE_SECRET).update(b64).digest('base64url');
+  return `${b64}.${sig}`;
+}
+
+function _verifyPayload(token) {
+  if (!token || !token.includes('.')) return null;
+  const [b64, sig] = token.split('.');
+  const expected = crypto.createHmac('sha256', DISCORD_STATE_SECRET).update(b64).digest('base64url');
+  if (sig !== expected) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(b64, 'base64url').toString());
+    if (payload.exp && Date.now() > payload.exp) return null;      // expired
+    return payload;
+  } catch { return null; }
+}
 
 function requireAdmin(req, res, next) {
   const token = req.headers['x-admin-token'];
@@ -2382,8 +2400,8 @@ app.get('/api/discord/connect', async (req, res) => {
   const playerToken = req.query.token || '';
   const mode   = (playerToken && playerSessions.has(playerToken)) ? 'player' : 'register';
   const userId = mode === 'player' ? playerSessions.get(playerToken) : null;
-  const state  = crypto.randomBytes(16).toString('hex');
-  discordOAuthStates.set(state, { mode, userId, redirectUri, expires: Date.now() + 10 * 60 * 1000 });
+  // Encode state as an HMAC-signed token so it survives serverless cold starts
+  const state  = _signPayload({ mode, userId, redirectUri, exp: Date.now() + 10 * 60 * 1000 });
   const params = new URLSearchParams({
     client_id: DISCORD_CLIENT_ID, redirect_uri: redirectUri,
     response_type: 'code', scope: 'identify', state,
@@ -2395,9 +2413,8 @@ app.get('/api/discord/connect', async (req, res) => {
 app.get('/api/discord/callback', async (req, res) => {
   const { code, state, error } = req.query;
   if (error) return res.redirect(`/register.html?discord_error=${encodeURIComponent(error)}`);
-  const stateData = discordOAuthStates.get(state);
-  discordOAuthStates.delete(state);
-  if (!stateData || Date.now() > stateData.expires) return res.redirect('/register.html?discord_error=expired');
+  const stateData = _verifyPayload(state);
+  if (!stateData) return res.redirect('/register.html?discord_error=expired');
   try {
     // Exchange code for access token
     const tokenRes = await fetch('https://discord.com/api/oauth2/token', {
@@ -2424,10 +2441,9 @@ app.get('/api/discord/callback', async (req, res) => {
       await db.prepare('UPDATE users SET discord_id = ?, discord = ? WHERE id = ?').run(discord_id, discord, stateData.userId);
       return res.redirect('/dashboard.html?discord_linked=1');
     } else {
-      // Store for pickup by the registration page
-      const linkToken = crypto.randomBytes(16).toString('hex');
-      pendingDiscordLinks.set(linkToken, { discord_id, discord, expires: Date.now() + 10 * 60 * 1000 });
-      return res.redirect(`/register.html?discord_token=${linkToken}&discord_username=${encodeURIComponent(discord)}`);
+      // Create a signed token for the registration page to pick up
+      const linkToken = _signPayload({ discord_id, discord, exp: Date.now() + 10 * 60 * 1000 });
+      return res.redirect(`/register.html?discord_token=${encodeURIComponent(linkToken)}&discord_username=${encodeURIComponent(discord)}`);
     }
   } catch (err) {
     const dest = stateData.mode === 'player' ? '/dashboard.html' : '/register.html';
@@ -2436,12 +2452,10 @@ app.get('/api/discord/callback', async (req, res) => {
 });
 
 // Step 3 – Registration page verifies the pending discord link token before submitting.
-// Token is consumed on first use to prevent reuse.
 app.get('/api/discord/pending', async (req, res) => {
   const { token } = req.query;
-  const pending = pendingDiscordLinks.get(token);
-  if (!pending || Date.now() > pending.expires) return res.status(404).json({ error: 'Invalid or expired Discord link token' });
-  pendingDiscordLinks.delete(token); // consume — one-time use
+  const pending = _verifyPayload(token);
+  if (!pending) return res.status(404).json({ error: 'Invalid or expired Discord link token' });
   res.json({ discord_id: pending.discord_id, discord: pending.discord });
 });
 
