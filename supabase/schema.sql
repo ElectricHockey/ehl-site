@@ -1,6 +1,6 @@
 -- ═══════════════════════════════════════════════════════════════════════
 -- EHL — Supabase / PostgreSQL schema
--- Run this once in the Supabase SQL Editor to create all tables.
+-- Executed automatically on server startup to ensure all tables exist.
 -- ═══════════════════════════════════════════════════════════════════════
 
 -- Case-insensitive text for usernames

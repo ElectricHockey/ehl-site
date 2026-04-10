@@ -18,7 +18,7 @@ npm start
 
 Then open your browser to **http://localhost:3000**.
 
-The server creates a local `league.db` SQLite file on first run. No other setup is needed.
+The server reads `supabase/schema.sql` on first run to create all tables automatically. No other setup is needed beyond setting `DATABASE_URL` in your `.env` file (see `.env.example`).
 
 ## Adding your teams to the code (seed data)
 

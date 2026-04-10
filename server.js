@@ -126,8 +126,10 @@ if (!process.env.VERCEL) {
   app.use(express.static(path.join(__dirname, 'public')));
 }
 
-// ── Run async initialisation (seed teams, etc.) ──────────────────────────
-db.seedTeams().catch(err => console.error('[db] seed error:', err));
+// ── Run async initialisation (schema + seed teams) ───────────────────────
+db.initSchema()
+  .then(() => db.seedTeams())
+  .catch(err => console.error('[db] init error:', err));
 
 // ── IP helpers ─────────────────────────────────────────────────────────────
 

@@ -14,6 +14,8 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 const { Pool } = require('pg');
+const fs = require('fs');
+const path = require('path');
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -164,6 +166,18 @@ async function seedTeams() {
   console.log(`[db] Upserted ${SEED_TEAMS.length} seeded team(s).`);
 }
 
+/**
+ * Read and execute supabase/schema.sql to ensure all tables exist.
+ * Uses CREATE … IF NOT EXISTS so it is safe to run on every startup.
+ */
+async function initSchema() {
+  const schemaPath = path.join(__dirname, 'supabase', 'schema.sql');
+  const sql = fs.readFileSync(schemaPath, 'utf8');
+  await pool.query(sql);
+  console.log('[db] Schema initialised from supabase/schema.sql');
+}
+
+db.initSchema = initSchema;
 db.seedTeams = seedTeams;
 db.pool = pool;
 
