@@ -172,7 +172,13 @@ async function seedTeams() {
  */
 async function initSchema() {
   const schemaPath = path.join(__dirname, 'supabase', 'schema.sql');
-  const sql = fs.readFileSync(schemaPath, 'utf8');
+  let sql;
+  try {
+    sql = await fs.promises.readFile(schemaPath, 'utf8');
+  } catch (err) {
+    console.error(`[db] Could not read schema file (${schemaPath}): ${err.message}`);
+    return;
+  }
   await pool.query(sql);
   console.log('[db] Schema initialised from supabase/schema.sql');
 }
