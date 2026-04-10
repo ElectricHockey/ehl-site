@@ -99,8 +99,20 @@ const excelUpload = multer({
   },
 });
 
-// ── Async wrapper (Express 4 doesn't catch async errors by default) ──────
-const wrap = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+// ── Async error handling (Express 4 doesn't catch async errors by default) ──
+// Monkey-patch Express Router to automatically catch rejected Promises from
+// async route handlers, forwarding them to the global error handler.
+{
+  const Layer = require('express/lib/router/layer');
+  const origHandle = Layer.prototype.handle_request;
+  Layer.prototype.handle_request = function handleRequest(req, res, next) {
+    const result = origHandle.call(this, req, res, next);
+    if (result && typeof result.catch === 'function') {
+      result.catch(next);
+    }
+    return result;
+  };
+}
 
 // ── Rate limiting ──────────────────────────────────────────────────────────
 
