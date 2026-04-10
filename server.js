@@ -203,7 +203,7 @@ function _signPayload(payload) {
 }
 
 function _verifyPayload(token) {
-  if (!token || !token.includes('.')) return null;
+  if (!token || typeof token !== 'string' || !token.includes('.')) return null;
   const [b64, sig] = token.split('.');
   const expected = crypto.createHmac('sha256', DISCORD_STATE_SECRET).update(b64).digest('base64url');
   if (sig !== expected) return null;
