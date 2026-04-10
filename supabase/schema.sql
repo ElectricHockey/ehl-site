@@ -1,6 +1,8 @@
 -- ═══════════════════════════════════════════════════════════════════════
--- EHL — Supabase / PostgreSQL schema
--- Executed automatically on server startup to ensure all tables exist.
+-- EHL — Supabase / PostgreSQL schema  (reference copy)
+-- The canonical version is inlined in db.js initSchema() and runs
+-- automatically on every server startup.  Keep this file in sync if
+-- you add or change tables.
 -- ═══════════════════════════════════════════════════════════════════════
 
 -- Case-insensitive text for usernames
