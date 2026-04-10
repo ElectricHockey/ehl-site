@@ -204,9 +204,10 @@ async function initSchema() {
       await pool.query("SELECT 'x'::citext");
       hasCitext = true;
     } catch (_) {
-      // Try with extensions schema in search_path
+      // Try with extensions schema in search_path (session-level so it
+      // persists for subsequent queries on this connection from the pool).
       try {
-        await pool.query("SET LOCAL search_path TO public, extensions");
+        await pool.query("SET search_path TO public, extensions");
         await pool.query("SELECT 'x'::citext");
         hasCitext = true;
       } catch (_2) { /* truly unavailable */ }
