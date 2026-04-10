@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS seasons (
 
 CREATE TABLE IF NOT EXISTS teams (
   id          SERIAL PRIMARY KEY,
-  name        TEXT NOT NULL,
+  name        TEXT NOT NULL UNIQUE,
   conference  TEXT NOT NULL DEFAULT '',
   division    TEXT NOT NULL DEFAULT '',
   ea_club_id  INTEGER,

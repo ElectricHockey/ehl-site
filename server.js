@@ -871,7 +871,7 @@ app.get('/api/teams/:id/records', async (req, res) => {
   const team = await db.prepare('SELECT id FROM teams WHERE id = ?').get(id);
   if (!team) return res.status(404).json({ error: 'Team not found' });
 
-  function careerRecord(col, agg, pos, orderDir) {
+  async function careerRecord(col, agg, pos, orderDir) {
     const where = pos === 'G' ? "gps.position = 'G'" : "gps.position != 'G'";
     return await db.prepare(`
       SELECT gps.player_name AS name,
@@ -885,7 +885,7 @@ app.get('/api/teams/:id/records', async (req, res) => {
     `).get(id);
   }
 
-  function singleSeasonRecord(col, agg, pos, orderDir) {
+  async function singleSeasonRecord(col, agg, pos, orderDir) {
     const where = pos === 'G' ? "gps.position = 'G'" : "gps.position != 'G'";
     return await db.prepare(`
       SELECT gps.player_name AS name,
@@ -902,21 +902,21 @@ app.get('/api/teams/:id/records', async (req, res) => {
   }
 
   const career = {
-    pts:         careerRecord('points',      "SUM(gps.goals + gps.assists)", 'S', 'DESC'),
-    goals:       careerRecord('goals',       "SUM(gps.goals)",               'S', 'DESC'),
-    plus_minus:  careerRecord('plus_minus',  "SUM(gps.plus_minus)",          'S', 'DESC'),
-    save_pct:    careerRecord('save_pct',    "CASE WHEN SUM(gps.shots_against)>0 THEN ROUND(CAST(SUM(gps.saves) AS REAL)/SUM(gps.shots_against),3) ELSE NULL END", 'G', 'DESC'),
-    gaa:         careerRecord('gaa',         "CASE WHEN SUM(gps.toi)>0 THEN ROUND(SUM(gps.goals_against)*3600.0/SUM(gps.toi),2) ELSE NULL END",                    'G', 'ASC'),
-    goalie_wins: careerRecord('goalie_wins', "SUM(gps.goalie_wins)",          'G', 'DESC'),
+    pts:         await careerRecord('points',      "SUM(gps.goals + gps.assists)", 'S', 'DESC'),
+    goals:       await careerRecord('goals',       "SUM(gps.goals)",               'S', 'DESC'),
+    plus_minus:  await careerRecord('plus_minus',  "SUM(gps.plus_minus)",          'S', 'DESC'),
+    save_pct:    await careerRecord('save_pct',    "CASE WHEN SUM(gps.shots_against)>0 THEN ROUND(CAST(SUM(gps.saves) AS REAL)/SUM(gps.shots_against),3) ELSE NULL END", 'G', 'DESC'),
+    gaa:         await careerRecord('gaa',         "CASE WHEN SUM(gps.toi)>0 THEN ROUND(SUM(gps.goals_against)*3600.0/SUM(gps.toi),2) ELSE NULL END",                    'G', 'ASC'),
+    goalie_wins: await careerRecord('goalie_wins', "SUM(gps.goalie_wins)",          'G', 'DESC'),
   };
 
   const single = {
-    pts:         singleSeasonRecord('points',      "SUM(gps.goals + gps.assists)", 'S', 'DESC'),
-    goals:       singleSeasonRecord('goals',       "SUM(gps.goals)",               'S', 'DESC'),
-    plus_minus:  singleSeasonRecord('plus_minus',  "SUM(gps.plus_minus)",          'S', 'DESC'),
-    save_pct:    singleSeasonRecord('save_pct',    "CASE WHEN SUM(gps.shots_against)>0 THEN ROUND(CAST(SUM(gps.saves) AS REAL)/SUM(gps.shots_against),3) ELSE NULL END", 'G', 'DESC'),
-    gaa:         singleSeasonRecord('gaa',         "CASE WHEN SUM(gps.toi)>0 THEN ROUND(SUM(gps.goals_against)*3600.0/SUM(gps.toi),2) ELSE NULL END",                    'G', 'ASC'),
-    goalie_wins: singleSeasonRecord('goalie_wins', "SUM(gps.goalie_wins)",          'G', 'DESC'),
+    pts:         await singleSeasonRecord('points',      "SUM(gps.goals + gps.assists)", 'S', 'DESC'),
+    goals:       await singleSeasonRecord('goals',       "SUM(gps.goals)",               'S', 'DESC'),
+    plus_minus:  await singleSeasonRecord('plus_minus',  "SUM(gps.plus_minus)",          'S', 'DESC'),
+    save_pct:    await singleSeasonRecord('save_pct',    "CASE WHEN SUM(gps.shots_against)>0 THEN ROUND(CAST(SUM(gps.saves) AS REAL)/SUM(gps.shots_against),3) ELSE NULL END", 'G', 'DESC'),
+    gaa:         await singleSeasonRecord('gaa',         "CASE WHEN SUM(gps.toi)>0 THEN ROUND(SUM(gps.goals_against)*3600.0/SUM(gps.toi),2) ELSE NULL END",                    'G', 'ASC'),
+    goalie_wins: await singleSeasonRecord('goalie_wins', "SUM(gps.goalie_wins)",          'G', 'DESC'),
   };
 
   res.json({ career, single });
@@ -933,7 +933,7 @@ app.get('/api/records', async (req, res) => {
   const goalieSeasonMinGP = minGPRow ? (parseInt(minGPRow.value, 10) || 16) : 16;
 
   // Returns array of all players tied for the top value (handles ties)
-  function leagueCareerRecord(agg, pos, orderDir) {
+  async function leagueCareerRecord(agg, pos, orderDir) {
     const where = pos === 'G' ? "gps.position = 'G'" : "gps.position != 'G'";
     return await db.prepare(`
       WITH agg_vals AS (
@@ -953,7 +953,7 @@ app.get('/api/records', async (req, res) => {
     `).all(...p1);
   }
 
-  function leagueSeasonRecord(agg, pos, orderDir, minGP) {
+  async function leagueSeasonRecord(agg, pos, orderDir, minGP) {
     const where = pos === 'G' ? "gps.position = 'G'" : "gps.position != 'G'";
     const having = minGP ? 'HAVING COUNT(DISTINCT gps.game_id) >= ?' : '';
     const params = minGP ? [...p1, minGP] : p1;
@@ -977,7 +977,7 @@ app.get('/api/records', async (req, res) => {
     `).all(...params);
   }
 
-  function leagueSingleGameRecord(col, pos, orderDir) {
+  async function leagueSingleGameRecord(col, pos, orderDir) {
     const where = pos === 'G' ? "gps.position = 'G'" : "gps.position != 'G'";
     return await db.prepare(`
       WITH game_vals AS (
@@ -1001,67 +1001,67 @@ app.get('/api/records', async (req, res) => {
 
   // All-time skater records (GP included)
   const career = {
-    gp:               leagueCareerRecord("COUNT(DISTINCT gps.game_id)", 'S', 'DESC'),
-    pts:              leagueCareerRecord("SUM(gps.goals+gps.assists)",  'S', 'DESC'),
-    goals:            leagueCareerRecord("SUM(gps.goals)",              'S', 'DESC'),
-    assists:          leagueCareerRecord("SUM(gps.assists)",            'S', 'DESC'),
-    plus_minus:       leagueCareerRecord("SUM(gps.plus_minus)",         'S', 'DESC'),
-    hits:             leagueCareerRecord("SUM(gps.hits)",               'S', 'DESC'),
-    shots:            leagueCareerRecord("SUM(gps.shots)",              'S', 'DESC'),
-    shot_attempts:    leagueCareerRecord("SUM(gps.shot_attempts)",      'S', 'DESC'),
-    blocked_shots:    leagueCareerRecord("SUM(gps.blocked_shots)",      'S', 'DESC'),
-    pim:              leagueCareerRecord("SUM(gps.pim)",                'S', 'DESC'),
-    pp_goals:         leagueCareerRecord("SUM(gps.pp_goals)",           'S', 'DESC'),
-    sh_goals:         leagueCareerRecord("SUM(gps.sh_goals)",           'S', 'DESC'),
-    gwg:              leagueCareerRecord("SUM(gps.gwg)",                'S', 'DESC'),
-    hat_tricks:       leagueCareerRecord("SUM(gps.hat_tricks)",         'S', 'DESC'),
-    faceoff_wins:     leagueCareerRecord("SUM(gps.faceoff_wins)",       'S', 'DESC'),
-    deflections:      leagueCareerRecord("SUM(gps.deflections)",        'S', 'DESC'),
-    interceptions:    leagueCareerRecord("SUM(gps.interceptions)",      'S', 'DESC'),
-    takeaways:        leagueCareerRecord("SUM(gps.takeaways)",          'S', 'DESC'),
-    giveaways:        leagueCareerRecord("SUM(gps.giveaways)",          'S', 'DESC'),
-    pass_completions: leagueCareerRecord("SUM(gps.pass_completions)",   'S', 'DESC'),
-    penalties_drawn:  leagueCareerRecord("SUM(gps.penalties_drawn)",    'S', 'DESC'),
+    gp:               await leagueCareerRecord("COUNT(DISTINCT gps.game_id)", 'S', 'DESC'),
+    pts:              await leagueCareerRecord("SUM(gps.goals+gps.assists)",  'S', 'DESC'),
+    goals:            await leagueCareerRecord("SUM(gps.goals)",              'S', 'DESC'),
+    assists:          await leagueCareerRecord("SUM(gps.assists)",            'S', 'DESC'),
+    plus_minus:       await leagueCareerRecord("SUM(gps.plus_minus)",         'S', 'DESC'),
+    hits:             await leagueCareerRecord("SUM(gps.hits)",               'S', 'DESC'),
+    shots:            await leagueCareerRecord("SUM(gps.shots)",              'S', 'DESC'),
+    shot_attempts:    await leagueCareerRecord("SUM(gps.shot_attempts)",      'S', 'DESC'),
+    blocked_shots:    await leagueCareerRecord("SUM(gps.blocked_shots)",      'S', 'DESC'),
+    pim:              await leagueCareerRecord("SUM(gps.pim)",                'S', 'DESC'),
+    pp_goals:         await leagueCareerRecord("SUM(gps.pp_goals)",           'S', 'DESC'),
+    sh_goals:         await leagueCareerRecord("SUM(gps.sh_goals)",           'S', 'DESC'),
+    gwg:              await leagueCareerRecord("SUM(gps.gwg)",                'S', 'DESC'),
+    hat_tricks:       await leagueCareerRecord("SUM(gps.hat_tricks)",         'S', 'DESC'),
+    faceoff_wins:     await leagueCareerRecord("SUM(gps.faceoff_wins)",       'S', 'DESC'),
+    deflections:      await leagueCareerRecord("SUM(gps.deflections)",        'S', 'DESC'),
+    interceptions:    await leagueCareerRecord("SUM(gps.interceptions)",      'S', 'DESC'),
+    takeaways:        await leagueCareerRecord("SUM(gps.takeaways)",          'S', 'DESC'),
+    giveaways:        await leagueCareerRecord("SUM(gps.giveaways)",          'S', 'DESC'),
+    pass_completions: await leagueCareerRecord("SUM(gps.pass_completions)",   'S', 'DESC'),
+    penalties_drawn:  await leagueCareerRecord("SUM(gps.penalties_drawn)",    'S', 'DESC'),
     // Goalie all-time (GP included)
-    goalie_gp:        leagueCareerRecord("COUNT(DISTINCT gps.game_id)", 'G', 'DESC'),
-    goalie_wins:      leagueCareerRecord("SUM(gps.goalie_wins)",        'G', 'DESC'),
-    saves:            leagueCareerRecord("SUM(gps.saves)",              'G', 'DESC'),
-    shutouts:         leagueCareerRecord("SUM(gps.shutouts)",           'G', 'DESC'),
-    psa:              leagueCareerRecord("SUM(gps.penalty_shot_attempts)", 'G', 'DESC'),
-    bksv:             leagueCareerRecord("SUM(gps.breakaway_saves)",    'G', 'DESC'),
-    goals_against:    leagueCareerRecord("SUM(gps.goals_against)",      'G', 'DESC'),
+    goalie_gp:        await leagueCareerRecord("COUNT(DISTINCT gps.game_id)", 'G', 'DESC'),
+    goalie_wins:      await leagueCareerRecord("SUM(gps.goalie_wins)",        'G', 'DESC'),
+    saves:            await leagueCareerRecord("SUM(gps.saves)",              'G', 'DESC'),
+    shutouts:         await leagueCareerRecord("SUM(gps.shutouts)",           'G', 'DESC'),
+    psa:              await leagueCareerRecord("SUM(gps.penalty_shot_attempts)", 'G', 'DESC'),
+    bksv:             await leagueCareerRecord("SUM(gps.breakaway_saves)",    'G', 'DESC'),
+    goals_against:    await leagueCareerRecord("SUM(gps.goals_against)",      'G', 'DESC'),
   };
 
   // Seasonal skater records (no GP)
   const seasonal = {
-    pts:              leagueSeasonRecord("SUM(gps.goals+gps.assists)",  'S', 'DESC'),
-    goals:            leagueSeasonRecord("SUM(gps.goals)",              'S', 'DESC'),
-    assists:          leagueSeasonRecord("SUM(gps.assists)",            'S', 'DESC'),
-    plus_minus:       leagueSeasonRecord("SUM(gps.plus_minus)",         'S', 'DESC'),
-    hits:             leagueSeasonRecord("SUM(gps.hits)",               'S', 'DESC'),
-    shots:            leagueSeasonRecord("SUM(gps.shots)",              'S', 'DESC'),
-    shot_attempts:    leagueSeasonRecord("SUM(gps.shot_attempts)",      'S', 'DESC'),
-    blocked_shots:    leagueSeasonRecord("SUM(gps.blocked_shots)",      'S', 'DESC'),
-    pim:              leagueSeasonRecord("SUM(gps.pim)",                'S', 'DESC'),
-    pp_goals:         leagueSeasonRecord("SUM(gps.pp_goals)",           'S', 'DESC'),
-    sh_goals:         leagueSeasonRecord("SUM(gps.sh_goals)",           'S', 'DESC'),
-    gwg:              leagueSeasonRecord("SUM(gps.gwg)",                'S', 'DESC'),
-    hat_tricks:       leagueSeasonRecord("SUM(gps.hat_tricks)",         'S', 'DESC'),
-    faceoff_wins:     leagueSeasonRecord("SUM(gps.faceoff_wins)",       'S', 'DESC'),
-    deflections:      leagueSeasonRecord("SUM(gps.deflections)",        'S', 'DESC'),
-    interceptions:    leagueSeasonRecord("SUM(gps.interceptions)",      'S', 'DESC'),
-    takeaways:        leagueSeasonRecord("SUM(gps.takeaways)",          'S', 'DESC'),
-    giveaways:        leagueSeasonRecord("SUM(gps.giveaways)",          'S', 'DESC'),
-    pass_completions: leagueSeasonRecord("SUM(gps.pass_completions)",   'S', 'DESC'),
-    penalties_drawn:  leagueSeasonRecord("SUM(gps.penalties_drawn)",    'S', 'DESC'),
+    pts:              await leagueSeasonRecord("SUM(gps.goals+gps.assists)",  'S', 'DESC'),
+    goals:            await leagueSeasonRecord("SUM(gps.goals)",              'S', 'DESC'),
+    assists:          await leagueSeasonRecord("SUM(gps.assists)",            'S', 'DESC'),
+    plus_minus:       await leagueSeasonRecord("SUM(gps.plus_minus)",         'S', 'DESC'),
+    hits:             await leagueSeasonRecord("SUM(gps.hits)",               'S', 'DESC'),
+    shots:            await leagueSeasonRecord("SUM(gps.shots)",              'S', 'DESC'),
+    shot_attempts:    await leagueSeasonRecord("SUM(gps.shot_attempts)",      'S', 'DESC'),
+    blocked_shots:    await leagueSeasonRecord("SUM(gps.blocked_shots)",      'S', 'DESC'),
+    pim:              await leagueSeasonRecord("SUM(gps.pim)",                'S', 'DESC'),
+    pp_goals:         await leagueSeasonRecord("SUM(gps.pp_goals)",           'S', 'DESC'),
+    sh_goals:         await leagueSeasonRecord("SUM(gps.sh_goals)",           'S', 'DESC'),
+    gwg:              await leagueSeasonRecord("SUM(gps.gwg)",                'S', 'DESC'),
+    hat_tricks:       await leagueSeasonRecord("SUM(gps.hat_tricks)",         'S', 'DESC'),
+    faceoff_wins:     await leagueSeasonRecord("SUM(gps.faceoff_wins)",       'S', 'DESC'),
+    deflections:      await leagueSeasonRecord("SUM(gps.deflections)",        'S', 'DESC'),
+    interceptions:    await leagueSeasonRecord("SUM(gps.interceptions)",      'S', 'DESC'),
+    takeaways:        await leagueSeasonRecord("SUM(gps.takeaways)",          'S', 'DESC'),
+    giveaways:        await leagueSeasonRecord("SUM(gps.giveaways)",          'S', 'DESC'),
+    pass_completions: await leagueSeasonRecord("SUM(gps.pass_completions)",   'S', 'DESC'),
+    penalties_drawn:  await leagueSeasonRecord("SUM(gps.penalties_drawn)",    'S', 'DESC'),
     // Goalie seasonal (no GP; Save% with min-GP filter)
-    goalie_wins:      leagueSeasonRecord("SUM(gps.goalie_wins)",        'G', 'DESC'),
-    saves:            leagueSeasonRecord("SUM(gps.saves)",              'G', 'DESC'),
-    shutouts:         leagueSeasonRecord("SUM(gps.shutouts)",           'G', 'DESC'),
-    psa:              leagueSeasonRecord("SUM(gps.penalty_shot_attempts)", 'G', 'DESC'),
-    bksv:             leagueSeasonRecord("SUM(gps.breakaway_saves)",    'G', 'DESC'),
-    goals_against:    leagueSeasonRecord("SUM(gps.goals_against)",      'G', 'DESC'),
-    save_pct:         leagueSeasonRecord(
+    goalie_wins:      await leagueSeasonRecord("SUM(gps.goalie_wins)",        'G', 'DESC'),
+    saves:            await leagueSeasonRecord("SUM(gps.saves)",              'G', 'DESC'),
+    shutouts:         await leagueSeasonRecord("SUM(gps.shutouts)",           'G', 'DESC'),
+    psa:              await leagueSeasonRecord("SUM(gps.penalty_shot_attempts)", 'G', 'DESC'),
+    bksv:             await leagueSeasonRecord("SUM(gps.breakaway_saves)",    'G', 'DESC'),
+    goals_against:    await leagueSeasonRecord("SUM(gps.goals_against)",      'G', 'DESC'),
+    save_pct:         await leagueSeasonRecord(
       "CASE WHEN SUM(gps.shots_against)>0 THEN ROUND(CAST(SUM(gps.saves) AS REAL)/SUM(gps.shots_against),3) ELSE NULL END",
       'G', 'DESC', goalieSeasonMinGP
     ),
@@ -1070,31 +1070,31 @@ app.get('/api/records', async (req, res) => {
   // Single-game skater records (no GP)
   const singleGame = {
     pts:              null, // computed below
-    goals:            leagueSingleGameRecord('goals',              'S', 'DESC'),
-    assists:          leagueSingleGameRecord('assists',            'S', 'DESC'),
-    plus_minus:       leagueSingleGameRecord('plus_minus',         'S', 'DESC'),
-    hits:             leagueSingleGameRecord('hits',               'S', 'DESC'),
-    shots:            leagueSingleGameRecord('shots',              'S', 'DESC'),
-    shot_attempts:    leagueSingleGameRecord('shot_attempts',      'S', 'DESC'),
-    blocked_shots:    leagueSingleGameRecord('blocked_shots',      'S', 'DESC'),
-    pim:              leagueSingleGameRecord('pim',                'S', 'DESC'),
-    pp_goals:         leagueSingleGameRecord('pp_goals',           'S', 'DESC'),
-    sh_goals:         leagueSingleGameRecord('sh_goals',           'S', 'DESC'),
-    gwg:              leagueSingleGameRecord('gwg',                'S', 'DESC'),
-    hat_tricks:       leagueSingleGameRecord('hat_tricks',         'S', 'DESC'),
-    faceoff_wins:     leagueSingleGameRecord('faceoff_wins',       'S', 'DESC'),
-    deflections:      leagueSingleGameRecord('deflections',        'S', 'DESC'),
-    interceptions:    leagueSingleGameRecord('interceptions',      'S', 'DESC'),
-    takeaways:        leagueSingleGameRecord('takeaways',          'S', 'DESC'),
-    giveaways:        leagueSingleGameRecord('giveaways',          'S', 'DESC'),
-    pass_completions: leagueSingleGameRecord('pass_completions',   'S', 'DESC'),
-    penalties_drawn:  leagueSingleGameRecord('penalties_drawn',    'S', 'DESC'),
+    goals:            await leagueSingleGameRecord('goals',              'S', 'DESC'),
+    assists:          await leagueSingleGameRecord('assists',            'S', 'DESC'),
+    plus_minus:       await leagueSingleGameRecord('plus_minus',         'S', 'DESC'),
+    hits:             await leagueSingleGameRecord('hits',               'S', 'DESC'),
+    shots:            await leagueSingleGameRecord('shots',              'S', 'DESC'),
+    shot_attempts:    await leagueSingleGameRecord('shot_attempts',      'S', 'DESC'),
+    blocked_shots:    await leagueSingleGameRecord('blocked_shots',      'S', 'DESC'),
+    pim:              await leagueSingleGameRecord('pim',                'S', 'DESC'),
+    pp_goals:         await leagueSingleGameRecord('pp_goals',           'S', 'DESC'),
+    sh_goals:         await leagueSingleGameRecord('sh_goals',           'S', 'DESC'),
+    gwg:              await leagueSingleGameRecord('gwg',                'S', 'DESC'),
+    hat_tricks:       await leagueSingleGameRecord('hat_tricks',         'S', 'DESC'),
+    faceoff_wins:     await leagueSingleGameRecord('faceoff_wins',       'S', 'DESC'),
+    deflections:      await leagueSingleGameRecord('deflections',        'S', 'DESC'),
+    interceptions:    await leagueSingleGameRecord('interceptions',      'S', 'DESC'),
+    takeaways:        await leagueSingleGameRecord('takeaways',          'S', 'DESC'),
+    giveaways:        await leagueSingleGameRecord('giveaways',          'S', 'DESC'),
+    pass_completions: await leagueSingleGameRecord('pass_completions',   'S', 'DESC'),
+    penalties_drawn:  await leagueSingleGameRecord('penalties_drawn',    'S', 'DESC'),
     // Goalie single game
-    saves:            leagueSingleGameRecord('saves',              'G', 'DESC'),
-    shutouts:         leagueSingleGameRecord('shutouts',           'G', 'DESC'),
-    psa:              leagueSingleGameRecord('penalty_shot_attempts', 'G', 'DESC'),
-    bksv:             leagueSingleGameRecord('breakaway_saves',    'G', 'DESC'),
-    goals_against:    leagueSingleGameRecord('goals_against',      'G', 'DESC'),
+    saves:            await leagueSingleGameRecord('saves',              'G', 'DESC'),
+    shutouts:         await leagueSingleGameRecord('shutouts',           'G', 'DESC'),
+    psa:              await leagueSingleGameRecord('penalty_shot_attempts', 'G', 'DESC'),
+    bksv:             await leagueSingleGameRecord('breakaway_saves',    'G', 'DESC'),
+    goals_against:    await leagueSingleGameRecord('goals_against',      'G', 'DESC'),
   };
 
   // Single-game pts (goals+assists in one game) – requires custom query
@@ -1155,7 +1155,7 @@ app.get('/api/players/records/:name', async (req, res) => {
   const goalieSeasonMinGP = minGPRow ? (parseInt(minGPRow.value, 10) || 16) : 16;
 
   // Helper: check if player holds a career (all-time) league record (handles ties)
-  function checkLeagueRecord(label, agg, pos, orderDir, leagueType, category) {
+  async function checkLeagueRecord(label, agg, pos, orderDir, leagueType, category) {
     const where = pos === 'G' ? "gps.position = 'G'" : "gps.position != 'G'";
     const ltFilter = leagueType ? "AND COALESCE(s.league_type,'') = ?" : '';
     const p = leagueType ? [leagueType] : [];
@@ -1179,7 +1179,7 @@ app.get('/api/players/records/:name', async (req, res) => {
     }
   }
 
-  function checkSeasonRecord(label, agg, pos, orderDir, leagueType, category, minGP) {
+  async function checkSeasonRecord(label, agg, pos, orderDir, leagueType, category, minGP) {
     const where = pos === 'G' ? "gps.position = 'G'" : "gps.position != 'G'";
     const ltFilter = leagueType ? "AND COALESCE(s.league_type,'') = ?" : '';
     const p = leagueType ? [leagueType] : [];
@@ -1206,7 +1206,7 @@ app.get('/api/players/records/:name', async (req, res) => {
     }
   }
 
-  function checkSingleGameRecord(label, col, pos, orderDir, leagueType, category) {
+  async function checkSingleGameRecord(label, col, pos, orderDir, leagueType, category) {
     const where = pos === 'G' ? "gps.position = 'G'" : "gps.position != 'G'";
     const ltFilter = leagueType ? "AND COALESCE(s.league_type,'') = ?" : '';
     const p = leagueType ? [leagueType] : [];
@@ -1233,7 +1233,7 @@ app.get('/api/players/records/:name', async (req, res) => {
     }
   }
 
-  function checkTeamRecord(label, agg, pos, orderDir, teamId, teamName, mode) {
+  async function checkTeamRecord(label, agg, pos, orderDir, teamId, teamName, mode) {
     const where = pos === 'G' ? "gps.position = 'G'" : "gps.position != 'G'";
     const row = await db.prepare(`
       SELECT gps.player_name AS name, ${agg} AS value, COUNT(DISTINCT gps.game_id) AS gp
@@ -1250,96 +1250,96 @@ app.get('/api/players/records/:name', async (req, res) => {
   // League records per league_type
   for (const lt of ['threes', 'sixes']) {
     // All-time skater records
-    checkLeagueRecord('Career GP',              "COUNT(DISTINCT gps.game_id)",     'S', 'DESC', lt, 'alltime');
-    checkLeagueRecord('Career Pts',             "SUM(gps.goals+gps.assists)",      'S', 'DESC', lt, 'alltime');
-    checkLeagueRecord('Career Goals',           "SUM(gps.goals)",                  'S', 'DESC', lt, 'alltime');
-    checkLeagueRecord('Career Assists',         "SUM(gps.assists)",                'S', 'DESC', lt, 'alltime');
-    checkLeagueRecord('Career +/-',             "SUM(gps.plus_minus)",             'S', 'DESC', lt, 'alltime');
-    checkLeagueRecord('Career Hits',            "SUM(gps.hits)",                   'S', 'DESC', lt, 'alltime');
-    checkLeagueRecord('Career Shots',           "SUM(gps.shots)",                  'S', 'DESC', lt, 'alltime');
-    checkLeagueRecord('Career Shot Attempts',   "SUM(gps.shot_attempts)",          'S', 'DESC', lt, 'alltime');
-    checkLeagueRecord('Career Blocked Shots',   "SUM(gps.blocked_shots)",          'S', 'DESC', lt, 'alltime');
-    checkLeagueRecord('Career PIM',             "SUM(gps.pim)",                    'S', 'DESC', lt, 'alltime');
+    await checkLeagueRecord('Career GP',              "COUNT(DISTINCT gps.game_id)",     'S', 'DESC', lt, 'alltime');
+    await checkLeagueRecord('Career Pts',             "SUM(gps.goals+gps.assists)",      'S', 'DESC', lt, 'alltime');
+    await checkLeagueRecord('Career Goals',           "SUM(gps.goals)",                  'S', 'DESC', lt, 'alltime');
+    await checkLeagueRecord('Career Assists',         "SUM(gps.assists)",                'S', 'DESC', lt, 'alltime');
+    await checkLeagueRecord('Career +/-',             "SUM(gps.plus_minus)",             'S', 'DESC', lt, 'alltime');
+    await checkLeagueRecord('Career Hits',            "SUM(gps.hits)",                   'S', 'DESC', lt, 'alltime');
+    await checkLeagueRecord('Career Shots',           "SUM(gps.shots)",                  'S', 'DESC', lt, 'alltime');
+    await checkLeagueRecord('Career Shot Attempts',   "SUM(gps.shot_attempts)",          'S', 'DESC', lt, 'alltime');
+    await checkLeagueRecord('Career Blocked Shots',   "SUM(gps.blocked_shots)",          'S', 'DESC', lt, 'alltime');
+    await checkLeagueRecord('Career PIM',             "SUM(gps.pim)",                    'S', 'DESC', lt, 'alltime');
     if (lt !== 'threes') {
-      checkLeagueRecord('Career PP Goals',        "SUM(gps.pp_goals)",               'S', 'DESC', lt, 'alltime');
-      checkLeagueRecord('Career SH Goals',        "SUM(gps.sh_goals)",               'S', 'DESC', lt, 'alltime');
+      await checkLeagueRecord('Career PP Goals',        "SUM(gps.pp_goals)",               'S', 'DESC', lt, 'alltime');
+      await checkLeagueRecord('Career SH Goals',        "SUM(gps.sh_goals)",               'S', 'DESC', lt, 'alltime');
     }
-    checkLeagueRecord('Career GWG',             "SUM(gps.gwg)",                    'S', 'DESC', lt, 'alltime');
-    checkLeagueRecord('Career Hat Tricks',      "SUM(gps.hat_tricks)",             'S', 'DESC', lt, 'alltime');
-    checkLeagueRecord('Career Faceoff Wins',    "SUM(gps.faceoff_wins)",           'S', 'DESC', lt, 'alltime');
-    checkLeagueRecord('Career Deflections',     "SUM(gps.deflections)",            'S', 'DESC', lt, 'alltime');
-    checkLeagueRecord('Career Interceptions',   "SUM(gps.interceptions)",          'S', 'DESC', lt, 'alltime');
-    checkLeagueRecord('Career Takeaways',       "SUM(gps.takeaways)",              'S', 'DESC', lt, 'alltime');
-    checkLeagueRecord('Career Giveaways',       "SUM(gps.giveaways)",              'S', 'DESC', lt, 'alltime');
-    checkLeagueRecord('Career Pass Completions',"SUM(gps.pass_completions)",       'S', 'DESC', lt, 'alltime');
-    checkLeagueRecord('Career Penalties Drawn', "SUM(gps.penalties_drawn)",        'S', 'DESC', lt, 'alltime');
+    await checkLeagueRecord('Career GWG',             "SUM(gps.gwg)",                    'S', 'DESC', lt, 'alltime');
+    await checkLeagueRecord('Career Hat Tricks',      "SUM(gps.hat_tricks)",             'S', 'DESC', lt, 'alltime');
+    await checkLeagueRecord('Career Faceoff Wins',    "SUM(gps.faceoff_wins)",           'S', 'DESC', lt, 'alltime');
+    await checkLeagueRecord('Career Deflections',     "SUM(gps.deflections)",            'S', 'DESC', lt, 'alltime');
+    await checkLeagueRecord('Career Interceptions',   "SUM(gps.interceptions)",          'S', 'DESC', lt, 'alltime');
+    await checkLeagueRecord('Career Takeaways',       "SUM(gps.takeaways)",              'S', 'DESC', lt, 'alltime');
+    await checkLeagueRecord('Career Giveaways',       "SUM(gps.giveaways)",              'S', 'DESC', lt, 'alltime');
+    await checkLeagueRecord('Career Pass Completions',"SUM(gps.pass_completions)",       'S', 'DESC', lt, 'alltime');
+    await checkLeagueRecord('Career Penalties Drawn', "SUM(gps.penalties_drawn)",        'S', 'DESC', lt, 'alltime');
     // All-time goalie records
-    checkLeagueRecord('Career GP',              "COUNT(DISTINCT gps.game_id)",     'G', 'DESC', lt, 'alltime');
-    checkLeagueRecord('Career Wins',            "SUM(gps.goalie_wins)",            'G', 'DESC', lt, 'alltime');
-    checkLeagueRecord('Career Saves',           "SUM(gps.saves)",                  'G', 'DESC', lt, 'alltime');
-    checkLeagueRecord('Career Shutouts',        "SUM(gps.shutouts)",               'G', 'DESC', lt, 'alltime');
-    checkLeagueRecord('Career PSA',             "SUM(gps.penalty_shot_attempts)",  'G', 'DESC', lt, 'alltime');
-    checkLeagueRecord('Career BKSV',            "SUM(gps.breakaway_saves)",        'G', 'DESC', lt, 'alltime');
-    checkLeagueRecord('Career Goals Against',   "SUM(gps.goals_against)",          'G', 'DESC', lt, 'alltime');
+    await checkLeagueRecord('Career GP',              "COUNT(DISTINCT gps.game_id)",     'G', 'DESC', lt, 'alltime');
+    await checkLeagueRecord('Career Wins',            "SUM(gps.goalie_wins)",            'G', 'DESC', lt, 'alltime');
+    await checkLeagueRecord('Career Saves',           "SUM(gps.saves)",                  'G', 'DESC', lt, 'alltime');
+    await checkLeagueRecord('Career Shutouts',        "SUM(gps.shutouts)",               'G', 'DESC', lt, 'alltime');
+    await checkLeagueRecord('Career PSA',             "SUM(gps.penalty_shot_attempts)",  'G', 'DESC', lt, 'alltime');
+    await checkLeagueRecord('Career BKSV',            "SUM(gps.breakaway_saves)",        'G', 'DESC', lt, 'alltime');
+    await checkLeagueRecord('Career Goals Against',   "SUM(gps.goals_against)",          'G', 'DESC', lt, 'alltime');
     // Seasonal skater records
-    checkSeasonRecord('Season Pts',             "SUM(gps.goals+gps.assists)",      'S', 'DESC', lt, 'seasonal');
-    checkSeasonRecord('Season Goals',           "SUM(gps.goals)",                  'S', 'DESC', lt, 'seasonal');
-    checkSeasonRecord('Season Assists',         "SUM(gps.assists)",                'S', 'DESC', lt, 'seasonal');
-    checkSeasonRecord('Season +/-',             "SUM(gps.plus_minus)",             'S', 'DESC', lt, 'seasonal');
-    checkSeasonRecord('Season Hits',            "SUM(gps.hits)",                   'S', 'DESC', lt, 'seasonal');
-    checkSeasonRecord('Season Shots',           "SUM(gps.shots)",                  'S', 'DESC', lt, 'seasonal');
-    checkSeasonRecord('Season Shot Attempts',   "SUM(gps.shot_attempts)",          'S', 'DESC', lt, 'seasonal');
-    checkSeasonRecord('Season Blocked Shots',   "SUM(gps.blocked_shots)",          'S', 'DESC', lt, 'seasonal');
-    checkSeasonRecord('Season PIM',             "SUM(gps.pim)",                    'S', 'DESC', lt, 'seasonal');
+    await checkSeasonRecord('Season Pts',             "SUM(gps.goals+gps.assists)",      'S', 'DESC', lt, 'seasonal');
+    await checkSeasonRecord('Season Goals',           "SUM(gps.goals)",                  'S', 'DESC', lt, 'seasonal');
+    await checkSeasonRecord('Season Assists',         "SUM(gps.assists)",                'S', 'DESC', lt, 'seasonal');
+    await checkSeasonRecord('Season +/-',             "SUM(gps.plus_minus)",             'S', 'DESC', lt, 'seasonal');
+    await checkSeasonRecord('Season Hits',            "SUM(gps.hits)",                   'S', 'DESC', lt, 'seasonal');
+    await checkSeasonRecord('Season Shots',           "SUM(gps.shots)",                  'S', 'DESC', lt, 'seasonal');
+    await checkSeasonRecord('Season Shot Attempts',   "SUM(gps.shot_attempts)",          'S', 'DESC', lt, 'seasonal');
+    await checkSeasonRecord('Season Blocked Shots',   "SUM(gps.blocked_shots)",          'S', 'DESC', lt, 'seasonal');
+    await checkSeasonRecord('Season PIM',             "SUM(gps.pim)",                    'S', 'DESC', lt, 'seasonal');
     if (lt !== 'threes') {
-      checkSeasonRecord('Season PP Goals',        "SUM(gps.pp_goals)",               'S', 'DESC', lt, 'seasonal');
-      checkSeasonRecord('Season SH Goals',        "SUM(gps.sh_goals)",               'S', 'DESC', lt, 'seasonal');
+      await checkSeasonRecord('Season PP Goals',        "SUM(gps.pp_goals)",               'S', 'DESC', lt, 'seasonal');
+      await checkSeasonRecord('Season SH Goals',        "SUM(gps.sh_goals)",               'S', 'DESC', lt, 'seasonal');
     }
-    checkSeasonRecord('Season GWG',             "SUM(gps.gwg)",                    'S', 'DESC', lt, 'seasonal');
-    checkSeasonRecord('Season Hat Tricks',      "SUM(gps.hat_tricks)",             'S', 'DESC', lt, 'seasonal');
-    checkSeasonRecord('Season Faceoff Wins',    "SUM(gps.faceoff_wins)",           'S', 'DESC', lt, 'seasonal');
-    checkSeasonRecord('Season Deflections',     "SUM(gps.deflections)",            'S', 'DESC', lt, 'seasonal');
-    checkSeasonRecord('Season Interceptions',   "SUM(gps.interceptions)",          'S', 'DESC', lt, 'seasonal');
-    checkSeasonRecord('Season Takeaways',       "SUM(gps.takeaways)",              'S', 'DESC', lt, 'seasonal');
-    checkSeasonRecord('Season Giveaways',       "SUM(gps.giveaways)",              'S', 'DESC', lt, 'seasonal');
-    checkSeasonRecord('Season Pass Completions',"SUM(gps.pass_completions)",       'S', 'DESC', lt, 'seasonal');
-    checkSeasonRecord('Season Penalties Drawn', "SUM(gps.penalties_drawn)",        'S', 'DESC', lt, 'seasonal');
+    await checkSeasonRecord('Season GWG',             "SUM(gps.gwg)",                    'S', 'DESC', lt, 'seasonal');
+    await checkSeasonRecord('Season Hat Tricks',      "SUM(gps.hat_tricks)",             'S', 'DESC', lt, 'seasonal');
+    await checkSeasonRecord('Season Faceoff Wins',    "SUM(gps.faceoff_wins)",           'S', 'DESC', lt, 'seasonal');
+    await checkSeasonRecord('Season Deflections',     "SUM(gps.deflections)",            'S', 'DESC', lt, 'seasonal');
+    await checkSeasonRecord('Season Interceptions',   "SUM(gps.interceptions)",          'S', 'DESC', lt, 'seasonal');
+    await checkSeasonRecord('Season Takeaways',       "SUM(gps.takeaways)",              'S', 'DESC', lt, 'seasonal');
+    await checkSeasonRecord('Season Giveaways',       "SUM(gps.giveaways)",              'S', 'DESC', lt, 'seasonal');
+    await checkSeasonRecord('Season Pass Completions',"SUM(gps.pass_completions)",       'S', 'DESC', lt, 'seasonal');
+    await checkSeasonRecord('Season Penalties Drawn', "SUM(gps.penalties_drawn)",        'S', 'DESC', lt, 'seasonal');
     // Seasonal goalie records
-    checkSeasonRecord('Season Wins',            "SUM(gps.goalie_wins)",            'G', 'DESC', lt, 'seasonal');
-    checkSeasonRecord('Season Saves',           "SUM(gps.saves)",                  'G', 'DESC', lt, 'seasonal');
-    checkSeasonRecord('Season Shutouts',        "SUM(gps.shutouts)",               'G', 'DESC', lt, 'seasonal');
-    checkSeasonRecord('Season PSA',             "SUM(gps.penalty_shot_attempts)",  'G', 'DESC', lt, 'seasonal');
-    checkSeasonRecord('Season BKSV',            "SUM(gps.breakaway_saves)",        'G', 'DESC', lt, 'seasonal');
-    checkSeasonRecord('Season Goals Against',   "SUM(gps.goals_against)",          'G', 'DESC', lt, 'seasonal');
-    checkSeasonRecord('Season Save%',           "CASE WHEN SUM(gps.shots_against)>0 THEN ROUND(CAST(SUM(gps.saves) AS REAL)/SUM(gps.shots_against),3) ELSE NULL END", 'G', 'DESC', lt, 'seasonal', goalieSeasonMinGP);
+    await checkSeasonRecord('Season Wins',            "SUM(gps.goalie_wins)",            'G', 'DESC', lt, 'seasonal');
+    await checkSeasonRecord('Season Saves',           "SUM(gps.saves)",                  'G', 'DESC', lt, 'seasonal');
+    await checkSeasonRecord('Season Shutouts',        "SUM(gps.shutouts)",               'G', 'DESC', lt, 'seasonal');
+    await checkSeasonRecord('Season PSA',             "SUM(gps.penalty_shot_attempts)",  'G', 'DESC', lt, 'seasonal');
+    await checkSeasonRecord('Season BKSV',            "SUM(gps.breakaway_saves)",        'G', 'DESC', lt, 'seasonal');
+    await checkSeasonRecord('Season Goals Against',   "SUM(gps.goals_against)",          'G', 'DESC', lt, 'seasonal');
+    await checkSeasonRecord('Season Save%',           "CASE WHEN SUM(gps.shots_against)>0 THEN ROUND(CAST(SUM(gps.saves) AS REAL)/SUM(gps.shots_against),3) ELSE NULL END", 'G', 'DESC', lt, 'seasonal', goalieSeasonMinGP);
     // Single-game skater records
-    checkSingleGameRecord('Single Game Goals',            'goals',              'S', 'DESC', lt, 'singlegame');
-    checkSingleGameRecord('Single Game Assists',          'assists',            'S', 'DESC', lt, 'singlegame');
-    checkSingleGameRecord('Single Game +/-',              'plus_minus',         'S', 'DESC', lt, 'singlegame');
-    checkSingleGameRecord('Single Game Hits',             'hits',               'S', 'DESC', lt, 'singlegame');
-    checkSingleGameRecord('Single Game Shots',            'shots',              'S', 'DESC', lt, 'singlegame');
-    checkSingleGameRecord('Single Game Shot Attempts',    'shot_attempts',      'S', 'DESC', lt, 'singlegame');
-    checkSingleGameRecord('Single Game Blocked Shots',    'blocked_shots',      'S', 'DESC', lt, 'singlegame');
-    checkSingleGameRecord('Single Game PIM',              'pim',                'S', 'DESC', lt, 'singlegame');
+    await checkSingleGameRecord('Single Game Goals',            'goals',              'S', 'DESC', lt, 'singlegame');
+    await checkSingleGameRecord('Single Game Assists',          'assists',            'S', 'DESC', lt, 'singlegame');
+    await checkSingleGameRecord('Single Game +/-',              'plus_minus',         'S', 'DESC', lt, 'singlegame');
+    await checkSingleGameRecord('Single Game Hits',             'hits',               'S', 'DESC', lt, 'singlegame');
+    await checkSingleGameRecord('Single Game Shots',            'shots',              'S', 'DESC', lt, 'singlegame');
+    await checkSingleGameRecord('Single Game Shot Attempts',    'shot_attempts',      'S', 'DESC', lt, 'singlegame');
+    await checkSingleGameRecord('Single Game Blocked Shots',    'blocked_shots',      'S', 'DESC', lt, 'singlegame');
+    await checkSingleGameRecord('Single Game PIM',              'pim',                'S', 'DESC', lt, 'singlegame');
     if (lt !== 'threes') {
-      checkSingleGameRecord('Single Game PP Goals',         'pp_goals',           'S', 'DESC', lt, 'singlegame');
-      checkSingleGameRecord('Single Game SH Goals',         'sh_goals',           'S', 'DESC', lt, 'singlegame');
+      await checkSingleGameRecord('Single Game PP Goals',         'pp_goals',           'S', 'DESC', lt, 'singlegame');
+      await checkSingleGameRecord('Single Game SH Goals',         'sh_goals',           'S', 'DESC', lt, 'singlegame');
     }
-    checkSingleGameRecord('Single Game GWG',              'gwg',                'S', 'DESC', lt, 'singlegame');
-    checkSingleGameRecord('Single Game Hat Tricks',       'hat_tricks',         'S', 'DESC', lt, 'singlegame');
-    checkSingleGameRecord('Single Game Faceoff Wins',     'faceoff_wins',       'S', 'DESC', lt, 'singlegame');
-    checkSingleGameRecord('Single Game Deflections',      'deflections',        'S', 'DESC', lt, 'singlegame');
-    checkSingleGameRecord('Single Game Interceptions',    'interceptions',      'S', 'DESC', lt, 'singlegame');
-    checkSingleGameRecord('Single Game Takeaways',        'takeaways',          'S', 'DESC', lt, 'singlegame');
-    checkSingleGameRecord('Single Game Giveaways',        'giveaways',          'S', 'DESC', lt, 'singlegame');
-    checkSingleGameRecord('Single Game Pass Completions', 'pass_completions',   'S', 'DESC', lt, 'singlegame');
-    checkSingleGameRecord('Single Game Penalties Drawn',  'penalties_drawn',    'S', 'DESC', lt, 'singlegame');
+    await checkSingleGameRecord('Single Game GWG',              'gwg',                'S', 'DESC', lt, 'singlegame');
+    await checkSingleGameRecord('Single Game Hat Tricks',       'hat_tricks',         'S', 'DESC', lt, 'singlegame');
+    await checkSingleGameRecord('Single Game Faceoff Wins',     'faceoff_wins',       'S', 'DESC', lt, 'singlegame');
+    await checkSingleGameRecord('Single Game Deflections',      'deflections',        'S', 'DESC', lt, 'singlegame');
+    await checkSingleGameRecord('Single Game Interceptions',    'interceptions',      'S', 'DESC', lt, 'singlegame');
+    await checkSingleGameRecord('Single Game Takeaways',        'takeaways',          'S', 'DESC', lt, 'singlegame');
+    await checkSingleGameRecord('Single Game Giveaways',        'giveaways',          'S', 'DESC', lt, 'singlegame');
+    await checkSingleGameRecord('Single Game Pass Completions', 'pass_completions',   'S', 'DESC', lt, 'singlegame');
+    await checkSingleGameRecord('Single Game Penalties Drawn',  'penalties_drawn',    'S', 'DESC', lt, 'singlegame');
     // Single-game goalie records
-    checkSingleGameRecord('Single Game Saves',        'saves',                  'G', 'DESC', lt, 'singlegame');
-    checkSingleGameRecord('Single Game Shutouts',     'shutouts',               'G', 'DESC', lt, 'singlegame');
-    checkSingleGameRecord('Single Game PSA',          'penalty_shot_attempts',  'G', 'DESC', lt, 'singlegame');
-    checkSingleGameRecord('Single Game BKSV',         'breakaway_saves',        'G', 'DESC', lt, 'singlegame');
-    checkSingleGameRecord('Single Game Goals Against','goals_against',           'G', 'DESC', lt, 'singlegame');
+    await checkSingleGameRecord('Single Game Saves',        'saves',                  'G', 'DESC', lt, 'singlegame');
+    await checkSingleGameRecord('Single Game Shutouts',     'shutouts',               'G', 'DESC', lt, 'singlegame');
+    await checkSingleGameRecord('Single Game PSA',          'penalty_shot_attempts',  'G', 'DESC', lt, 'singlegame');
+    await checkSingleGameRecord('Single Game BKSV',         'breakaway_saves',        'G', 'DESC', lt, 'singlegame');
+    await checkSingleGameRecord('Single Game Goals Against','goals_against',           'G', 'DESC', lt, 'singlegame');
   }
 
   // Also check single-game pts (goals+assists) which requires a computed expression
@@ -1374,21 +1374,21 @@ app.get('/api/players/records/:name', async (req, res) => {
     WHERE p.name = ? AND p.is_rostered = 1 LIMIT 1
   `).get(name);
   if (teamRow) {
-    checkTeamRecord('Career GP',              "COUNT(DISTINCT gps.game_id)",     'S', 'DESC', teamRow.id, teamRow.name, 'team-career');
-    checkTeamRecord('Career Pts',             "SUM(gps.goals+gps.assists)",      'S', 'DESC', teamRow.id, teamRow.name, 'team-career');
-    checkTeamRecord('Career Goals',           "SUM(gps.goals)",                  'S', 'DESC', teamRow.id, teamRow.name, 'team-career');
-    checkTeamRecord('Career Assists',         "SUM(gps.assists)",                'S', 'DESC', teamRow.id, teamRow.name, 'team-career');
-    checkTeamRecord('Career +/-',             "SUM(gps.plus_minus)",             'S', 'DESC', teamRow.id, teamRow.name, 'team-career');
-    checkTeamRecord('Career Hits',            "SUM(gps.hits)",                   'S', 'DESC', teamRow.id, teamRow.name, 'team-career');
-    checkTeamRecord('Career Shots',           "SUM(gps.shots)",                  'S', 'DESC', teamRow.id, teamRow.name, 'team-career');
-    checkTeamRecord('Career Blocked Shots',   "SUM(gps.blocked_shots)",          'S', 'DESC', teamRow.id, teamRow.name, 'team-career');
-    checkTeamRecord('Career PIM',             "SUM(gps.pim)",                    'S', 'DESC', teamRow.id, teamRow.name, 'team-career');
-    checkTeamRecord('Career PP Goals',        "SUM(gps.pp_goals)",               'S', 'DESC', teamRow.id, teamRow.name, 'team-career');
-    checkTeamRecord('Career GWG',             "SUM(gps.gwg)",                    'S', 'DESC', teamRow.id, teamRow.name, 'team-career');
-    checkTeamRecord('Career Hat Tricks',      "SUM(gps.hat_tricks)",             'S', 'DESC', teamRow.id, teamRow.name, 'team-career');
-    checkTeamRecord('Career Wins',            "SUM(gps.goalie_wins)",            'G', 'DESC', teamRow.id, teamRow.name, 'team-career');
-    checkTeamRecord('Career Saves',           "SUM(gps.saves)",                  'G', 'DESC', teamRow.id, teamRow.name, 'team-career');
-    checkTeamRecord('Career Shutouts',        "SUM(gps.shutouts)",               'G', 'DESC', teamRow.id, teamRow.name, 'team-career');
+    await checkTeamRecord('Career GP',              "COUNT(DISTINCT gps.game_id)",     'S', 'DESC', teamRow.id, teamRow.name, 'team-career');
+    await checkTeamRecord('Career Pts',             "SUM(gps.goals+gps.assists)",      'S', 'DESC', teamRow.id, teamRow.name, 'team-career');
+    await checkTeamRecord('Career Goals',           "SUM(gps.goals)",                  'S', 'DESC', teamRow.id, teamRow.name, 'team-career');
+    await checkTeamRecord('Career Assists',         "SUM(gps.assists)",                'S', 'DESC', teamRow.id, teamRow.name, 'team-career');
+    await checkTeamRecord('Career +/-',             "SUM(gps.plus_minus)",             'S', 'DESC', teamRow.id, teamRow.name, 'team-career');
+    await checkTeamRecord('Career Hits',            "SUM(gps.hits)",                   'S', 'DESC', teamRow.id, teamRow.name, 'team-career');
+    await checkTeamRecord('Career Shots',           "SUM(gps.shots)",                  'S', 'DESC', teamRow.id, teamRow.name, 'team-career');
+    await checkTeamRecord('Career Blocked Shots',   "SUM(gps.blocked_shots)",          'S', 'DESC', teamRow.id, teamRow.name, 'team-career');
+    await checkTeamRecord('Career PIM',             "SUM(gps.pim)",                    'S', 'DESC', teamRow.id, teamRow.name, 'team-career');
+    await checkTeamRecord('Career PP Goals',        "SUM(gps.pp_goals)",               'S', 'DESC', teamRow.id, teamRow.name, 'team-career');
+    await checkTeamRecord('Career GWG',             "SUM(gps.gwg)",                    'S', 'DESC', teamRow.id, teamRow.name, 'team-career');
+    await checkTeamRecord('Career Hat Tricks',      "SUM(gps.hat_tricks)",             'S', 'DESC', teamRow.id, teamRow.name, 'team-career');
+    await checkTeamRecord('Career Wins',            "SUM(gps.goalie_wins)",            'G', 'DESC', teamRow.id, teamRow.name, 'team-career');
+    await checkTeamRecord('Career Saves',           "SUM(gps.saves)",                  'G', 'DESC', teamRow.id, teamRow.name, 'team-career');
+    await checkTeamRecord('Career Shutouts',        "SUM(gps.shutouts)",               'G', 'DESC', teamRow.id, teamRow.name, 'team-career');
   }
 
   res.json({ holdings });
@@ -1506,7 +1506,7 @@ app.get('/api/players/profile/:name', async (req, res) => {
   `).all(name);
 
   // Merge historical rows for seasons not already covered by game stats
-  function mergeWithHistorical(gameStats, histFilter) {
+  async function mergeWithHistorical(gameStats, histFilter) {
     const covered = new Set(gameStats.map(r => r.season_id));
     const merged = [
       ...gameStats.map(r => ({ ...r, is_historical: 0 })),
@@ -1516,8 +1516,8 @@ app.get('/api/players/profile/:name', async (req, res) => {
     return merged;
   }
 
-  const goalieStats  = mergeWithHistorical(rawGoalieStats,  r => r.position === 'G');
-  const skaterStats  = mergeWithHistorical(rawSkaterStats,  r => r.position !== 'G');
+  const goalieStats  = await mergeWithHistorical(rawGoalieStats,  r => r.position === 'G');
+  const skaterStats  = await mergeWithHistorical(rawSkaterStats,  r => r.position !== 'G');
   // Keep seasonTeamStats for backward compat (used for 404 check + hero stats)
   const seasonTeamStats = isGoalie ? goalieStats : skaterStats;
 
@@ -2074,7 +2074,7 @@ async function createSeriesSchedule(seriesId, highSeedTeamId, lowSeedTeamId, sea
     const away = highSeedHosts ? lowSeedTeamId  : highSeedTeamId;
     const gameDate = new Date(base);
     gameDate.setUTCDate(gameDate.getUTCDate() + i * 2);
-    insertGame.run(home, away, gameDate.toISOString().slice(0, 10), 'scheduled', seasonId, seriesId);
+    await insertGame.run(home, away, gameDate.toISOString().slice(0, 10), 'scheduled', seasonId, seriesId);
   }
 }
 
@@ -2116,9 +2116,10 @@ app.post('/api/playoffs', requireOwner, async (req, res) => {
   const playoffId = pl.lastInsertRowid;
 
   // Insert seeded teams
-  qualified.forEach((t, i) => {
+  for (let i = 0; i < qualified.length; i++) {
+    const t = qualified[i];
     await db.prepare('INSERT INTO playoff_teams (playoff_id, team_id, seed) VALUES (?, ?, ?)').run(playoffId, t.id, i + 1);
-  });
+  }
 
   // Compute byes for non-power-of-2 field sizes.
   // nextPow2 = smallest power of 2 >= effectiveN.
@@ -2174,10 +2175,12 @@ app.post('/api/playoffs/:id/advance-round', requireOwner, async (req, res) => {
   }
 
   // Sort winners by original seed (ascending = best seed first)
-  const winners = series.map(s => {
+  const winners = [];
+  for (const s of series) {
     const pt = await db.prepare('SELECT seed FROM playoff_teams WHERE playoff_id = ? AND team_id = ?').get(req.params.id, s.winner_id);
-    return { team_id: s.winner_id, seed: pt ? pt.seed : 9999 };
-  }).sort((a, b) => a.seed - b.seed);
+    winners.push({ team_id: s.winner_id, seed: pt ? pt.seed : 9999 });
+  }
+  winners.sort((a, b) => a.seed - b.seed);
 
   const nextRound = curRound + 1;
   const m = Math.floor(winners.length / 2);
