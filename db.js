@@ -15,11 +15,19 @@
 
 const { Pool } = require('pg');
 
+// Accept either the app's own DATABASE_URL or the Vercel/Supabase integration
+// names (POSTGRES_URL, POSTGRES_URL_NON_POOLING) so no manual env var setup is
+// needed after linking the Supabase project in Vercel.
+const DATABASE_URL = process.env.DATABASE_URL
+  || process.env.POSTGRES_URL
+  || process.env.POSTGRES_URL_NON_POOLING
+  || '';
+
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  connectionString: DATABASE_URL,
   // Supabase requires SSL; rejectUnauthorized must be false for their pooler
   // certificates. For self-hosted PostgreSQL over localhost, SSL is disabled.
-  ssl: process.env.DATABASE_URL && !process.env.DATABASE_URL.includes('localhost')
+  ssl: DATABASE_URL && !DATABASE_URL.includes('localhost')
     ? { rejectUnauthorized: false }
     : false,
 });
@@ -164,6 +172,270 @@ async function seedTeams() {
   console.log(`[db] Upserted ${SEED_TEAMS.length} seeded team(s).`);
 }
 
+/**
+ * Create all tables / indexes if they don't already exist.
+ * Inlined so it works on Vercel serverless (no filesystem dependency).
+ * The canonical copy lives in supabase/schema.sql for reference.
+ *
+ * Each statement is executed individually so that:
+ *   1. A failure in one statement doesn't roll back the rest (critical on
+ *      Supabase's Supavisor pooler which runs multi-statement strings
+ *      inside a single implicit transaction).
+ *   2. The citext extension can fail gracefully without blocking tables.
+ */
+async function initSchema() {
+  // ── 1. Enable citext (case-insensitive text) if possible ─────────────
+  //    On Supabase this may already be enabled (via Dashboard) in the
+  //    `extensions` schema, or the role may lack CREATE privileges.
+  let hasCitext = false;
+
+  // Try the most common creation variants
+  for (const sql of [
+    'CREATE EXTENSION IF NOT EXISTS citext',
+    'CREATE EXTENSION IF NOT EXISTS citext SCHEMA public',
+    'CREATE EXTENSION IF NOT EXISTS citext SCHEMA extensions',
+  ]) {
+    try { await pool.query(sql); hasCitext = true; break; } catch (_) { /* try next */ }
+  }
+
+  // Extension may already exist (enabled via Supabase Dashboard)
+  if (!hasCitext) {
+    try {
+      await pool.query("SELECT 'x'::citext");
+      hasCitext = true;
+    } catch (_) {
+      // Try with extensions schema in search_path (session-level so it
+      // persists for subsequent queries on this connection from the pool).
+      try {
+        await pool.query("SET search_path TO public, extensions");
+        await pool.query("SELECT 'x'::citext");
+        hasCitext = true;
+      } catch (_2) { /* truly unavailable */ }
+    }
+  }
+
+  const usernameType = hasCitext ? 'CITEXT' : 'TEXT';
+  if (!hasCitext) {
+    console.warn('[db] citext extension unavailable — usernames will be case-sensitive.');
+  }
+
+  // ── 2. Create tables (one statement at a time) ───────────────────────
+  const tables = [
+    `CREATE TABLE IF NOT EXISTS seasons (
+      id          SERIAL PRIMARY KEY,
+      name        TEXT NOT NULL,
+      is_active   INTEGER DEFAULT 0,
+      league_type TEXT DEFAULT '',
+      is_playoff  INTEGER DEFAULT 0
+    )`,
+    `CREATE TABLE IF NOT EXISTS teams (
+      id          SERIAL PRIMARY KEY,
+      name        TEXT NOT NULL UNIQUE,
+      conference  TEXT NOT NULL DEFAULT '',
+      division    TEXT NOT NULL DEFAULT '',
+      ea_club_id  INTEGER,
+      logo_url    TEXT,
+      color1      TEXT DEFAULT '',
+      color2      TEXT DEFAULT '',
+      league_type TEXT DEFAULT ''
+    )`,
+    `CREATE TABLE IF NOT EXISTS users (
+      id            SERIAL PRIMARY KEY,
+      username      ${usernameType} NOT NULL UNIQUE,
+      platform      TEXT NOT NULL DEFAULT 'xbox',
+      password_hash TEXT NOT NULL,
+      email         TEXT,
+      position      TEXT,
+      ip_hash       TEXT,
+      discord       TEXT,
+      discord_id    TEXT,
+      role          TEXT,
+      created_at    TIMESTAMPTZ DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS signing_offers (
+      id          SERIAL PRIMARY KEY,
+      team_id     INTEGER NOT NULL REFERENCES teams(id),
+      user_id     INTEGER NOT NULL REFERENCES users(id),
+      offered_by  INTEGER NOT NULL REFERENCES users(id),
+      status      TEXT NOT NULL DEFAULT 'pending',
+      created_at  TIMESTAMPTZ DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS team_staff (
+      id      SERIAL PRIMARY KEY,
+      team_id INTEGER NOT NULL REFERENCES teams(id),
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      role    TEXT NOT NULL DEFAULT 'owner',
+      UNIQUE(team_id, user_id)
+    )`,
+    `CREATE TABLE IF NOT EXISTS players (
+      id          SERIAL PRIMARY KEY,
+      name        TEXT NOT NULL,
+      team_id     INTEGER REFERENCES teams(id),
+      position    TEXT,
+      number      INTEGER,
+      user_id     INTEGER,
+      is_rostered INTEGER DEFAULT 1,
+      discord     TEXT,
+      discord_id  TEXT
+    )`,
+    `CREATE TABLE IF NOT EXISTS games (
+      id                SERIAL PRIMARY KEY,
+      home_team_id      INTEGER NOT NULL REFERENCES teams(id),
+      away_team_id      INTEGER NOT NULL REFERENCES teams(id),
+      home_score        INTEGER NOT NULL DEFAULT 0,
+      away_score        INTEGER NOT NULL DEFAULT 0,
+      date              TEXT NOT NULL,
+      ea_match_id       TEXT,
+      status            TEXT DEFAULT 'scheduled',
+      season_id         INTEGER,
+      is_overtime       INTEGER DEFAULT 0,
+      playoff_series_id INTEGER,
+      is_forfeit        INTEGER DEFAULT 0
+    )`,
+    `CREATE TABLE IF NOT EXISTS playoffs (
+      id                  SERIAL PRIMARY KEY,
+      season_id           INTEGER NOT NULL UNIQUE REFERENCES seasons(id) ON DELETE CASCADE,
+      teams_qualify       INTEGER NOT NULL DEFAULT 8,
+      min_games_played    INTEGER NOT NULL DEFAULT 0,
+      series_length       INTEGER NOT NULL DEFAULT 7,
+      playoff_season_id   INTEGER,
+      created_at          TIMESTAMPTZ DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS playoff_teams (
+      id          SERIAL PRIMARY KEY,
+      playoff_id  INTEGER NOT NULL REFERENCES playoffs(id) ON DELETE CASCADE,
+      team_id     INTEGER NOT NULL REFERENCES teams(id),
+      seed        INTEGER NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS playoff_series (
+      id              SERIAL PRIMARY KEY,
+      playoff_id      INTEGER NOT NULL REFERENCES playoffs(id) ON DELETE CASCADE,
+      round_number    INTEGER NOT NULL,
+      series_number   INTEGER NOT NULL,
+      high_seed_id    INTEGER REFERENCES teams(id),
+      low_seed_id     INTEGER REFERENCES teams(id),
+      high_seed_num   INTEGER,
+      low_seed_num    INTEGER,
+      high_seed_wins  INTEGER NOT NULL DEFAULT 0,
+      low_seed_wins   INTEGER NOT NULL DEFAULT 0,
+      winner_id       INTEGER REFERENCES teams(id)
+    )`,
+    `CREATE TABLE IF NOT EXISTS settings (
+      key   TEXT PRIMARY KEY,
+      value TEXT NOT NULL DEFAULT ''
+    )`,
+    `CREATE TABLE IF NOT EXISTS game_player_stats (
+      id                    SERIAL PRIMARY KEY,
+      game_id               INTEGER NOT NULL REFERENCES games(id),
+      team_id               INTEGER NOT NULL REFERENCES teams(id),
+      player_name           TEXT NOT NULL,
+      position              TEXT,
+      overall_rating        INTEGER DEFAULT 0,
+      offensive_rating      INTEGER DEFAULT 0,
+      defensive_rating      INTEGER DEFAULT 0,
+      team_play_rating      INTEGER DEFAULT 0,
+      goals                 INTEGER DEFAULT 0,
+      assists               INTEGER DEFAULT 0,
+      shots                 INTEGER DEFAULT 0,
+      shot_attempts         INTEGER DEFAULT 0,
+      hits                  INTEGER DEFAULT 0,
+      plus_minus            INTEGER DEFAULT 0,
+      pim                   INTEGER DEFAULT 0,
+      blocked_shots         INTEGER DEFAULT 0,
+      takeaways             INTEGER DEFAULT 0,
+      giveaways             INTEGER DEFAULT 0,
+      possession_secs       INTEGER DEFAULT 0,
+      pass_attempts         INTEGER DEFAULT 0,
+      pass_completions      INTEGER DEFAULT 0,
+      pass_pct              REAL,
+      faceoff_wins          INTEGER DEFAULT 0,
+      faceoff_losses        INTEGER DEFAULT 0,
+      pp_goals              INTEGER DEFAULT 0,
+      sh_goals              INTEGER DEFAULT 0,
+      gwg                   INTEGER DEFAULT 0,
+      penalties_drawn       INTEGER DEFAULT 0,
+      deflections           INTEGER DEFAULT 0,
+      interceptions         INTEGER DEFAULT 0,
+      hat_tricks            INTEGER DEFAULT 0,
+      toi                   INTEGER DEFAULT 0,
+      saves                 INTEGER DEFAULT 0,
+      save_pct              REAL,
+      goals_against         INTEGER DEFAULT 0,
+      shots_against         INTEGER DEFAULT 0,
+      goalie_wins           INTEGER DEFAULT 0,
+      goalie_losses         INTEGER DEFAULT 0,
+      goalie_otw            INTEGER DEFAULT 0,
+      goalie_otl            INTEGER DEFAULT 0,
+      shutouts              INTEGER DEFAULT 0,
+      penalty_shot_attempts INTEGER DEFAULT 0,
+      penalty_shot_ga       INTEGER DEFAULT 0,
+      breakaway_shots       INTEGER DEFAULT 0,
+      breakaway_saves       INTEGER DEFAULT 0
+    )`,
+    `CREATE TABLE IF NOT EXISTS season_player_stats (
+      id              SERIAL PRIMARY KEY,
+      season_id       INTEGER NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+      team_id         INTEGER REFERENCES teams(id),
+      player_name     TEXT NOT NULL,
+      position        TEXT DEFAULT '',
+      games_played    INTEGER DEFAULT 0,
+      goals           INTEGER DEFAULT 0,
+      assists         INTEGER DEFAULT 0,
+      plus_minus      INTEGER DEFAULT 0,
+      pim             INTEGER DEFAULT 0,
+      shots           INTEGER DEFAULT 0,
+      pp_goals        INTEGER DEFAULT 0,
+      sh_goals        INTEGER DEFAULT 0,
+      gwg             INTEGER DEFAULT 0,
+      saves           INTEGER DEFAULT 0,
+      save_pct        REAL,
+      goals_against   INTEGER DEFAULT 0,
+      goalie_wins     INTEGER DEFAULT 0,
+      goalie_losses   INTEGER DEFAULT 0,
+      shutouts        INTEGER DEFAULT 0,
+      gaa             REAL,
+      source          TEXT DEFAULT 'import'
+    )`,
+  ];
+
+  for (const sql of tables) {
+    try {
+      await pool.query(sql);
+    } catch (err) {
+      // Log which table failed and re-throw
+      const match = sql.match(/CREATE TABLE IF NOT EXISTS (\w+)/i);
+      const name = match ? match[1] : '(unknown)';
+      console.error(`[db] Failed to create table "${name}":`, err.message);
+      throw err;
+    }
+  }
+
+  // ── 3. Create indexes ────────────────────────────────────────────────
+  const indexes = [
+    'CREATE INDEX IF NOT EXISTS idx_games_season        ON games(season_id)',
+    'CREATE INDEX IF NOT EXISTS idx_games_status         ON games(status)',
+    'CREATE INDEX IF NOT EXISTS idx_games_home           ON games(home_team_id)',
+    'CREATE INDEX IF NOT EXISTS idx_games_away           ON games(away_team_id)',
+    'CREATE INDEX IF NOT EXISTS idx_games_playoff_series ON games(playoff_series_id)',
+    'CREATE INDEX IF NOT EXISTS idx_gps_game             ON game_player_stats(game_id)',
+    'CREATE INDEX IF NOT EXISTS idx_gps_team             ON game_player_stats(team_id)',
+    'CREATE INDEX IF NOT EXISTS idx_gps_player           ON game_player_stats(player_name)',
+    'CREATE INDEX IF NOT EXISTS idx_players_team          ON players(team_id)',
+    'CREATE INDEX IF NOT EXISTS idx_players_user          ON players(user_id)',
+    'CREATE INDEX IF NOT EXISTS idx_sps_season            ON season_player_stats(season_id)',
+    'CREATE INDEX IF NOT EXISTS idx_sps_player            ON season_player_stats(player_name)',
+  ];
+
+  for (const sql of indexes) {
+    try { await pool.query(sql); } catch (err) {
+      console.warn('[db] Index warning:', err.message);
+    }
+  }
+
+  console.log('[db] Schema initialised.');
+}
+
+db.initSchema = initSchema;
 db.seedTeams = seedTeams;
 db.pool = pool;
 
