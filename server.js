@@ -133,13 +133,29 @@ if (!process.env.VERCEL) {
 
 // ── Run async initialisation (schema + seed teams) ───────────────────────
 // Store the promise so we can gate incoming requests until it resolves.
+// If init fails, every request gets 503 so the error is visible.
+let initError = null;
 const dbReady = db.initSchema()
   .then(() => db.seedTeams())
-  .catch(err => console.error('[db] init error:', err));
+  .catch(err => {
+    console.error('[db] init error:', err);
+    initError = err;
+  });
 
 // Block every request until schema + seed have finished (matters on Vercel
 // cold starts where the first request can arrive before init completes).
-app.use((_req, _res, next) => { dbReady.then(() => next(), next); });
+// If init failed, respond with 503 so the problem is immediately visible.
+app.use((_req, res, next) => {
+  dbReady.then(() => {
+    if (initError) {
+      return res.status(503).json({
+        error: 'Database initialisation failed',
+        detail: initError.message,
+      });
+    }
+    next();
+  }, next);
+});
 
 // ── IP helpers ─────────────────────────────────────────────────────────────
 

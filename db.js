@@ -176,21 +176,58 @@ async function seedTeams() {
  * Create all tables / indexes if they don't already exist.
  * Inlined so it works on Vercel serverless (no filesystem dependency).
  * The canonical copy lives in supabase/schema.sql for reference.
+ *
+ * Each statement is executed individually so that:
+ *   1. A failure in one statement doesn't roll back the rest (critical on
+ *      Supabase's Supavisor pooler which runs multi-statement strings
+ *      inside a single implicit transaction).
+ *   2. The citext extension can fail gracefully without blocking tables.
  */
 async function initSchema() {
-  await pool.query(`
-    -- Case-insensitive text for usernames
-    CREATE EXTENSION IF NOT EXISTS citext;
+  // ── 1. Enable citext (case-insensitive text) if possible ─────────────
+  //    On Supabase this may already be enabled (via Dashboard) in the
+  //    `extensions` schema, or the role may lack CREATE privileges.
+  let hasCitext = false;
 
-    CREATE TABLE IF NOT EXISTS seasons (
+  // Try the most common creation variants
+  for (const sql of [
+    'CREATE EXTENSION IF NOT EXISTS citext',
+    'CREATE EXTENSION IF NOT EXISTS citext SCHEMA public',
+    'CREATE EXTENSION IF NOT EXISTS citext SCHEMA extensions',
+  ]) {
+    try { await pool.query(sql); hasCitext = true; break; } catch (_) { /* try next */ }
+  }
+
+  // Extension may already exist (enabled via Supabase Dashboard)
+  if (!hasCitext) {
+    try {
+      await pool.query("SELECT 'x'::citext");
+      hasCitext = true;
+    } catch (_) {
+      // Try with extensions schema in search_path
+      try {
+        await pool.query("SET LOCAL search_path TO public, extensions");
+        await pool.query("SELECT 'x'::citext");
+        hasCitext = true;
+      } catch (_2) { /* truly unavailable */ }
+    }
+  }
+
+  const usernameType = hasCitext ? 'CITEXT' : 'TEXT';
+  if (!hasCitext) {
+    console.warn('[db] citext extension unavailable — usernames will be case-sensitive.');
+  }
+
+  // ── 2. Create tables (one statement at a time) ───────────────────────
+  const tables = [
+    `CREATE TABLE IF NOT EXISTS seasons (
       id          SERIAL PRIMARY KEY,
       name        TEXT NOT NULL,
       is_active   INTEGER DEFAULT 0,
       league_type TEXT DEFAULT '',
       is_playoff  INTEGER DEFAULT 0
-    );
-
-    CREATE TABLE IF NOT EXISTS teams (
+    )`,
+    `CREATE TABLE IF NOT EXISTS teams (
       id          SERIAL PRIMARY KEY,
       name        TEXT NOT NULL UNIQUE,
       conference  TEXT NOT NULL DEFAULT '',
@@ -200,11 +237,10 @@ async function initSchema() {
       color1      TEXT DEFAULT '',
       color2      TEXT DEFAULT '',
       league_type TEXT DEFAULT ''
-    );
-
-    CREATE TABLE IF NOT EXISTS users (
+    )`,
+    `CREATE TABLE IF NOT EXISTS users (
       id            SERIAL PRIMARY KEY,
-      username      CITEXT NOT NULL UNIQUE,
+      username      ${usernameType} NOT NULL UNIQUE,
       platform      TEXT NOT NULL DEFAULT 'xbox',
       password_hash TEXT NOT NULL,
       email         TEXT,
@@ -214,26 +250,23 @@ async function initSchema() {
       discord_id    TEXT,
       role          TEXT,
       created_at    TIMESTAMPTZ DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS signing_offers (
+    )`,
+    `CREATE TABLE IF NOT EXISTS signing_offers (
       id          SERIAL PRIMARY KEY,
       team_id     INTEGER NOT NULL REFERENCES teams(id),
       user_id     INTEGER NOT NULL REFERENCES users(id),
       offered_by  INTEGER NOT NULL REFERENCES users(id),
       status      TEXT NOT NULL DEFAULT 'pending',
       created_at  TIMESTAMPTZ DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS team_staff (
+    )`,
+    `CREATE TABLE IF NOT EXISTS team_staff (
       id      SERIAL PRIMARY KEY,
       team_id INTEGER NOT NULL REFERENCES teams(id),
       user_id INTEGER NOT NULL REFERENCES users(id),
       role    TEXT NOT NULL DEFAULT 'owner',
       UNIQUE(team_id, user_id)
-    );
-
-    CREATE TABLE IF NOT EXISTS players (
+    )`,
+    `CREATE TABLE IF NOT EXISTS players (
       id          SERIAL PRIMARY KEY,
       name        TEXT NOT NULL,
       team_id     INTEGER REFERENCES teams(id),
@@ -243,9 +276,8 @@ async function initSchema() {
       is_rostered INTEGER DEFAULT 1,
       discord     TEXT,
       discord_id  TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS games (
+    )`,
+    `CREATE TABLE IF NOT EXISTS games (
       id                SERIAL PRIMARY KEY,
       home_team_id      INTEGER NOT NULL REFERENCES teams(id),
       away_team_id      INTEGER NOT NULL REFERENCES teams(id),
@@ -258,9 +290,8 @@ async function initSchema() {
       is_overtime       INTEGER DEFAULT 0,
       playoff_series_id INTEGER,
       is_forfeit        INTEGER DEFAULT 0
-    );
-
-    CREATE TABLE IF NOT EXISTS playoffs (
+    )`,
+    `CREATE TABLE IF NOT EXISTS playoffs (
       id                  SERIAL PRIMARY KEY,
       season_id           INTEGER NOT NULL UNIQUE REFERENCES seasons(id) ON DELETE CASCADE,
       teams_qualify       INTEGER NOT NULL DEFAULT 8,
@@ -268,16 +299,14 @@ async function initSchema() {
       series_length       INTEGER NOT NULL DEFAULT 7,
       playoff_season_id   INTEGER,
       created_at          TIMESTAMPTZ DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS playoff_teams (
+    )`,
+    `CREATE TABLE IF NOT EXISTS playoff_teams (
       id          SERIAL PRIMARY KEY,
       playoff_id  INTEGER NOT NULL REFERENCES playoffs(id) ON DELETE CASCADE,
       team_id     INTEGER NOT NULL REFERENCES teams(id),
       seed        INTEGER NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS playoff_series (
+    )`,
+    `CREATE TABLE IF NOT EXISTS playoff_series (
       id              SERIAL PRIMARY KEY,
       playoff_id      INTEGER NOT NULL REFERENCES playoffs(id) ON DELETE CASCADE,
       round_number    INTEGER NOT NULL,
@@ -289,14 +318,12 @@ async function initSchema() {
       high_seed_wins  INTEGER NOT NULL DEFAULT 0,
       low_seed_wins   INTEGER NOT NULL DEFAULT 0,
       winner_id       INTEGER REFERENCES teams(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS settings (
+    )`,
+    `CREATE TABLE IF NOT EXISTS settings (
       key   TEXT PRIMARY KEY,
       value TEXT NOT NULL DEFAULT ''
-    );
-
-    CREATE TABLE IF NOT EXISTS game_player_stats (
+    )`,
+    `CREATE TABLE IF NOT EXISTS game_player_stats (
       id                    SERIAL PRIMARY KEY,
       game_id               INTEGER NOT NULL REFERENCES games(id),
       team_id               INTEGER NOT NULL REFERENCES teams(id),
@@ -343,9 +370,8 @@ async function initSchema() {
       penalty_shot_ga       INTEGER DEFAULT 0,
       breakaway_shots       INTEGER DEFAULT 0,
       breakaway_saves       INTEGER DEFAULT 0
-    );
-
-    CREATE TABLE IF NOT EXISTS season_player_stats (
+    )`,
+    `CREATE TABLE IF NOT EXISTS season_player_stats (
       id              SERIAL PRIMARY KEY,
       season_id       INTEGER NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
       team_id         INTEGER REFERENCES teams(id),
@@ -368,21 +394,43 @@ async function initSchema() {
       shutouts        INTEGER DEFAULT 0,
       gaa             REAL,
       source          TEXT DEFAULT 'import'
-    );
+    )`,
+  ];
 
-    CREATE INDEX IF NOT EXISTS idx_games_season        ON games(season_id);
-    CREATE INDEX IF NOT EXISTS idx_games_status         ON games(status);
-    CREATE INDEX IF NOT EXISTS idx_games_home           ON games(home_team_id);
-    CREATE INDEX IF NOT EXISTS idx_games_away           ON games(away_team_id);
-    CREATE INDEX IF NOT EXISTS idx_games_playoff_series ON games(playoff_series_id);
-    CREATE INDEX IF NOT EXISTS idx_gps_game             ON game_player_stats(game_id);
-    CREATE INDEX IF NOT EXISTS idx_gps_team             ON game_player_stats(team_id);
-    CREATE INDEX IF NOT EXISTS idx_gps_player           ON game_player_stats(player_name);
-    CREATE INDEX IF NOT EXISTS idx_players_team          ON players(team_id);
-    CREATE INDEX IF NOT EXISTS idx_players_user          ON players(user_id);
-    CREATE INDEX IF NOT EXISTS idx_sps_season            ON season_player_stats(season_id);
-    CREATE INDEX IF NOT EXISTS idx_sps_player            ON season_player_stats(player_name);
-  `);
+  for (const sql of tables) {
+    try {
+      await pool.query(sql);
+    } catch (err) {
+      // Log which table failed and re-throw
+      const match = sql.match(/CREATE TABLE IF NOT EXISTS (\w+)/i);
+      const name = match ? match[1] : '(unknown)';
+      console.error(`[db] Failed to create table "${name}":`, err.message);
+      throw err;
+    }
+  }
+
+  // ── 3. Create indexes ────────────────────────────────────────────────
+  const indexes = [
+    'CREATE INDEX IF NOT EXISTS idx_games_season        ON games(season_id)',
+    'CREATE INDEX IF NOT EXISTS idx_games_status         ON games(status)',
+    'CREATE INDEX IF NOT EXISTS idx_games_home           ON games(home_team_id)',
+    'CREATE INDEX IF NOT EXISTS idx_games_away           ON games(away_team_id)',
+    'CREATE INDEX IF NOT EXISTS idx_games_playoff_series ON games(playoff_series_id)',
+    'CREATE INDEX IF NOT EXISTS idx_gps_game             ON game_player_stats(game_id)',
+    'CREATE INDEX IF NOT EXISTS idx_gps_team             ON game_player_stats(team_id)',
+    'CREATE INDEX IF NOT EXISTS idx_gps_player           ON game_player_stats(player_name)',
+    'CREATE INDEX IF NOT EXISTS idx_players_team          ON players(team_id)',
+    'CREATE INDEX IF NOT EXISTS idx_players_user          ON players(user_id)',
+    'CREATE INDEX IF NOT EXISTS idx_sps_season            ON season_player_stats(season_id)',
+    'CREATE INDEX IF NOT EXISTS idx_sps_player            ON season_player_stats(player_name)',
+  ];
+
+  for (const sql of indexes) {
+    try { await pool.query(sql); } catch (err) {
+      console.warn('[db] Index warning:', err.message);
+    }
+  }
+
   console.log('[db] Schema initialised.');
 }
 
