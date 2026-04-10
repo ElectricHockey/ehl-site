@@ -17,6 +17,8 @@ const { Pool } = require('pg');
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
+  // Supabase requires SSL; rejectUnauthorized must be false for their pooler
+  // certificates. For self-hosted PostgreSQL over localhost, SSL is disabled.
   ssl: process.env.DATABASE_URL && !process.env.DATABASE_URL.includes('localhost')
     ? { rejectUnauthorized: false }
     : false,
