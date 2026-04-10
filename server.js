@@ -18,8 +18,13 @@ const PORT = process.env.PORT || 3000;
 const scrypt = promisify(crypto.scrypt);
 
 // ── Supabase Storage client (for logo / file uploads) ────────────────────
-const SUPABASE_URL = process.env.SUPABASE_URL || '';
-const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || '';
+// Accept both the app's own names and the Vercel/Supabase integration names.
+const SUPABASE_URL = process.env.SUPABASE_URL
+  || process.env.NEXT_PUBLIC_SUPABASE_URL
+  || '';
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY
+  || process.env.SUPABASE_SERVICE_ROLE_KEY
+  || '';
 const supabase = (SUPABASE_URL && SUPABASE_SERVICE_KEY)
   ? createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
   : null;

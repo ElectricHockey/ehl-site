@@ -15,11 +15,19 @@
 
 const { Pool } = require('pg');
 
+// Accept either the app's own DATABASE_URL or the Vercel/Supabase integration
+// names (POSTGRES_URL, POSTGRES_URL_NON_POOLING) so no manual env var setup is
+// needed after linking the Supabase project in Vercel.
+const DATABASE_URL = process.env.DATABASE_URL
+  || process.env.POSTGRES_URL
+  || process.env.POSTGRES_URL_NON_POOLING
+  || '';
+
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  connectionString: DATABASE_URL,
   // Supabase requires SSL; rejectUnauthorized must be false for their pooler
   // certificates. For self-hosted PostgreSQL over localhost, SSL is disabled.
-  ssl: process.env.DATABASE_URL && !process.env.DATABASE_URL.includes('localhost')
+  ssl: DATABASE_URL && !DATABASE_URL.includes('localhost')
     ? { rejectUnauthorized: false }
     : false,
 });
