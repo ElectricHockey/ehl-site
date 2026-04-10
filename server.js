@@ -132,9 +132,14 @@ if (!process.env.VERCEL) {
 }
 
 // ── Run async initialisation (schema + seed teams) ───────────────────────
-db.initSchema()
+// Store the promise so we can gate incoming requests until it resolves.
+const dbReady = db.initSchema()
   .then(() => db.seedTeams())
   .catch(err => console.error('[db] init error:', err));
+
+// Block every request until schema + seed have finished (matters on Vercel
+// cold starts where the first request can arrive before init completes).
+app.use((_req, _res, next) => { dbReady.then(() => next(), next); });
 
 // ── IP helpers ─────────────────────────────────────────────────────────────
 
