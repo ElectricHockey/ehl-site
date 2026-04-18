@@ -1,0 +1,227 @@
+from bs4 import BeautifulSoup, Comment
+from datetime import datetime, timedelta
+from pathlib import Path
+import json
+import pytz
+import requests
+import re
+
+def sanstr(s):
+    return s.strip().strip('\n').strip('\t')
+
+def read_goalie_stats(soup):
+    goalie_tags = {
+        'away': soup.find(id='maincontent_gvGoaliesVisitor_gvPlayers'),
+        'home': soup.find(id='maincontent_gvGoaliesHome_gvPlayers')
+    }
+    goalies = {
+        'away': {},
+        'home': {}
+    }
+    for key in goalie_tags:
+        if goalie_tags[key] is not None:
+            thead = goalie_tags[key].find('thead')
+            for tr in thead.find_all('tr'):
+                goalies['_fields'] = []
+                for th in tr.find_all('th'):
+                    goalies['_fields'].append(th.text)
+            tbody = goalie_tags[key].find('tbody')
+            for tr in tbody.find_all('tr'):
+                skater = []
+                for td in tr.find_all('td'):
+                    skater.append(td.text)
+                goalies[key][skater[0]] = skater
+    return goalies
+
+def read_skater_stats(soup):
+    skaters_tags = {
+        'away': soup.find(id='maincontent_gvSkatersVisitor_gvPlayers'),
+        'home': soup.find(id='maincontent_gvSkatersHome_gvPlayers')
+    }
+    skaters = {
+        'away': {},
+        'home': {}
+    }
+    for key in skaters_tags:
+        if skaters_tags[key] is not None:
+            thead = skaters_tags[key].find('thead')
+            for tr in thead.find_all('tr'):
+                skaters['_fields'] = []
+                for th in tr.find_all('th'):
+                    skaters['_fields'].append(th.text)
+            tbody = skaters_tags[key].find('tbody')
+            for tr in tbody.find_all('tr'):
+                skater = []
+                for td in tr.find_all('td'):
+                    skater.append(td.text)
+                skaters[key][skater[0]] = skater
+    return skaters
+
+def read_game_score_final(game, soup):
+    # Game Summary
+    summary_items = ['SHOTS','POWER PLAY','PENALTY KILL','TIME ON ATTACK']
+    summary = {}
+    for si in summary_items:
+        tag = soup.find('strong',string=si)
+        if tag is not None:
+            row = tag.parent.parent
+            divs = row.find_all(name='div')
+            away_val = divs[0].text
+            home_val = divs[2].text
+            summary[si] = {'away':away_val,'home':home_val}
+        
+    # Box Score
+    tot_span = soup.find('span',string='TOT')
+    box_score = {
+        'header': [],
+        'first': [],
+        'second': []
+    }
+    if tot_span is not None:
+        box_score_table = tot_span.parent.parent.parent.parent
+        bs_thead = box_score_table.find('thead')
+        bs_tbody = box_score_table.find('tbody')
+        for th in bs_thead.find_all('th'):
+            box_score['header'].append(th.string)
+        for tr in bs_tbody.find_all('tr'):
+            if len(box_score['first']) == 0:
+                for td in tr.find_all('td'):
+                    box_score['first'].append(td.string)
+            elif len(box_score['second']) == 0:
+                for td in tr.find_all('td'):
+                    box_score['second'].append(td.string)
+
+    skaters = read_skater_stats(soup)
+    goalies = read_goalie_stats(soup)
+    game['stats'] = {
+        'box_score': box_score,
+        'summary': summary,
+        'skaters': skaters,
+        'goalies': goalies
+    }
+
+def read_game_score_forfeit(game, soup):
+    skaters = read_skater_stats(soup)
+    goalies = read_goalie_stats(soup)
+    game['forfeit'] = {
+        'skaters': skaters,
+        'goalies': goalies
+    }
+
+def read_game_score_cancelled(game, soup):
+    game['draw'] = True
+
+def read_game_score_url(game, game_url):
+    game['mso_source_url'] = game_url
+    game_html = requests.get(game_url)
+    soup = BeautifulSoup(game_html.text,features='html.parser')
+    if soup.find('span',string='Final'):
+        read_game_score_final(game, soup)
+    elif soup.find('span',string='Final (OT)'):
+        read_game_score_final(game, soup)
+        game['ot'] = True
+    elif soup.find('span',string='Forfeit'):
+        read_game_score_forfeit(game, soup)
+    elif soup.find('span',string='Canceled'):
+        read_game_score_cancelled(game, soup)
+    elif soup.find('span',string='In Progress'):
+        read_game_score_cancelled(game, soup)
+    elif soup.find('span',string='In Progress (OT)'):
+        read_game_score_final(game,soup)
+        game['ot'] = True
+    elif soup.find('span',string='Rescheduled'):
+        pass
+    else:
+        raise NotImplementedError(f"What game is this?")
+    
+def write_games(games,label):
+    game_file = f'mso_games_{label}.json'
+    with open(game_file,'w') as fp:
+        json.dump(games, fp)
+    print(f'Wrote {game_file} with {len(games)} games')
+
+def read_season_file(league_name, season_id, season_file, game_type, league_id):
+    print(f'read_season_file {league_name} {season_id} {season_file}')
+    season_html = Path(season_file).read_text(encoding='utf-8', errors='ignore')
+    soup = BeautifulSoup(season_html,features='html.parser')
+    games = []
+    all_th = soup.find_all('th')
+    for th in all_th:
+        if th.string == 'Date / Time':
+            table = th.parent
+            while table and table.name != 'table':
+                table = table.parent
+            tbody = table.find('tbody')
+            current_date = 'NONE'
+            playoff_round = None
+            for tr in tbody.find_all('tr'):
+                process_row = True
+
+                if 'class' in tr.attrs:
+                    if 'tableScheduleSeparator' in tr.attrs['class']:
+                        current_date = sanstr(tr.text)
+                        process_row = False
+                    elif 'dontprint' in tr.attrs['class']:
+                        process_row = False
+                    elif 'tableScheduleSeparatorRound' in tr.attrs['class']:
+                        playoff_round = sanstr(tr.text)
+                        process_row = False
+                
+                if process_row:
+                    game_td = tr.find('td')
+                    away_team_td = game_td.next_sibling
+                    away_score_td = away_team_td.next_sibling
+                    ot_td = away_score_td.next_sibling
+                    home_score_td = ot_td.next_sibling
+                    home_team_td = home_score_td.next_sibling
+                    game_id = re.search(r'javascript:game_score_hockey\((.+)\)',game_td.find('a').attrs['href']).group(1)
+                    game_time = sanstr(game_td.text)
+                    away_team = sanstr(away_team_td.text)
+                    away_score = sanstr(away_score_td.text)
+                    home_score = sanstr(home_score_td.text)
+                    home_team = sanstr(home_team_td.text)
+                    games.append({
+                        'league_name': league_name,
+                        'id': game_id,
+                        'season_id': season_id,
+                        'date': current_date,
+                        'time': game_time,
+                        'away_team': away_team,
+                        'away_score': away_score,
+                        'home_score': home_score,
+                        'home_team': home_team,
+                        'game_type': game_type,
+                        'playoff_round': playoff_round
+                    })
+    print(f'Read {len(games)} games for {season_file}')
+    games_processed = 0
+    for game in games:
+        gameurl = f'https://www.mystatsonline.com/hockey/visitor/league/schedule_scores/game_score_hockey.aspx?IDLeague={league_id}&IDGame={game["id"]}'
+        print(f'Reading G{games_processed+1}/{len(games)}:{gameurl}')
+        read_game_score_url(game, gameurl)
+        games_processed += 1
+    write_games(games,f'{league_name}_{season_id}_{game_type}')
+
+# axhl 65372
+# lmshl 67876
+## Season 3 ID 9
+## Season 2 ID 8
+if __name__ == '__main__':
+    print("Enter League Name Db:")
+    league_name = input()
+
+    print("Enter Season ID Here:")
+    season_id = input()
+
+    print("Enter Season File to Import to import Here")
+    season_file = input()
+
+    print("Enter Game Type Here, should be regular")
+    game_type = input()
+
+    print("Enter MSO League ID Here")
+    league_id = input()
+
+    read_season_file(league_name, season_id, season_file, game_type, league_id)
+    print("Done")
+
