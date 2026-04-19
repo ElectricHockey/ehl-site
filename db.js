@@ -13,7 +13,22 @@
 //   • `db.transaction(fn)` runs fn(txDb) inside BEGIN…COMMIT
 // ═══════════════════════════════════════════════════════════════════════════
 
-const { Pool } = require('pg');
+const { Pool, types } = require('pg');
+
+// ── Type parsers ───────────────────────────────────────────────────────────
+// PostgreSQL returns BIGINT (OID 20) and NUMERIC (OID 1700) as strings
+// because they can exceed JavaScript's Number.MAX_SAFE_INTEGER.  For a
+// hockey-stats app the values are always small, so parse them as numbers to
+// avoid accidental string-concatenation bugs in application code.
+types.setTypeParser(20, val => {                       // BIGINT / INT8
+  if (val === null) return null;
+  const n = Number(val);
+  return Number.isSafeInteger(n) ? n : val;            // keep string if unsafe
+});
+types.setTypeParser(1700, val => {                     // NUMERIC / DECIMAL
+  if (val === null) return null;
+  return parseFloat(val);
+});
 
 // Accept either the app's own DATABASE_URL or the Vercel/Supabase integration
 // names (POSTGRES_URL, POSTGRES_URL_NON_POOLING) so no manual env var setup is

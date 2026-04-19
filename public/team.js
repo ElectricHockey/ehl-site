@@ -62,7 +62,9 @@ function ovrBadge(v) {
 }
 function pct3(v) {
   if (v === null || v === undefined) return '–';
-  const frac = v > 1 ? v / 100 : v;
+  const num = Number(v);
+  if (isNaN(num)) return '–';
+  const frac = num > 1 ? num / 100 : num;
   return frac.toFixed(3).replace(/^0(?=\.)/, '');
 }
 
