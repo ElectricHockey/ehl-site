@@ -679,9 +679,10 @@ app.post('/api/admin/merge-teams', requireOwner, async (req, res) => {
 
   // Update players: move roster entries (avoid duplicates – if player already exists on target, remove the source one)
   const sourcePlayers = await db.prepare('SELECT * FROM players WHERE team_id = ?').all(source_id);
+  const targetPlayers = await db.prepare('SELECT id, name FROM players WHERE team_id = ?').all(target_id);
+  const targetPlayerNames = new Set(targetPlayers.map(p => p.name));
   for (const sp of sourcePlayers) {
-    const existing = await db.prepare('SELECT id FROM players WHERE team_id = ? AND name = ?').get(target_id, sp.name);
-    if (existing) {
+    if (targetPlayerNames.has(sp.name)) {
       // Player already on target team – remove the source player record
       await db.prepare('DELETE FROM players WHERE id = ?').run(sp.id);
     } else {
@@ -729,17 +730,16 @@ app.post('/api/admin/merge-players', requireOwner, async (req, res) => {
   // Update all season_player_stats from source name to target name
   await db.prepare('UPDATE season_player_stats SET player_name = ? WHERE player_name = ?').run(tgtName, srcName);
 
-  // Update player records: if target player already exists, just remove the source
+  // Update player records: if target player already exists on same team, just remove the source
   const sourcePlayers = await db.prepare('SELECT * FROM players WHERE name = ?').all(srcName);
+  const targetPlayers = await db.prepare('SELECT id, team_id, user_id FROM players WHERE name = ?').all(tgtName);
+  const targetByTeam = new Map(targetPlayers.map(p => [p.team_id, p]));
   for (const sp of sourcePlayers) {
-    const existingTarget = await db.prepare('SELECT id FROM players WHERE name = ? AND team_id = ?').get(tgtName, sp.team_id);
+    const existingTarget = targetByTeam.get(sp.team_id);
     if (existingTarget) {
       // If source had user_id but target doesn't, transfer it
-      if (sp.user_id) {
-        const tgtPlayer = await db.prepare('SELECT user_id FROM players WHERE id = ?').get(existingTarget.id);
-        if (!tgtPlayer.user_id) {
-          await db.prepare('UPDATE players SET user_id = ? WHERE id = ?').run(sp.user_id, existingTarget.id);
-        }
+      if (sp.user_id && !existingTarget.user_id) {
+        await db.prepare('UPDATE players SET user_id = ? WHERE id = ?').run(sp.user_id, existingTarget.id);
       }
       await db.prepare('DELETE FROM players WHERE id = ?').run(sp.id);
     } else {
