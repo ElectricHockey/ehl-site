@@ -237,7 +237,8 @@ async function initSchema() {
       name        TEXT NOT NULL,
       is_active   INTEGER DEFAULT 0,
       league_type TEXT DEFAULT '',
-      is_playoff  INTEGER DEFAULT 0
+      is_playoff  INTEGER DEFAULT 0,
+      sort_order  INTEGER DEFAULT 0
     )`,
     `CREATE TABLE IF NOT EXISTS teams (
       id          SERIAL PRIMARY KEY,
@@ -451,6 +452,16 @@ async function initSchema() {
     // Ignore if already nullable or column doesn't exist
     if (err.message && !err.message.includes('does not exist')) {
       console.warn('[db] Migration warning (password_hash nullable):', err.message);
+    }
+  }
+
+  // Add sort_order column to seasons (for reordering)
+  try {
+    await pool.query('ALTER TABLE seasons ADD COLUMN sort_order INTEGER DEFAULT 0');
+  } catch (err) {
+    // Ignore if column already exists
+    if (!err.message || !err.message.includes('already exists')) {
+      console.warn('[db] Migration warning (seasons sort_order):', err.message);
     }
   }
 

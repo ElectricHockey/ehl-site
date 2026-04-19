@@ -53,7 +53,7 @@ function resultBadge(r) {
 }
 
 function statusBadge(s, isForfeit) {
-  if (s === 'complete' && isForfeit) return '<span class="status-badge status-forfeit">🏳 Forfeit</span>';
+  if (s === 'forfeit' || (s === 'complete' && isForfeit)) return '<span class="status-badge status-forfeit">🏳 Forfeit</span>';
   if (s === 'complete') return '<span class="status-badge status-complete">✓ Final</span>';
   return '<span class="status-badge status-scheduled">Scheduled</span>';
 }
@@ -151,7 +151,7 @@ function buildGameRow(g) {
       onclick="toggleGameDetail(${g.id}, event)">
       <td>${g.date}</td>
       <td>${g.home_logo ? `<img src="${g.home_logo}" style="width:22px;height:22px;object-fit:contain;vertical-align:middle;margin-right:0.3rem;border-radius:3px;" />` : ''}${g.home_team_name}</td>
-      <td>${g.status === 'complete' ? `${g.home_score} – ${g.away_score}` : '–'}</td>
+      <td>${(g.status === 'complete' || g.status === 'forfeit') ? `${g.home_score} – ${g.away_score}` : '–'}</td>
       <td>${g.away_logo ? `<img src="${g.away_logo}" style="width:22px;height:22px;object-fit:contain;vertical-align:middle;margin-right:0.3rem;border-radius:3px;" />` : ''}${g.away_team_name}</td>
       <td id="status-cell-${g.id}">${statusBadge(g.status, g.is_forfeit)}</td>
       ${isAdmin ? `
@@ -647,11 +647,17 @@ async function refreshGame(gameId) {
     await openGameDetail(gameId);
   };
 
-  await SeasonSelector.init('season-selector-container');
-  SeasonSelector.onSeasonChange(() => {
-    closePicker();
-    closeGameDetail();
-    loadSchedule();
-  });
-  await loadSchedule();
+  try {
+    await SeasonSelector.init('season-selector-container');
+    SeasonSelector.onSeasonChange(() => {
+      closePicker();
+      closeGameDetail();
+      loadSchedule();
+    });
+    await loadSchedule();
+  } catch (err) {
+    console.error('[schedule] init error:', err);
+    const root = document.getElementById('schedule-root');
+    if (root) root.innerHTML = '<p style="color:#f85149;">Failed to load schedule. Please refresh the page.</p>';
+  }
 })();

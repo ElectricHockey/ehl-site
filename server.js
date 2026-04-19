@@ -453,8 +453,8 @@ app.patch('/api/users/:id', requireOwner, async (req, res) => {
 app.get('/api/seasons', async (req, res) => {
   const { type } = req.query;
   const seasons = type
-    ? await db.prepare('SELECT * FROM seasons WHERE league_type = ? ORDER BY id DESC').all(type)
-    : await db.prepare('SELECT * FROM seasons ORDER BY id DESC').all();
+    ? await db.prepare('SELECT * FROM seasons WHERE league_type = ? ORDER BY sort_order ASC, id ASC').all(type)
+    : await db.prepare('SELECT * FROM seasons ORDER BY sort_order ASC, id ASC').all();
   res.json(seasons);
 });
 
@@ -463,8 +463,11 @@ app.post('/api/seasons', requireOwner, async (req, res) => {
   if (!name || !name.trim()) return res.status(400).json({ error: 'Season name is required' });
   if (make_active) await db.prepare('UPDATE seasons SET is_active = 0').run();
   const lt = league_type || '';
-  const result = await db.prepare('INSERT INTO seasons (name, is_active, league_type) VALUES (?, ?, ?)').run(name.trim(), make_active ? 1 : 0, lt);
-  res.status(201).json({ id: result.lastInsertRowid, name: name.trim(), is_active: make_active ? 1 : 0, league_type: lt });
+  // Place new seasons at the end of the list
+  const maxOrder = await db.prepare('SELECT COALESCE(MAX(sort_order), 0) AS m FROM seasons').get();
+  const nextOrder = maxOrder.m + 1;
+  const result = await db.prepare('INSERT INTO seasons (name, is_active, league_type, sort_order) VALUES (?, ?, ?, ?)').run(name.trim(), make_active ? 1 : 0, lt, nextOrder);
+  res.status(201).json({ id: result.lastInsertRowid, name: name.trim(), is_active: make_active ? 1 : 0, league_type: lt, sort_order: nextOrder });
 });
 
 app.patch('/api/seasons/:id', requireOwner, async (req, res) => {
@@ -479,10 +482,70 @@ app.patch('/api/seasons/:id', requireOwner, async (req, res) => {
 });
 
 app.delete('/api/seasons/:id', requireOwner, async (req, res) => {
+  const season = await db.prepare('SELECT * FROM seasons WHERE id = ?').get(req.params.id);
+  if (!season) return res.status(404).json({ error: 'Season not found' });
+
+  // If it's a playoff season, clean up associated playoff data
+  if (season.is_playoff) {
+    // Find playoffs that reference this as their playoff_season_id
+    const playoffs = await db.prepare('SELECT id FROM playoffs WHERE playoff_season_id = ?').all(req.params.id);
+    for (const p of playoffs) {
+      // Delete series games' stats, then the games, then series, then the playoff
+      const series = await db.prepare('SELECT id FROM playoff_series WHERE playoff_id = ?').all(p.id);
+      for (const s of series) {
+        const seriesGames = await db.prepare('SELECT id FROM games WHERE playoff_series_id = ?').all(s.id);
+        for (const sg of seriesGames) {
+          await db.prepare('DELETE FROM game_player_stats WHERE game_id = ?').run(sg.id);
+        }
+        await db.prepare('DELETE FROM games WHERE playoff_series_id = ?').run(s.id);
+      }
+      await db.prepare('DELETE FROM playoff_series WHERE playoff_id = ?').run(p.id);
+      await db.prepare('DELETE FROM playoff_teams WHERE playoff_id = ?').run(p.id);
+      await db.prepare('DELETE FROM playoffs WHERE id = ?').run(p.id);
+    }
+  }
+
+  // Unassign games from this season
   await db.prepare('UPDATE games SET season_id = NULL WHERE season_id = ?').run(req.params.id);
   const result = await db.prepare('DELETE FROM seasons WHERE id = ?').run(req.params.id);
   if (result.changes === 0) return res.status(404).json({ error: 'Season not found' });
   res.json({ deleted: true });
+});
+
+// POST /api/seasons/:id/reorder – move season up or down in the list
+app.post('/api/seasons/:id/reorder', requireOwner, async (req, res) => {
+  const { direction } = req.body;
+  if (direction !== 'up' && direction !== 'down') {
+    return res.status(400).json({ error: 'direction must be "up" or "down"' });
+  }
+  const season = await db.prepare('SELECT * FROM seasons WHERE id = ?').get(req.params.id);
+  if (!season) return res.status(404).json({ error: 'Season not found' });
+
+  // Get all seasons ordered by sort_order
+  const all = await db.prepare('SELECT id, sort_order FROM seasons ORDER BY sort_order ASC, id ASC').all();
+  const idx = all.findIndex(s => s.id === Number(req.params.id));
+  if (idx < 0) return res.status(404).json({ error: 'Season not found in list' });
+
+  const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
+  if (swapIdx < 0 || swapIdx >= all.length) return res.json({ ok: true }); // already at boundary
+
+  // Swap sort_order values between the two seasons.
+  // If legacy data has identical sort_order values, assign distinct values so the swap
+  // produces a visible change: the moved season gets the neighbor's position,
+  // and the neighbor shifts to make room.
+  const myOrder = all[idx].sort_order;
+  const theirOrder = all[swapIdx].sort_order;
+  if (myOrder !== theirOrder) {
+    // Normal case: just swap the two sort_order values
+    await db.prepare('UPDATE seasons SET sort_order = ? WHERE id = ?').run(theirOrder, all[idx].id);
+    await db.prepare('UPDATE seasons SET sort_order = ? WHERE id = ?').run(myOrder, all[swapIdx].id);
+  } else {
+    // Legacy data: both have the same sort_order, so assign idx-based values
+    // Moving "up" means this item gets a lower sort_order
+    const baseOrder = myOrder;
+    await db.prepare('UPDATE seasons SET sort_order = ? WHERE id = ?').run(direction === 'up' ? baseOrder - 1 : baseOrder + 1, all[idx].id);
+  }
+  res.json({ ok: true });
 });
 
 // ── Site Logo ──────────────────────────────────────────────────────────────
@@ -926,14 +989,14 @@ app.get('/api/teams/:id/stats', async (req, res) => {
   const skaterStats = await db.prepare(`
     SELECT ${SKATER_SELECT}
     FROM game_player_stats gps JOIN teams t ON gps.team_id = t.id JOIN games g ON gps.game_id = g.id
-    WHERE gps.team_id = ? AND gps.position != 'G' AND g.status = 'complete' ${sf}
+    WHERE gps.team_id = ? AND gps.position != 'G' AND g.status IN ('complete','forfeit') ${sf}
     GROUP BY gps.player_name ORDER BY points DESC, goals DESC
   `).all(...params);
 
   const goalieStats = await db.prepare(`
     SELECT ${GOALIE_SELECT}
     FROM game_player_stats gps JOIN teams t ON gps.team_id = t.id JOIN games g ON gps.game_id = g.id
-    WHERE gps.team_id = ? AND gps.position = 'G' AND g.status = 'complete' ${sf}
+    WHERE gps.team_id = ? AND gps.position = 'G' AND g.status IN ('complete','forfeit') ${sf}
     GROUP BY gps.player_name ORDER BY save_pct DESC
   `).all(...params);
 
@@ -942,7 +1005,7 @@ app.get('/api/teams/:id/stats', async (req, res) => {
       ht.id AS home_team_id, ht.name AS home_team_name, ht.logo_url AS home_logo,
       at.id AS away_team_id, at.name AS away_team_name, at.logo_url AS away_logo
     FROM games g JOIN teams ht ON g.home_team_id = ht.id JOIN teams at ON g.away_team_id = at.id
-    WHERE (g.home_team_id = ? OR g.away_team_id = ?) AND g.status = 'complete' ${seasonId ? 'AND g.season_id = ?' : ''}
+    WHERE (g.home_team_id = ? OR g.away_team_id = ?) AND g.status IN ('complete','forfeit') ${seasonId ? 'AND g.season_id = ?' : ''}
     ORDER BY g.date DESC LIMIT 10
   `).all(...rp);
 
@@ -960,7 +1023,7 @@ app.get('/api/teams/:id/stats', async (req, res) => {
       SUM(CASE WHEN (home_team_id=@id AND home_score<away_score AND is_overtime=0) OR (away_team_id=@id AND away_score<home_score AND is_overtime=0) THEN 1 ELSE 0 END) AS losses,
       SUM(CASE WHEN (home_team_id=@id AND home_score<away_score AND is_overtime=1) OR (away_team_id=@id AND away_score<home_score AND is_overtime=1) THEN 1 ELSE 0 END) AS otl
     FROM games
-    WHERE (home_team_id=@id OR away_team_id=@id) AND status='complete'
+    WHERE (home_team_id=@id OR away_team_id=@id) AND status IN ('complete','forfeit')
     ${seasonId ? 'AND season_id=@sid' : ''}
   `).get(seasonId ? { id: req.params.id, sid: seasonId } : { id: req.params.id });
 
@@ -1008,7 +1071,7 @@ app.get('/api/teams/:id/records', async (req, res) => {
         COUNT(DISTINCT gps.game_id) AS gp
       FROM game_player_stats gps
       JOIN games g ON gps.game_id = g.id
-      WHERE gps.team_id = ? AND ${where} AND g.status = 'complete'
+      WHERE gps.team_id = ? AND ${where} AND g.status IN ('complete','forfeit')
       GROUP BY gps.player_name
       ORDER BY value ${orderDir}, gp DESC LIMIT 1
     `).get(id);
@@ -1024,7 +1087,7 @@ app.get('/api/teams/:id/records', async (req, res) => {
       FROM game_player_stats gps
       JOIN games g ON gps.game_id = g.id
       LEFT JOIN seasons s ON g.season_id = s.id
-      WHERE gps.team_id = ? AND ${where} AND g.status = 'complete'
+      WHERE gps.team_id = ? AND ${where} AND g.status IN ('complete','forfeit')
       GROUP BY gps.player_name, g.season_id
       ORDER BY value ${orderDir}, gp DESC LIMIT 1
     `).get(id);
@@ -1073,7 +1136,7 @@ app.get('/api/records', async (req, res) => {
         JOIN games g ON gps.game_id = g.id
         JOIN teams t ON gps.team_id = t.id
         LEFT JOIN seasons s ON g.season_id = s.id
-        WHERE ${where} AND g.status = 'complete' ${ltFilter}
+        WHERE ${where} AND g.status IN ('complete','forfeit') ${ltFilter}
         GROUP BY gps.player_name
       ),
       top_val AS (SELECT value FROM agg_vals ORDER BY value ${orderDir} LIMIT 1)
@@ -1096,7 +1159,7 @@ app.get('/api/records', async (req, res) => {
         JOIN games g ON gps.game_id = g.id
         JOIN teams t ON gps.team_id = t.id
         LEFT JOIN seasons s ON g.season_id = s.id
-        WHERE ${where} AND g.status = 'complete' ${ltFilter}
+        WHERE ${where} AND g.status IN ('complete','forfeit') ${ltFilter}
         GROUP BY gps.player_name, g.season_id
         ${having}
       ),
@@ -1120,7 +1183,7 @@ app.get('/api/records', async (req, res) => {
         JOIN teams ht ON g.home_team_id = ht.id
         JOIN teams at2 ON g.away_team_id = at2.id
         LEFT JOIN seasons s ON g.season_id = s.id
-        WHERE ${where} AND g.status = 'complete' ${ltFilter}
+        WHERE ${where} AND g.status IN ('complete','forfeit') ${ltFilter}
       ),
       top_val AS (SELECT value FROM game_vals ORDER BY value ${orderDir} LIMIT 1)
       SELECT gv.* FROM game_vals gv WHERE gv.value = (SELECT value FROM top_val)
@@ -1240,7 +1303,7 @@ app.get('/api/records', async (req, res) => {
       JOIN teams ht ON g.home_team_id = ht.id
       JOIN teams at2 ON g.away_team_id = at2.id
       LEFT JOIN seasons s ON g.season_id = s.id
-      WHERE gps.position != 'G' AND g.status = 'complete' ${ltFilterSg}
+      WHERE gps.position != 'G' AND g.status IN ('complete','forfeit') ${ltFilterSg}
     ),
     top_val AS (SELECT value FROM game_vals ORDER BY value DESC LIMIT 1)
     SELECT gv.* FROM game_vals gv WHERE gv.value = (SELECT value FROM top_val)
@@ -1294,7 +1357,7 @@ app.get('/api/players/records/:name', async (req, res) => {
         FROM game_player_stats gps
         JOIN games g ON gps.game_id = g.id
         LEFT JOIN seasons s ON g.season_id = s.id
-        WHERE ${where} AND g.status = 'complete' ${ltFilter}
+        WHERE ${where} AND g.status IN ('complete','forfeit') ${ltFilter}
         GROUP BY gps.player_name
       ),
       top_val AS (SELECT value FROM agg_vals ORDER BY value ${orderDir} LIMIT 1)
@@ -1321,7 +1384,7 @@ app.get('/api/players/records/:name', async (req, res) => {
         FROM game_player_stats gps
         JOIN games g ON gps.game_id = g.id
         LEFT JOIN seasons s ON g.season_id = s.id
-        WHERE ${where} AND g.status = 'complete' ${ltFilter}
+        WHERE ${where} AND g.status IN ('complete','forfeit') ${ltFilter}
         GROUP BY gps.player_name, g.season_id ${having}
       ),
       top_val AS (SELECT value FROM agg_vals ORDER BY value ${orderDir} LIMIT 1)
@@ -1349,7 +1412,7 @@ app.get('/api/players/records/:name', async (req, res) => {
         JOIN teams ht ON g.home_team_id = ht.id
         JOIN teams at2 ON g.away_team_id = at2.id
         LEFT JOIN seasons s ON g.season_id = s.id
-        WHERE ${where} AND g.status = 'complete' ${ltFilter}
+        WHERE ${where} AND g.status IN ('complete','forfeit') ${ltFilter}
       ),
       top_val AS (SELECT value FROM game_vals ORDER BY value ${orderDir} LIMIT 1)
       SELECT * FROM game_vals WHERE value = (SELECT value FROM top_val)
@@ -1368,7 +1431,7 @@ app.get('/api/players/records/:name', async (req, res) => {
       SELECT gps.player_name AS name, ${agg} AS value, COUNT(DISTINCT gps.game_id) AS gp
       FROM game_player_stats gps
       JOIN games g ON gps.game_id = g.id
-      WHERE gps.team_id = ? AND ${where} AND g.status = 'complete'
+      WHERE gps.team_id = ? AND ${where} AND g.status IN ('complete','forfeit')
       GROUP BY gps.player_name ORDER BY value ${orderDir}, gp DESC LIMIT 1
     `).get(teamId);
     if (row && row.name === name) {
@@ -1484,7 +1547,7 @@ app.get('/api/players/records/:name', async (req, res) => {
         JOIN teams ht ON g.home_team_id = ht.id
         JOIN teams at2 ON g.away_team_id = at2.id
         LEFT JOIN seasons s ON g.season_id = s.id
-        WHERE gps.position != 'G' AND g.status = 'complete' ${ltFilterPts}
+        WHERE gps.position != 'G' AND g.status IN ('complete','forfeit') ${ltFilterPts}
       ),
       top_val AS (SELECT value FROM game_vals ORDER BY value DESC LIMIT 1)
       SELECT * FROM game_vals WHERE value = (SELECT value FROM top_val)
@@ -1568,7 +1631,7 @@ app.get('/api/players/profile/:name', async (req, res) => {
       JOIN teams t ON gps.team_id = t.id
       JOIN games g ON gps.game_id = g.id
       LEFT JOIN seasons s ON g.season_id = s.id
-      WHERE gps.player_name = ? AND gps.position = 'G' AND g.status = 'complete'
+      WHERE gps.player_name = ? AND gps.position = 'G' AND g.status IN ('complete','forfeit')
       GROUP BY g.season_id, gps.team_id, CASE WHEN g.playoff_series_id IS NOT NULL THEN 1 ELSE 0 END
       ORDER BY g.season_id DESC, is_playoff
     `).all(name);
@@ -1582,7 +1645,7 @@ app.get('/api/players/profile/:name', async (req, res) => {
       JOIN teams t ON gps.team_id = t.id
       JOIN games g ON gps.game_id = g.id
       LEFT JOIN seasons s ON g.season_id = s.id
-      WHERE gps.player_name = ? AND gps.position != 'G' AND g.status = 'complete'
+      WHERE gps.player_name = ? AND gps.position != 'G' AND g.status IN ('complete','forfeit')
       GROUP BY g.season_id, gps.team_id, CASE WHEN g.playoff_series_id IS NOT NULL THEN 1 ELSE 0 END
       ORDER BY g.season_id DESC, is_playoff
     `).all(name);
@@ -1611,7 +1674,7 @@ app.get('/api/players/profile/:name', async (req, res) => {
     JOIN teams ht ON g.home_team_id = ht.id
     JOIN teams at ON g.away_team_id = at.id
     LEFT JOIN seasons s ON g.season_id = s.id
-    WHERE gps.player_name = ? AND g.status = 'complete'
+    WHERE gps.player_name = ? AND g.status IN ('complete','forfeit')
     ORDER BY g.date DESC, g.id DESC LIMIT 5
   `).all(name);
 
@@ -1778,7 +1841,7 @@ app.patch('/api/games/:id', requireAdmin, async (req, res) => {
   const effectiveSeries = req.body.playoff_series_id !== undefined
     ? (req.body.playoff_series_id ? Number(req.body.playoff_series_id) : null)
     : game.playoff_series_id;
-  if (effectiveSeries && status === 'complete') {
+  if (effectiveSeries && (status === 'complete' || status === 'forfeit')) {
     await recomputeSeriesWins(effectiveSeries);
   }
 
@@ -1929,7 +1992,7 @@ app.get('/api/stats/leaders', async (req, res) => {
     LEFT JOIN ${rosterSub} ON rp.name = gps.player_name
     LEFT JOIN teams t ON t.id = rp.team_id
     LEFT JOIN users u ON u.username = gps.player_name
-    WHERE gps.position != 'G' AND g.status = 'complete' ${sf}
+    WHERE gps.position != 'G' AND g.status IN ('complete','forfeit') ${sf}
     GROUP BY gps.player_name ORDER BY points DESC, goals DESC
   `).all(...p);
 
@@ -1970,7 +2033,7 @@ app.get('/api/stats/leaders', async (req, res) => {
     JOIN games g ON gps.game_id = g.id
     LEFT JOIN ${rosterSub} ON rp.name = gps.player_name
     LEFT JOIN teams t ON t.id = rp.team_id
-    WHERE gps.position = 'G' AND g.status = 'complete' ${sf}
+    WHERE gps.position = 'G' AND g.status IN ('complete','forfeit') ${sf}
     GROUP BY gps.player_name ORDER BY save_pct DESC
   `).all(...p);
 
@@ -2026,7 +2089,7 @@ app.get('/api/admin/unrostered-stats', requireOwner, async (req, res) => {
     JOIN teams t ON gps.team_id = t.id
     JOIN games g ON gps.game_id = g.id
     LEFT JOIN players p ON p.name = gps.player_name AND p.team_id = gps.team_id AND p.is_rostered = 1
-    WHERE g.status = 'complete' AND p.id IS NULL
+    WHERE g.status IN ('complete','forfeit') AND p.id IS NULL
     GROUP BY gps.player_name, gps.team_id
     ORDER BY t.name, gps.player_name
   `).all();
@@ -2037,8 +2100,8 @@ app.get('/api/admin/unrostered-stats', requireOwner, async (req, res) => {
 
 async function calcStandings(seasonId) {
   const filter = seasonId
-    ? "SELECT * FROM games WHERE status = 'complete' AND season_id = ? ORDER BY date ASC, id ASC"
-    : "SELECT * FROM games WHERE status = 'complete' ORDER BY date ASC, id ASC";
+    ? "SELECT * FROM games WHERE status IN ('complete','forfeit') AND season_id = ? ORDER BY date ASC, id ASC"
+    : "SELECT * FROM games WHERE status IN ('complete','forfeit') ORDER BY date ASC, id ASC";
   const games = seasonId ? await db.prepare(filter).all(seasonId) : await db.prepare(filter).all();
   const teamIds = new Set();
   for (const g of games) { teamIds.add(g.home_team_id); teamIds.add(g.away_team_id); }
@@ -2356,7 +2419,7 @@ async function recomputeSeriesWins(seriesId) {
 
   // Count how many complete games each team has won in this series
   const games = await db.prepare(
-    "SELECT home_team_id, away_team_id, home_score, away_score FROM games WHERE playoff_series_id = ? AND status = 'complete'"
+    "SELECT home_team_id, away_team_id, home_score, away_score FROM games WHERE playoff_series_id = ? AND status IN ('complete','forfeit')"
   ).all(seriesId);
 
   let hw = 0, lw = 0;
@@ -2822,14 +2885,14 @@ app.get('/api/stats/historical', async (req, res) => {
 // bracket structures (playoffs, playoff_series, playoff_teams tables).
 
 app.post('/api/admin/import-mso-json', requireOwner, async (req, res) => {
-  const { season_name, league_type, games } = req.body || {};
-  if (!season_name || typeof season_name !== 'string' || !season_name.trim()) {
-    return res.status(400).json({ error: '"season_name" is required.' });
+  const { season_name, season_id, league_type, games } = req.body || {};
+  if (!season_name && !season_id) {
+    return res.status(400).json({ error: '"season_name" or "season_id" is required.' });
   }
   if (!Array.isArray(games) || games.length === 0) {
     return res.status(400).json({ error: '"games" must be a non-empty array.' });
   }
-  const sName = season_name.trim();
+  const sName = (season_name || '').trim();
   const lt = String(league_type || '').trim();
 
   // ── Helpers ──────────────────────────────────────────────────────────────
@@ -2956,7 +3019,7 @@ app.post('/api/admin/import-mso-json', requireOwner, async (req, res) => {
   // ── Main import logic ──────────────────────────────────────────────────
 
   const summary = {
-    season: sName,
+    season: sName || `Season #${season_id}`,
     teams_created: 0,
     games_created: 0,
     games_skipped: 0,
@@ -3081,13 +3144,27 @@ app.post('/api/admin/import-mso-json', requireOwner, async (req, res) => {
 
     // Create / find the regular season
     let seasonId;
-    const existingSeason = await db.prepare('SELECT id FROM seasons WHERE name = ?').get(sName);
-    if (existingSeason) {
-      seasonId = existingSeason.id;
+    let resolvedSeasonName = sName;
+    let resolvedLt = lt;
+    if (season_id) {
+      // Use the provided existing season
+      const existing = await db.prepare('SELECT id, name, league_type FROM seasons WHERE id = ?').get(season_id);
+      if (!existing) {
+        return res.status(400).json({ error: `Season with id ${season_id} not found.` });
+      }
+      seasonId = existing.id;
+      resolvedSeasonName = existing.name;
+      resolvedLt = existing.league_type || lt;
     } else {
-      const r = await db.prepare('INSERT INTO seasons (name, is_active, league_type) VALUES (?, 0, ?)').run(sName, lt);
-      seasonId = r.lastInsertRowid;
+      const existingSeason = await db.prepare('SELECT id FROM seasons WHERE name = ?').get(sName);
+      if (existingSeason) {
+        seasonId = existingSeason.id;
+      } else {
+        const r = await db.prepare('INSERT INTO seasons (name, is_active, league_type) VALUES (?, 0, ?)').run(sName, lt);
+        seasonId = r.lastInsertRowid;
+      }
     }
+    summary.season = resolvedSeasonName;
 
     // Import regular-season games
     for (const g of regularGames) {
@@ -3097,13 +3174,13 @@ app.post('/api/admin/import-mso-json', requireOwner, async (req, res) => {
     // Import playoff games
     if (playoffGames.length > 0) {
       // Create / find the playoff season
-      const playoffSeasonName = `${sName} Playoffs`;
+      const playoffSeasonName = `${resolvedSeasonName} Playoffs`;
       let playoffSeasonId;
       const existingPS = await db.prepare('SELECT id FROM seasons WHERE name = ?').get(playoffSeasonName);
       if (existingPS) {
         playoffSeasonId = existingPS.id;
       } else {
-        const r = await db.prepare('INSERT INTO seasons (name, is_active, league_type, is_playoff) VALUES (?, 0, ?, 1)').run(playoffSeasonName, lt);
+        const r = await db.prepare('INSERT INTO seasons (name, is_active, league_type, is_playoff) VALUES (?, 0, ?, 1)').run(playoffSeasonName, resolvedLt);
         playoffSeasonId = r.lastInsertRowid;
       }
 

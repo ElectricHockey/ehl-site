@@ -190,9 +190,15 @@ async function loadStats() {
 
 if (typeof SeasonSelector !== 'undefined') {
   (async () => {
-    await SeasonSelector.init('season-selector-container');
-    SeasonSelector.onSeasonChange(() => loadStats());
-    loadStats();
+    try {
+      await SeasonSelector.init('season-selector-container');
+      SeasonSelector.onSeasonChange(() => loadStats());
+      loadStats();
+    } catch (err) {
+      console.error('[stats] init error:', err);
+      const root = document.getElementById('skaters-root');
+      if (root) root.innerHTML = '<p style="color:#f85149;">Failed to load stats. Please refresh the page.</p>';
+    }
   })();
 } else {
   loadStats();

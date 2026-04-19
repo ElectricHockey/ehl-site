@@ -283,14 +283,16 @@ async function loadSeasons() {
   if (filteredSeasons.length === 0) {
     list.innerHTML = `<p style="color:#8b949e;font-size:0.85rem;">No ${adminLeagueFilter === 'threes' ? "3's" : "6's"} seasons yet. Create one above.</p>`;
   } else {
-    list.innerHTML = filteredSeasons.map(s => `
+    list.innerHTML = filteredSeasons.map((s, idx) => `
       <div class="season-item">
         ${s.is_active ? '<span class="season-active-badge">★ Active</span>' : ''}
         ${s.is_playoff ? '<span style="background:#2d1b00;color:#e3b341;border:1px solid #9e6a03;border-radius:10px;padding:0.1rem 0.45rem;font-size:0.72rem;margin-right:0.25rem;">🏆 Playoffs</span>' : ''}
         <strong style="flex:1;">${s.name}</strong>
         <span style="color:#8b949e;font-size:0.8rem;">${typeLabel(s.league_type)}</span>
+        <button style="font-size:0.75rem;padding:0.15rem 0.4rem;background:#21262d;border:1px solid #30363d;color:#8b949e;border-radius:4px;cursor:pointer;" onclick="moveSeasonUp(${s.id})" ${idx === 0 ? 'disabled' : ''} title="Move up">▲</button>
+        <button style="font-size:0.75rem;padding:0.15rem 0.4rem;background:#21262d;border:1px solid #30363d;color:#8b949e;border-radius:4px;cursor:pointer;" onclick="moveSeasonDown(${s.id})" ${idx === filteredSeasons.length - 1 ? 'disabled' : ''} title="Move down">▼</button>
         ${!s.is_active && !s.is_playoff ? `<button class="btn-secondary" style="font-size:0.8rem;padding:0.25rem 0.6rem;" onclick="setActiveSeason(${s.id})">Set Active</button>` : ''}
-        ${!s.is_playoff ? `<button class="btn-danger" style="font-size:0.8rem;padding:0.25rem 0.6rem;" onclick="deleteSeason(${s.id})">Delete</button>` : ''}
+        <button class="btn-danger" style="font-size:0.8rem;padding:0.25rem 0.6rem;" onclick="deleteSeason(${s.id}, ${s.is_playoff ? 'true' : 'false'})">Delete</button>
       </div>`).join('');
   }
 
@@ -299,6 +301,14 @@ async function loadSeasons() {
   const seasonOpts = '<option value="">— No Season —</option>' +
     regularSeasons.map(s => `<option value="${s.id}"${s.is_active ? ' selected' : ''}>${s.name} (${typeLabel(s.league_type)})</option>`).join('');
   document.getElementById('game-season').innerHTML = seasonOpts;
+
+  // Populate MSO import season dropdown (all regular seasons, not filtered by league)
+  const msoSeasonSelect = document.getElementById('mso-season-select');
+  if (msoSeasonSelect) {
+    const allRegular = allSeasons.filter(s => !s.is_playoff);
+    msoSeasonSelect.innerHTML = '<option value="">– Create new season –</option>' +
+      allRegular.map(s => `<option value="${s.id}">${s.name} (${typeLabel(s.league_type)})${s.is_active ? ' ★' : ''}</option>`).join('');
+  }
 }
 
 document.getElementById('season-form').addEventListener('submit', async e => {
@@ -318,10 +328,29 @@ async function setActiveSeason(id) {
   await loadSeasons();
 }
 
-async function deleteSeason(id) {
-  if (!confirm('Delete this season? Games in this season will become unassigned.')) return;
+async function deleteSeason(id, isPlayoff) {
+  const msg = isPlayoff
+    ? 'Delete this playoff season? Associated playoff bracket, series, and game links will be removed.'
+    : 'Delete this season? Games in this season will become unassigned.';
+  if (!confirm(msg)) return;
   await fetch(`${API}/seasons/${id}`, { method: 'DELETE', headers: adminHeaders() });
   await loadSeasons(); await loadGames();
+}
+
+async function moveSeasonUp(id) {
+  await fetch(`${API}/seasons/${id}/reorder`, {
+    method: 'POST', headers: adminJsonHeaders(),
+    body: JSON.stringify({ direction: 'up' }),
+  });
+  await loadSeasons();
+}
+
+async function moveSeasonDown(id) {
+  await fetch(`${API}/seasons/${id}/reorder`, {
+    method: 'POST', headers: adminJsonHeaders(),
+    body: JSON.stringify({ direction: 'down' }),
+  });
+  await loadSeasons();
 }
 
 // ── Teams ─────────────────────────────────────────────────────────────────
@@ -1131,6 +1160,26 @@ function showImportStatus(msg, ok) {
 }
 
 async function sendImport(data) {
+  // Auto-detect MSO scraper format: a JSON array of game objects with MSO-specific fields.
+  // The generic import format is always an object ({ seasons: [...] }), never an array.
+  if (Array.isArray(data) && data.length > 0 && data[0] && (data[0].home_team || data[0].away_team || data[0].game_type)) {
+    // Route to MSO import; show status in the generic import area too
+    const msoSeasonSelect = document.getElementById('mso-season-select');
+    const msoSeasonName = document.getElementById('mso-season-name');
+    const hasSeasonInfo = (msoSeasonSelect && msoSeasonSelect.value) || (msoSeasonName && msoSeasonName.value && msoSeasonName.value.trim());
+    if (!hasSeasonInfo) {
+      showImportStatus(
+        '🔄 This file is in MSO scraper format.<br>' +
+        'Please scroll down to the <b>Import MSO Scraper JSON</b> section, ' +
+        'select a season (or enter a new season name), and import the file there.',
+        false
+      );
+      return;
+    }
+    showImportStatus('🔄 Detected MSO scraper format — importing…', true);
+    await sendMsoImport(data);
+    return;
+  }
   try {
     const res = await fetch('/api/admin/import', {
       method: 'POST',
@@ -1200,6 +1249,19 @@ async function runImportText() {
 
 // ── MSO Scraper JSON import ───────────────────────────────────────────────
 
+function toggleMsoNewSeasonFields() {
+  const sel = document.getElementById('mso-season-select');
+  const fields = document.getElementById('mso-new-season-fields');
+  if (sel && fields) {
+    fields.style.display = sel.value ? 'none' : '';
+  }
+}
+// Wire up the toggle when the select changes
+document.addEventListener('DOMContentLoaded', () => {
+  const sel = document.getElementById('mso-season-select');
+  if (sel) sel.addEventListener('change', toggleMsoNewSeasonFields);
+});
+
 function showMsoImportStatus(msg, ok) {
   const el = document.getElementById('mso-import-status');
   if (!el) return;
@@ -1211,18 +1273,30 @@ function showMsoImportStatus(msg, ok) {
 }
 
 async function sendMsoImport(gamesArray) {
+  const seasonSelect = document.getElementById('mso-season-select');
+  const existingSeasonId = seasonSelect ? seasonSelect.value : '';
   const seasonName = (document.getElementById('mso-season-name') || {}).value || '';
   const leagueType = (document.getElementById('mso-league-type') || {}).value || '';
-  if (!seasonName.trim()) {
-    showMsoImportStatus('❌ Please enter a Season name.', false);
+
+  if (!existingSeasonId && !seasonName.trim()) {
+    showMsoImportStatus('❌ Please select an existing season or enter a new season name.', false);
     return;
   }
+
+  const body = { games: gamesArray };
+  if (existingSeasonId) {
+    body.season_id = Number(existingSeasonId);
+  } else {
+    body.season_name = seasonName.trim();
+    body.league_type = leagueType;
+  }
+
   showMsoImportStatus('⏳ Importing… this may take a moment for large files.', true);
   try {
     const res = await fetch('/api/admin/import-mso-json', {
       method: 'POST',
       headers: adminJsonHeaders(),
-      body: JSON.stringify({ season_name: seasonName.trim(), league_type: leagueType, games: gamesArray }),
+      body: JSON.stringify(body),
     });
     const json = await res.json().catch(() => ({}));
     if (res.ok && json.ok) {
@@ -1239,6 +1313,8 @@ async function sendMsoImport(gamesArray) {
         if (s.errors.length > MAX_DISPLAYED_ERRORS) msg += `\n…and ${s.errors.length - MAX_DISPLAYED_ERRORS} more`;
       }
       showMsoImportStatus(msg, true);
+      // Refresh seasons list to show any newly created seasons
+      if (typeof loadSeasons === 'function') loadSeasons();
     } else {
       showMsoImportStatus(`❌ Import failed: ${json.error || res.status}`, false);
     }
