@@ -1198,6 +1198,101 @@ async function runImportText() {
   await sendImport(data);
 }
 
+// ── MSO Scraper JSON import ───────────────────────────────────────────────
+
+function showMsoImportStatus(msg, ok) {
+  const el = document.getElementById('mso-import-status');
+  if (!el) return;
+  el.style.display = 'block';
+  el.style.background = ok ? 'rgba(63,185,80,0.12)' : 'rgba(248,81,73,0.12)';
+  el.style.border = ok ? '1px solid rgba(63,185,80,0.4)' : '1px solid rgba(248,81,73,0.4)';
+  el.style.color = ok ? '#3fb950' : '#f85149';
+  el.textContent = msg;
+}
+
+async function sendMsoImport(gamesArray) {
+  const seasonName = (document.getElementById('mso-season-name') || {}).value || '';
+  const leagueType = (document.getElementById('mso-league-type') || {}).value || '';
+  if (!seasonName.trim()) {
+    showMsoImportStatus('❌ Please enter a Season name.', false);
+    return;
+  }
+  showMsoImportStatus('⏳ Importing… this may take a moment for large files.', true);
+  try {
+    const res = await fetch('/api/admin/import-mso-json', {
+      method: 'POST',
+      headers: adminJsonHeaders(),
+      body: JSON.stringify({ season_name: seasonName.trim(), league_type: leagueType, games: gamesArray }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (res.ok && json.ok) {
+      const s = json.summary || {};
+      const MAX_DISPLAYED_ERRORS = 10;
+      let msg = `✅ MSO import complete!\n` +
+        `Season: ${s.season || seasonName}\n` +
+        `Teams created: ${s.teams_created}\n` +
+        `Games created: ${s.games_created}  |  Skipped (duplicate): ${s.games_skipped}\n` +
+        `Games with stats: ${s.stats_imported}\n` +
+        `Playoff series created: ${s.playoff_series_created}`;
+      if (s.errors && s.errors.length) {
+        msg += `\n\nErrors (${s.errors.length}):\n` + s.errors.slice(0, MAX_DISPLAYED_ERRORS).join('\n');
+        if (s.errors.length > MAX_DISPLAYED_ERRORS) msg += `\n…and ${s.errors.length - MAX_DISPLAYED_ERRORS} more`;
+      }
+      showMsoImportStatus(msg, true);
+    } else {
+      showMsoImportStatus(`❌ Import failed: ${json.error || res.status}`, false);
+    }
+  } catch (e) {
+    showMsoImportStatus(`❌ Network error: ${e.message}`, false);
+  }
+}
+
+async function runMsoImport() {
+  const fileInput = document.getElementById('mso-import-file');
+  if (!fileInput || !fileInput.files.length) {
+    showMsoImportStatus('❌ Please select a JSON file first.', false);
+    return;
+  }
+  const file = fileInput.files[0];
+  if (file.size > 50 * 1024 * 1024) {
+    showMsoImportStatus('❌ File too large (max 50 MB).', false);
+    return;
+  }
+  let data;
+  try {
+    const text = await file.text();
+    data = JSON.parse(text);
+  } catch {
+    showMsoImportStatus('❌ Invalid JSON – could not parse the file.', false);
+    return;
+  }
+  if (!Array.isArray(data)) {
+    showMsoImportStatus('❌ Expected a JSON array of game objects.', false);
+    return;
+  }
+  await sendMsoImport(data);
+}
+
+async function runMsoImportText() {
+  const textarea = document.getElementById('mso-import-text');
+  if (!textarea || !textarea.value.trim()) {
+    showMsoImportStatus('❌ Please paste JSON data first.', false);
+    return;
+  }
+  let data;
+  try {
+    data = JSON.parse(textarea.value.trim());
+  } catch {
+    showMsoImportStatus('❌ Invalid JSON – check your pasted text.', false);
+    return;
+  }
+  if (!Array.isArray(data)) {
+    showMsoImportStatus('❌ Expected a JSON array of game objects.', false);
+    return;
+  }
+  await sendMsoImport(data);
+}
+
 // ── Excel schedule import ─────────────────────────────────────────────────
 
 function showXlImportStatus(msg, ok) {
