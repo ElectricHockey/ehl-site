@@ -654,6 +654,113 @@ app.delete('/api/teams/:id', requireOwner, async (req, res) => {
   res.json({ deleted: true });
 });
 
+// POST /api/admin/merge-teams – merge source team into target team
+// All references to the source team are updated to point to the target team.
+// The source team is then deleted.
+app.post('/api/admin/merge-teams', requireOwner, async (req, res) => {
+  const { source_id, target_id } = req.body;
+  if (!source_id || !target_id) return res.status(400).json({ error: 'source_id and target_id are required' });
+  if (Number(source_id) === Number(target_id)) return res.status(400).json({ error: 'Source and target must be different teams' });
+
+  const source = await db.prepare('SELECT * FROM teams WHERE id = ?').get(source_id);
+  const target = await db.prepare('SELECT * FROM teams WHERE id = ?').get(target_id);
+  if (!source) return res.status(404).json({ error: 'Source team not found' });
+  if (!target) return res.status(404).json({ error: 'Target team not found' });
+
+  // Update all game_player_stats from source to target
+  await db.prepare('UPDATE game_player_stats SET team_id = ? WHERE team_id = ?').run(target_id, source_id);
+
+  // Update all season_player_stats from source to target
+  await db.prepare('UPDATE season_player_stats SET team_id = ? WHERE team_id = ?').run(target_id, source_id);
+
+  // Update games: home_team_id and away_team_id
+  await db.prepare('UPDATE games SET home_team_id = ? WHERE home_team_id = ?').run(target_id, source_id);
+  await db.prepare('UPDATE games SET away_team_id = ? WHERE away_team_id = ?').run(target_id, source_id);
+
+  // Update players: move roster entries (avoid duplicates – if player already exists on target, remove the source one)
+  const sourcePlayers = await db.prepare('SELECT * FROM players WHERE team_id = ?').all(source_id);
+  for (const sp of sourcePlayers) {
+    const existing = await db.prepare('SELECT id FROM players WHERE team_id = ? AND name = ?').get(target_id, sp.name);
+    if (existing) {
+      // Player already on target team – remove the source player record
+      await db.prepare('DELETE FROM players WHERE id = ?').run(sp.id);
+    } else {
+      await db.prepare('UPDATE players SET team_id = ? WHERE id = ?').run(target_id, sp.id);
+    }
+  }
+
+  // Update playoff_teams
+  await db.prepare('UPDATE playoff_teams SET team_id = ? WHERE team_id = ?').run(target_id, source_id);
+
+  // Update playoff_series
+  await db.prepare('UPDATE playoff_series SET high_seed_id = ? WHERE high_seed_id = ?').run(target_id, source_id);
+  await db.prepare('UPDATE playoff_series SET low_seed_id = ? WHERE low_seed_id = ?').run(target_id, source_id);
+  await db.prepare('UPDATE playoff_series SET winner_id = ? WHERE winner_id = ?').run(target_id, source_id);
+
+  // Update signing_offers
+  await db.prepare('UPDATE signing_offers SET team_id = ? WHERE team_id = ?').run(target_id, source_id);
+
+  // Move team_staff (skip duplicates)
+  await db.prepare('DELETE FROM team_staff WHERE team_id = ? AND user_id IN (SELECT user_id FROM team_staff WHERE team_id = ?)').run(source_id, target_id);
+  await db.prepare('UPDATE team_staff SET team_id = ? WHERE team_id = ?').run(target_id, source_id);
+
+  // Delete the source team
+  if (source.logo_url) await deleteFromStorage(source.logo_url);
+  await db.prepare('DELETE FROM teams WHERE id = ?').run(source_id);
+
+  res.json({ ok: true, merged: { source: source.name, target: target.name } });
+});
+
+// POST /api/admin/merge-players – merge source player name into target player name
+// All game stats and historical stats referencing the source name are updated to the target name.
+app.post('/api/admin/merge-players', requireOwner, async (req, res) => {
+  const { source_name, target_name } = req.body;
+  if (!source_name || !target_name) return res.status(400).json({ error: 'source_name and target_name are required' });
+  if (source_name.trim().toLowerCase() === target_name.trim().toLowerCase()) {
+    return res.status(400).json({ error: 'Source and target must be different players' });
+  }
+
+  const srcName = source_name.trim();
+  const tgtName = target_name.trim();
+
+  // Update all game_player_stats from source name to target name
+  await db.prepare('UPDATE game_player_stats SET player_name = ? WHERE player_name = ?').run(tgtName, srcName);
+
+  // Update all season_player_stats from source name to target name
+  await db.prepare('UPDATE season_player_stats SET player_name = ? WHERE player_name = ?').run(tgtName, srcName);
+
+  // Update player records: if target player already exists, just remove the source
+  const sourcePlayers = await db.prepare('SELECT * FROM players WHERE name = ?').all(srcName);
+  for (const sp of sourcePlayers) {
+    const existingTarget = await db.prepare('SELECT id FROM players WHERE name = ? AND team_id = ?').get(tgtName, sp.team_id);
+    if (existingTarget) {
+      // If source had user_id but target doesn't, transfer it
+      if (sp.user_id) {
+        const tgtPlayer = await db.prepare('SELECT user_id FROM players WHERE id = ?').get(existingTarget.id);
+        if (!tgtPlayer.user_id) {
+          await db.prepare('UPDATE players SET user_id = ? WHERE id = ?').run(sp.user_id, existingTarget.id);
+        }
+      }
+      await db.prepare('DELETE FROM players WHERE id = ?').run(sp.id);
+    } else {
+      await db.prepare('UPDATE players SET name = ? WHERE id = ?').run(tgtName, sp.id);
+    }
+  }
+
+  // Update username in users table if the source has a matching user account
+  const sourceUser = await db.prepare('SELECT id FROM users WHERE username = ?').get(srcName);
+  if (sourceUser) {
+    const targetUser = await db.prepare('SELECT id FROM users WHERE username = ?').get(tgtName);
+    if (!targetUser) {
+      // Rename the user account
+      await db.prepare('UPDATE users SET username = ? WHERE id = ?').run(tgtName, sourceUser.id);
+    }
+    // If both exist, the source user account remains (admin can clean up separately)
+  }
+
+  res.json({ ok: true, merged: { source: srcName, target: tgtName } });
+});
+
 // ── Team owner / GM management ─────────────────────────────────────────────
 
 // Admin assigns team owner
@@ -1625,6 +1732,7 @@ app.get('/api/players/profile/:name', async (req, res) => {
   const rawGoalieStats = await db.prepare(`
       SELECT g.season_id, COALESCE(s.name,'No Season') AS season_name,
         COALESCE(s.league_type,'') AS league_type,
+        COALESCE(s.sort_order, g.season_id) AS _sort_order,
         CASE WHEN g.playoff_series_id IS NOT NULL THEN 1 ELSE 0 END AS is_playoff,
         ${GOALIE_SELECT}
       FROM game_player_stats gps
@@ -1633,12 +1741,13 @@ app.get('/api/players/profile/:name', async (req, res) => {
       LEFT JOIN seasons s ON g.season_id = s.id
       WHERE gps.player_name = ? AND gps.position = 'G' AND g.status IN ('complete','forfeit')
       GROUP BY g.season_id, gps.team_id, CASE WHEN g.playoff_series_id IS NOT NULL THEN 1 ELSE 0 END
-      ORDER BY g.season_id DESC, is_playoff
+      ORDER BY COALESCE(s.sort_order, g.season_id) DESC, is_playoff
     `).all(name);
 
   const rawSkaterStats = await db.prepare(`
       SELECT g.season_id, COALESCE(s.name,'No Season') AS season_name,
         COALESCE(s.league_type,'') AS league_type,
+        COALESCE(s.sort_order, g.season_id) AS _sort_order,
         CASE WHEN g.playoff_series_id IS NOT NULL THEN 1 ELSE 0 END AS is_playoff,
         ${SKATER_SELECT}
       FROM game_player_stats gps
@@ -1647,7 +1756,7 @@ app.get('/api/players/profile/:name', async (req, res) => {
       LEFT JOIN seasons s ON g.season_id = s.id
       WHERE gps.player_name = ? AND gps.position != 'G' AND g.status IN ('complete','forfeit')
       GROUP BY g.season_id, gps.team_id, CASE WHEN g.playoff_series_id IS NOT NULL THEN 1 ELSE 0 END
-      ORDER BY g.season_id DESC, is_playoff
+      ORDER BY COALESCE(s.sort_order, g.season_id) DESC, is_playoff
     `).all(name);
 
   // Last 5 games
@@ -1682,6 +1791,7 @@ app.get('/api/players/profile/:name', async (req, res) => {
   const historicalStats = await db.prepare(`
     SELECT sps.season_id, COALESCE(s.name,'No Season') AS season_name,
       COALESCE(s.league_type,'') AS league_type,
+      COALESCE(s.sort_order, sps.season_id) AS _sort_order,
       t.id AS team_id, COALESCE(t.name,'FA') AS team_name,
       t.logo_url AS team_logo, t.color1 AS team_color1, t.color2 AS team_color2,
       sps.position, sps.games_played AS gp,
@@ -1694,7 +1804,7 @@ app.get('/api/players/profile/:name', async (req, res) => {
     LEFT JOIN seasons s ON s.id = sps.season_id
     LEFT JOIN teams t ON t.id = sps.team_id
     WHERE sps.player_name = ?
-    ORDER BY sps.season_id DESC
+    ORDER BY COALESCE(s.sort_order, sps.season_id) DESC
   `).all(name);
 
   // Merge historical rows for seasons not already covered by game stats
@@ -1704,7 +1814,7 @@ app.get('/api/players/profile/:name', async (req, res) => {
       ...gameStats.map(r => ({ ...r, is_historical: 0 })),
       ...historicalStats.filter(r => histFilter(r) && !covered.has(r.season_id)),
     ];
-    merged.sort((a, b) => (b.season_id || 0) - (a.season_id || 0));
+    merged.sort((a, b) => (b._sort_order || b.season_id || 0) - (a._sort_order || a.season_id || 0));
     return merged;
   }
 

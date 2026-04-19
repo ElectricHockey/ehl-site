@@ -402,6 +402,13 @@ async function loadTeams() {
   const rPrev = rSel.value;
   rSel.innerHTML = '<option value="">— Select a team —</option>' + leagueTeams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
   if (rPrev && leagueTeams.find(t => String(t.id) === rPrev)) rSel.value = rPrev;
+
+  // Merge teams dropdowns: show ALL teams
+  const mergeOpts = '<option value="">— Select team —</option>' + allTeams.map(t => `<option value="${t.id}">${t.name}${t.league_type ? ' (' + ltLabel(t.league_type) + ')' : ''}</option>`).join('');
+  const mSrc = document.getElementById('merge-team-source');
+  const mTgt = document.getElementById('merge-team-target');
+  if (mSrc) mSrc.innerHTML = mergeOpts;
+  if (mTgt) mTgt.innerHTML = mergeOpts;
 }
 
 // ── Roster Management ─────────────────────────────────────────────────────
@@ -502,6 +509,26 @@ async function deleteTeam(id) {
   await loadTeams(); await loadPlayers(); await loadGames(); await loadRegPlayers();
 }
 
+async function mergeTeams() {
+  const sourceId = document.getElementById('merge-team-source').value;
+  const targetId = document.getElementById('merge-team-target').value;
+  if (!sourceId || !targetId) { alert('Select both a source and target team.'); return; }
+  if (sourceId === targetId) { alert('Source and target must be different teams.'); return; }
+  const srcName = document.getElementById('merge-team-source').selectedOptions[0]?.textContent || 'source';
+  const tgtName = document.getElementById('merge-team-target').selectedOptions[0]?.textContent || 'target';
+  if (!confirm(`Merge "${srcName}" → "${tgtName}"?\n\nAll games, stats, and roster from "${srcName}" will be moved to "${tgtName}". "${srcName}" will be deleted.\n\nThis cannot be undone.`)) return;
+  try {
+    const res = await fetch(`${API}/admin/merge-teams`, {
+      method: 'POST',
+      headers: adminJsonHeaders(),
+      body: JSON.stringify({ source_id: Number(sourceId), target_id: Number(targetId) }),
+    });
+    if (!res.ok) { const e = await res.json().catch(() => ({})); alert(e.error || 'Failed to merge teams'); return; }
+    alert(`Successfully merged "${srcName}" into "${tgtName}".`);
+    await loadTeams(); await loadPlayers(); await loadGames();
+  } catch (err) { alert('Error merging teams: ' + err.message); }
+}
+
 async function setEaId(id) {
   const current = document.getElementById(`ea-id-${id}`).dataset.value || '';
   const val = prompt('Enter EA Club ID for this team (leave blank to clear):', current);
@@ -584,6 +611,14 @@ async function loadPlayers() {
           <button class="btn-danger" style="font-size:0.78rem;padding:0.2rem 0.4rem;" onclick="deletePlayer(${p.id})">Delete</button>
         </td>
       </tr>`).join('');
+
+  // Populate merge player dropdowns with unique player names
+  const uniqueNames = [...new Set(players.map(p => p.name))].sort();
+  const mergePlayerOpts = '<option value="">— Select player —</option>' + uniqueNames.map(n => `<option value="${escAttr(n)}">${escAttr(n)}</option>`).join('');
+  const mpSrc = document.getElementById('merge-player-source');
+  const mpTgt = document.getElementById('merge-player-target');
+  if (mpSrc) mpSrc.innerHTML = mergePlayerOpts;
+  if (mpTgt) mpTgt.innerHTML = mergePlayerOpts;
 }
 
 document.getElementById('player-form').addEventListener('submit', async e => {
@@ -602,6 +637,24 @@ async function deletePlayer(id) {
   if (!confirm('Delete this player?')) return;
   await fetch(`${API}/players/${id}`, { method: 'DELETE', headers: adminHeaders() });
   await loadPlayers();
+}
+
+async function mergePlayers() {
+  const sourceName = document.getElementById('merge-player-source').value;
+  const targetName = document.getElementById('merge-player-target').value;
+  if (!sourceName || !targetName) { alert('Select both a source and target player.'); return; }
+  if (sourceName === targetName) { alert('Source and target must be different players.'); return; }
+  if (!confirm(`Merge "${sourceName}" → "${targetName}"?\n\nAll game stats and historical stats from "${sourceName}" will be combined with "${targetName}". The "${sourceName}" player record will be removed.\n\nThis cannot be undone.`)) return;
+  try {
+    const res = await fetch(`${API}/admin/merge-players`, {
+      method: 'POST',
+      headers: adminJsonHeaders(),
+      body: JSON.stringify({ source_name: sourceName, target_name: targetName }),
+    });
+    if (!res.ok) { const e = await res.json().catch(() => ({})); alert(e.error || 'Failed to merge players'); return; }
+    alert(`Successfully merged "${sourceName}" into "${targetName}".`);
+    await loadTeams(); await loadPlayers();
+  } catch (err) { alert('Error merging players: ' + err.message); }
 }
 
 // ── Games ─────────────────────────────────────────────────────────────────

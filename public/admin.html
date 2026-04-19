@@ -177,6 +177,28 @@
           <thead><tr><th>Logo</th><th>Colors</th><th>Name</th><th>Type</th><th>Conference</th><th>Division</th><th>EA Club ID</th><th>Owner</th><th>Action</th></tr></thead>
           <tbody></tbody>
         </table>
+        <div class="form-section" style="margin-top:1.5rem;border-top:1px solid #30363d;padding-top:1rem;">
+          <h3 style="margin-bottom:0.75rem;">🔀 Merge Teams</h3>
+          <p style="color:#8b949e;font-size:0.85rem;margin-bottom:0.75rem;">
+            Merge one team into another. All games, stats, roster, and records from the source team will be transferred to the target team. The source team will be deleted.
+          </p>
+          <div style="display:flex;gap:1rem;align-items:flex-end;flex-wrap:wrap;">
+            <div class="form-group" style="margin-bottom:0;">
+              <label for="merge-team-source" style="font-size:0.85rem;">Source (will be deleted)</label>
+              <select id="merge-team-source" style="background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.35rem 0.6rem;min-width:180px;">
+                <option value="">— Select source team —</option>
+              </select>
+            </div>
+            <span style="color:#8b949e;font-size:1.2rem;padding-bottom:0.3rem;">→</span>
+            <div class="form-group" style="margin-bottom:0;">
+              <label for="merge-team-target" style="font-size:0.85rem;">Target (will keep)</label>
+              <select id="merge-team-target" style="background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.35rem 0.6rem;min-width:180px;">
+                <option value="">— Select target team —</option>
+              </select>
+            </div>
+            <button class="btn-danger" onclick="mergeTeams()" style="white-space:nowrap;">Merge Teams</button>
+          </div>
+        </div>
       </div>
 
       <!-- ── Roster tab ──────────────────────────────────────── -->
@@ -219,6 +241,28 @@
           <thead><tr><th>ID</th><th>#</th><th>Name</th><th>Position</th><th>Team</th><th>Discord</th><th>Actions</th></tr></thead>
           <tbody></tbody>
         </table>
+        <div class="form-section" style="margin-top:1.5rem;border-top:1px solid #30363d;padding-top:1rem;">
+          <h3 style="margin-bottom:0.75rem;">🔀 Merge Players</h3>
+          <p style="color:#8b949e;font-size:0.85rem;margin-bottom:0.75rem;">
+            Merge one player into another. All game stats and historical stats from the source player will be combined with the target player. The source player record will be removed.
+          </p>
+          <div style="display:flex;gap:1rem;align-items:flex-end;flex-wrap:wrap;">
+            <div class="form-group" style="margin-bottom:0;">
+              <label for="merge-player-source" style="font-size:0.85rem;">Source (will be merged away)</label>
+              <select id="merge-player-source" style="background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.35rem 0.6rem;min-width:200px;">
+                <option value="">— Select source player —</option>
+              </select>
+            </div>
+            <span style="color:#8b949e;font-size:1.2rem;padding-bottom:0.3rem;">→</span>
+            <div class="form-group" style="margin-bottom:0;">
+              <label for="merge-player-target" style="font-size:0.85rem;">Target (will keep)</label>
+              <select id="merge-player-target" style="background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.35rem 0.6rem;min-width:200px;">
+                <option value="">— Select target player —</option>
+              </select>
+            </div>
+            <button class="btn-danger" onclick="mergePlayers()" style="white-space:nowrap;">Merge Players</button>
+          </div>
+        </div>
       </div>
 
       <!-- ── Games tab ──────────────────────────────────── -->
