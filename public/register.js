@@ -128,6 +128,7 @@ function resetDiscordLink() {
   // Discord OAuth error
   const discordError = params.get('discord_error');
   if (discordError) {
+    showTab('login');
     const loginErr = document.getElementById('login-error');
     loginErr.textContent = `Discord connection failed: ${discordError}. Please try again.`;
     loginErr.style.display = '';

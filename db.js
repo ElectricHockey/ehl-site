@@ -438,7 +438,7 @@ async function initSchema() {
     await pool.query('ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL');
   } catch (err) {
     // Ignore if already nullable or column doesn't exist
-    if (!err.message.includes('does not exist')) {
+    if (err.message && !err.message.includes('does not exist')) {
       console.warn('[db] Migration warning (password_hash nullable):', err.message);
     }
   }
