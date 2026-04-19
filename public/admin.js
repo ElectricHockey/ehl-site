@@ -1139,9 +1139,23 @@ function showImportStatus(msg, ok) {
 }
 
 async function sendImport(data) {
-  // Auto-detect MSO scraper format (JSON array of game objects) and route to MSO import
-  if (Array.isArray(data)) {
-    showImportStatus('🔄 Detected MSO scraper format — routing to MSO import…', true);
+  // Auto-detect MSO scraper format: a JSON array of game objects with MSO-specific fields.
+  // The generic import format is always an object ({ seasons: [...] }), never an array.
+  if (Array.isArray(data) && data.length > 0 && data[0] && (data[0].home_team || data[0].away_team || data[0].game_type)) {
+    // Route to MSO import; show status in the generic import area too
+    const msoSeasonSelect = document.getElementById('mso-season-select');
+    const msoSeasonName = document.getElementById('mso-season-name');
+    const hasSeasonInfo = (msoSeasonSelect && msoSeasonSelect.value) || (msoSeasonName && msoSeasonName.value && msoSeasonName.value.trim());
+    if (!hasSeasonInfo) {
+      showImportStatus(
+        '🔄 This file is in MSO scraper format.<br>' +
+        'Please scroll down to the <b>Import MSO Scraper JSON</b> section, ' +
+        'select a season (or enter a new season name), and import the file there.',
+        false
+      );
+      return;
+    }
+    showImportStatus('🔄 Detected MSO scraper format — importing…', true);
     await sendMsoImport(data);
     return;
   }
