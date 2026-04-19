@@ -25,9 +25,17 @@ const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY
   || process.env.SUPABASE_SERVICE_ROLE_KEY
   || '';
-const supabase = (SUPABASE_URL && SUPABASE_SERVICE_KEY)
-  ? createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-  : null;
+// Guard: createClient throws if SUPABASE_URL is not a valid HTTP(S) URL
+// (e.g. when it's a postgres:// connection string from Vercel integration).
+function _isHttpUrl(s) {
+  try { const u = new URL(s); return u.protocol === 'http:' || u.protocol === 'https:'; } catch { return false; }
+}
+let supabase = null;
+if (_isHttpUrl(SUPABASE_URL) && SUPABASE_SERVICE_KEY) {
+  try { supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY); } catch (e) {
+    console.warn('[supabase] createClient failed:', e.message);
+  }
+}
 const STORAGE_BUCKET = 'uploads';
 
 /**
@@ -121,7 +129,7 @@ const excelUpload = multer({
 
 // ── Rate limiting ──────────────────────────────────────────────────────────
 
-const apiLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 300, standardHeaders: true, legacyHeaders: false });
+const apiLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 300, standardHeaders: true, legacyHeaders: false, validate: { ip: false } });
 
 app.set('trust proxy', 1); // trust first proxy so req.ip reflects real client IP
 app.use(cors());
@@ -134,13 +142,28 @@ if (!process.env.VERCEL) {
 // ── Run async initialisation (schema + seed teams) ───────────────────────
 // Store the promise so we can gate incoming requests until it resolves.
 // If init fails, every request gets 503 so the error is visible.
+// Retry once on failure to handle transient Vercel cold-start connection issues.
 let initError = null;
-const dbReady = db.initSchema()
-  .then(() => db.seedTeams())
-  .catch(err => {
-    console.error('[db] init error:', err);
-    initError = err;
-  });
+const dbReady = (async () => {
+  try {
+    await db.initSchema();
+    await db.seedTeams();
+    console.log('[db] init: schema + seed OK');
+  } catch (firstErr) {
+    console.warn('[db] init attempt 1 failed, retrying in 500ms:', firstErr.message);
+    await new Promise(r => setTimeout(r, 500));
+    try {
+      await db.initSchema();
+      await db.seedTeams();
+      console.log('[db] init: schema + seed OK (retry)');
+    } catch (retryErr) {
+      console.error('[db] init permanently failed:', retryErr.message);
+      throw retryErr;
+    }
+  }
+})().catch(err => {
+  initError = err;
+});
 
 // Block every request until schema + seed have finished (matters on Vercel
 // cold starts where the first request can arrive before init completes).
@@ -155,6 +178,17 @@ app.use((_req, res, next) => {
     }
     next();
   }, next);
+});
+
+// ── Health check ────────────────────────────────────────────────────────────
+// Quick endpoint to verify the API is up and the DB is connected.
+app.get('/api/health', async (_req, res) => {
+  try {
+    await db.prepare('SELECT 1 AS ok').get();
+    res.json({ status: 'ok', db: 'connected' });
+  } catch (err) {
+    res.status(503).json({ status: 'error', db: err.message });
+  }
 });
 
 // ── IP helpers ─────────────────────────────────────────────────────────────
@@ -172,8 +206,6 @@ function hashIp(ip) {
 // The league owner is identified by their Discord user ID.
 // This can be overridden with the OWNER_DISCORD_ID environment variable.
 const OWNER_DISCORD_ID = process.env.OWNER_DISCORD_ID || '363915181765427200';
-const adminSessions = new Map(); // token → { userId, username, role }
-const playerSessions = new Map(); // token -> userId
 
 /** Returns true if the given user record is the league owner. */
 function isOwnerUser(user) {
@@ -214,9 +246,33 @@ function _verifyPayload(token) {
   } catch { return null; }
 }
 
+// ── Stateless session tokens ──────────────────────────────────────────────
+// On Vercel serverless each invocation may run in a different instance, so
+// in-memory Maps are unreliable.  Instead we HMAC-sign session data into the
+// token itself (similar to a JWT) so no server-side storage is needed.
+
+function _signPlayerToken(userId) {
+  return _signPayload({ sub: userId, purpose: 'player', exp: Date.now() + 30 * 24 * 60 * 60 * 1000 });
+}
+
+function _verifyPlayerToken(token) {
+  const p = _verifyPayload(token);
+  return (p && p.purpose === 'player') ? p.sub : null;
+}
+
+function _signAdminToken(userId, username, role) {
+  return _signPayload({ sub: userId, u: username, r: role, purpose: 'admin', exp: Date.now() + 24 * 60 * 60 * 1000 });
+}
+
+function _verifyAdminToken(token) {
+  const p = _verifyPayload(token);
+  if (!p || p.purpose !== 'admin') return null;
+  return { userId: p.sub, username: p.u, role: p.r };
+}
+
 function requireAdmin(req, res, next) {
   const token = req.headers['x-admin-token'];
-  const session = token && adminSessions.get(token);
+  const session = token && _verifyAdminToken(token);
   if (!session) return res.status(401).json({ error: 'Admin access required' });
   req.adminSession = session;
   next();
@@ -224,7 +280,7 @@ function requireAdmin(req, res, next) {
 
 function requireOwner(req, res, next) {
   const token = req.headers['x-admin-token'];
-  const session = token && adminSessions.get(token);
+  const session = token && _verifyAdminToken(token);
   if (!session || session.role !== 'owner')
     return res.status(403).json({ error: 'Owner access required' });
   req.adminSession = session;
@@ -233,16 +289,18 @@ function requireOwner(req, res, next) {
 
 function requirePlayer(req, res, next) {
   const token = req.headers['x-player-token'];
-  if (!token || !playerSessions.has(token)) return res.status(401).json({ error: 'Player login required' });
-  req.userId = playerSessions.get(token);
+  const userId = _verifyPlayerToken(token);
+  if (!userId) return res.status(401).json({ error: 'Player login required' });
+  req.userId = userId;
   next();
 }
 
 function requireTeamRole(roles) {
   return async (req, res, next) => {
     const token = req.headers['x-player-token'];
-    if (!token || !playerSessions.has(token)) return res.status(401).json({ error: 'Player login required' });
-    req.userId = playerSessions.get(token);
+    const userId = _verifyPlayerToken(token);
+    if (!userId) return res.status(401).json({ error: 'Player login required' });
+    req.userId = userId;
     const teamId = req.params.id || req.params.teamId;
     const staff = await db.prepare('SELECT role FROM team_staff WHERE team_id = ? AND user_id = ?').get(teamId, req.userId);
     if (!staff || !roles.includes(staff.role)) return res.status(403).json({ error: 'Insufficient team permissions' });
@@ -260,35 +318,39 @@ function requireTeamRole(roles) {
 // No separate admin password is required.
 app.post('/api/auth/login', async (req, res) => {
   const playerToken = req.headers['x-player-token'];
-  const userId = playerToken && playerSessions.get(playerToken);
+  const userId = _verifyPlayerToken(playerToken);
   if (!userId) return res.status(401).json({ error: 'Player login required' });
   const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
   if (!user) return res.status(401).json({ error: 'User not found' });
   const isOwner = isOwnerUser(user);
   const role = isOwner ? 'owner' : (user.role === 'game_admin' ? 'game_admin' : null);
   if (!role) return res.status(403).json({ error: 'Access denied' });
-  const token = crypto.randomBytes(24).toString('hex');
-  adminSessions.set(token, { userId: user.id, username: user.username, role });
+  const token = _signAdminToken(user.id, user.username, role);
   res.json({ token, role, username: user.username });
 });
 
 app.post('/api/auth/logout', async (req, res) => {
-  const token = req.headers['x-admin-token'];
-  if (token) adminSessions.delete(token);
+  // Stateless tokens: nothing to invalidate server-side; client clears localStorage.
   res.json({ ok: true });
 });
 
 app.get('/api/auth/status', async (req, res) => {
   const token = req.headers['x-admin-token'];
-  const session = token && adminSessions.get(token);
+  const session = token && _verifyAdminToken(token);
   if (!session) return res.json({ loggedIn: false });
-  res.json({ loggedIn: true, role: session.role, username: session.username });
+  // Re-check database to handle demotion since last token issue
+  const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(session.userId);
+  if (!user) return res.json({ loggedIn: false });
+  const currentRole = isOwnerUser(user) ? 'owner' : (user.role === 'game_admin' ? 'game_admin' : null);
+  if (!currentRole) return res.json({ loggedIn: false });
+  res.json({ loggedIn: true, role: currentRole, username: user.username });
 });
 
 // ── Player registration & login ────────────────────────────────────────────
 
 app.post('/api/players/register', async (req, res) => {
   const { username, platform, email, position, discord, discord_id } = req.body;
+  console.log('[auth] register attempt:', { username, discord, discord_id: discord_id ? discord_id.slice(0, 6) + '…' : null });
   if (!username || !username.trim()) return res.status(400).json({ error: 'Username (gamertag) is required' });
   if (!discord || !discord.trim()) return res.status(400).json({ error: 'Discord account is required. Please connect with Discord.' });
   if (!discord_id) return res.status(400).json({ error: 'Discord account must be verified via OAuth. Please connect with Discord.' });
@@ -322,8 +384,8 @@ app.post('/api/players/register', async (req, res) => {
     playerId = pr.lastInsertRowid;
   }
 
-  const token = crypto.randomBytes(24).toString('hex');
-  playerSessions.set(token, r.lastInsertRowid);
+  const token = _signPlayerToken(r.lastInsertRowid);
+  console.log('[auth] register success: user_id=', r.lastInsertRowid, 'merged=', merged);
   res.status(201).json({ token, id: r.lastInsertRowid, username: username.trim(), platform: plat, position: pos, player_id: playerId, merged });
 });
 
@@ -333,16 +395,22 @@ app.post('/api/players/login', async (req, res) => {
   const { discord_login_token } = req.body;
   if (!discord_login_token) return res.status(400).json({ error: 'Discord login token is required' });
   const payload = _verifyPayload(discord_login_token);
-  if (!payload || payload.purpose !== 'discord_login') return res.status(401).json({ error: 'Invalid or expired login token. Please try signing in with Discord again.' });
+  if (!payload || payload.purpose !== 'discord_login') {
+    console.warn('[auth] login: invalid/expired discord_login_token');
+    return res.status(401).json({ error: 'Invalid or expired login token. Please try signing in with Discord again.' });
+  }
   const user = await db.prepare('SELECT * FROM users WHERE discord_id = ?').get(payload.discord_id);
-  if (!user) return res.status(404).json({ error: 'No account found for this Discord account. Please register first.' });
-  const token = crypto.randomBytes(24).toString('hex');
-  playerSessions.set(token, user.id);
+  if (!user) {
+    console.warn('[auth] login: no user for discord_id', payload.discord_id);
+    return res.status(404).json({ error: 'No account found for this Discord account. Please register first.' });
+  }
+  const token = _signPlayerToken(user.id);
+  console.log('[auth] login success: user_id=', user.id, 'username=', user.username);
   res.json({ token, id: user.id, username: user.username, platform: user.platform, position: user.position });
 });
 
 app.post('/api/players/logout', async (req, res) => {
-  playerSessions.delete(req.headers['x-player-token']);
+  // Stateless tokens: nothing to invalidate server-side; client clears localStorage.
   res.json({ ok: true });
 });
 
@@ -2405,12 +2473,12 @@ app.get('/api/discord/connect', async (req, res) => {
   let mode;
   if (explicitMode === 'login') {
     mode = 'login';
-  } else if (playerToken && playerSessions.has(playerToken)) {
+  } else if (playerToken && _verifyPlayerToken(playerToken)) {
     mode = 'player';
   } else {
     mode = 'register';
   }
-  const userId = mode === 'player' ? playerSessions.get(playerToken) : null;
+  const userId = mode === 'player' ? _verifyPlayerToken(playerToken) : null;
   // Encode state as an HMAC-signed token so it survives serverless cold starts
   const state  = _signPayload({ mode, userId, redirectUri, exp: Date.now() + 10 * 60 * 1000 });
   const params = new URLSearchParams({
@@ -2446,6 +2514,7 @@ app.get('/api/discord/callback', async (req, res) => {
     const du = await userRes.json();
     const discord_id = du.id;
     const discord    = du.username;
+    console.log('[auth] discord callback: mode=', stateData.mode, 'discord_id=', discord_id, 'discord=', discord);
 
     if (stateData.mode === 'player') {
       // Update existing logged-in player
@@ -2453,11 +2522,14 @@ app.get('/api/discord/callback', async (req, res) => {
       return res.redirect('/dashboard.html?discord_linked=1');
     } else if (stateData.mode === 'login') {
       // Discord login: check if a user with this discord_id exists
-      const existingUser = await db.prepare('SELECT id FROM users WHERE discord_id = ?').get(discord_id);
+      const existingUser = await db.prepare('SELECT id, username, platform FROM users WHERE discord_id = ?').get(discord_id);
       if (existingUser) {
-        // Create a signed login token the client can exchange for a real session
-        const loginToken = _signPayload({ purpose: 'discord_login', discord_id, discord, exp: Date.now() + 10 * 60 * 1000 });
-        return res.redirect(`/register.html?discord_login=${encodeURIComponent(loginToken)}`);
+        // Create a player session token and redirect straight to dashboard.
+        // This avoids the fragile register.js → POST /api/players/login chain.
+        const authToken = _signPlayerToken(existingUser.id);
+        const userJson = encodeURIComponent(JSON.stringify({ id: existingUser.id, username: existingUser.username, platform: existingUser.platform }));
+        console.log('[auth] discord login: existing user found, redirecting to dashboard. user_id=', existingUser.id);
+        return res.redirect(`/dashboard.html?auth_token=${encodeURIComponent(authToken)}&auth_user=${userJson}`);
       } else {
         // No account found — redirect to registration with Discord info pre-filled
         const linkToken = _signPayload({ discord_id, discord, exp: Date.now() + 10 * 60 * 1000 });
@@ -2517,11 +2589,37 @@ app.delete('/api/admin/game-admins/:userId', requireOwner, async (req, res) => {
   const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.userId);
   if (!user) return res.status(404).json({ error: 'User not found' });
   await db.prepare('UPDATE users SET role = NULL WHERE id = ?').run(user.id);
-  // Invalidate any active admin session for this user
-  for (const [token, session] of adminSessions) {
-    if (session.userId === user.id) adminSessions.delete(token);
-  }
+  // With stateless tokens the old admin token will fail on next /api/auth/status
+  // check because the DB role is re-verified.
   res.json({ ok: true });
+});
+
+// ── Easy admin setup (no login required) ──────────────────────────────────
+// POST /api/admin/setup/promote  — promote a user to game_admin or owner.
+// Protected by ADMIN_SECRET env var.  This lets the site owner promote admins
+// with a simple curl command instead of navigating the full admin panel:
+//   curl -X POST https://yoursite.com/api/admin/setup/promote \
+//     -H 'Content-Type: application/json' \
+//     -d '{"username":"SomeUser","secret":"your-admin-secret"}'
+// To set a new site owner by Discord ID, also pass "role":"owner".
+app.post('/api/admin/setup/promote', async (req, res) => {
+  const setupKey = process.env.ADMIN_SECRET || process.env.ADMIN_PASSWORD;
+  if (!setupKey) return res.status(501).json({ error: 'ADMIN_SECRET environment variable is not configured. Set it on your server to use this endpoint.' });
+  const { username, discord_id, secret, role } = req.body;
+  if (!secret || secret !== setupKey) return res.status(403).json({ error: 'Invalid secret' });
+  if (!username && !discord_id) return res.status(400).json({ error: 'Provide "username" or "discord_id" to identify the user' });
+  const user = username
+    ? await db.prepare('SELECT * FROM users WHERE username = ?').get(username.trim())
+    : await db.prepare('SELECT * FROM users WHERE discord_id = ?').get(discord_id);
+  if (!user) return res.status(404).json({ error: 'User not found. They must register first.' });
+  if (role === 'owner') {
+    // Set this user as the site owner by updating their discord_id to match OWNER_DISCORD_ID
+    // (or inform them to set OWNER_DISCORD_ID env var to this user's discord_id)
+    if (!user.discord_id) return res.status(400).json({ error: 'User must have a linked Discord account to be set as owner. Set OWNER_DISCORD_ID env var to their Discord ID.' });
+    return res.json({ ok: true, message: `To make "${user.username}" the site owner, set the OWNER_DISCORD_ID environment variable to "${user.discord_id}" and redeploy.`, discord_id: user.discord_id });
+  }
+  await db.prepare("UPDATE users SET role = 'game_admin' WHERE id = ?").run(user.id);
+  res.json({ ok: true, message: `"${user.username}" has been promoted to game admin.` });
 });
 
 // ── Historical data import ─────────────────────────────────────────────────

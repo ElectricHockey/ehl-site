@@ -53,14 +53,40 @@ function resetDiscordLink() {
 (async () => {
   const token = getPlayerToken();
   if (token) {
-    const res = await fetch(`${API}/players/me`, { headers: { 'X-Player-Token': token } }).catch(() => null);
-    if (res && res.ok) { window.location.href = 'dashboard.html'; return; }
-    clearPlayerToken();
+    try {
+      const res = await fetch(`${API}/players/me`, { headers: { 'X-Player-Token': token } });
+      if (res && res.ok) { window.location.href = 'dashboard.html'; return; }
+      // Only clear the token on explicit 401 (invalid/expired).
+      // Do NOT clear on 500, 503, 429, or network errors — those are transient.
+      if (res && res.status === 401) {
+        clearPlayerToken();
+      } else {
+        // Server is having issues — don't wipe the session; let the user see the login page
+        // but keep their token so they can retry.
+      }
+    } catch {
+      // Network error — don't clear token; the server may just be temporarily down.
+    }
   }
 
   const params = new URLSearchParams(window.location.search);
 
-  // Discord login callback – exchange the signed login token for a session
+  // ── Direct auth token from dashboard redirect (fallback path) ───────────
+  // If the user somehow landed here with an auth_token, save it and redirect.
+  const authToken = params.get('auth_token');
+  if (authToken) {
+    setPlayerToken(authToken);
+    const authUser = params.get('auth_user');
+    if (authUser) {
+      try { localStorage.setItem('ehl_player_user', authUser); } catch { /* ignore */ }
+    }
+    window.location.href = 'dashboard.html';
+    return;
+  }
+
+  // ── Discord login callback (legacy fallback) ────────────────────────────
+  // The primary login path now goes directly to dashboard.html, but keep this
+  // for backward compatibility with any stale URLs.
   const discordLogin = params.get('discord_login');
   if (discordLogin) {
     const err = document.getElementById('login-error');
@@ -69,7 +95,8 @@ function resetDiscordLink() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ discord_login_token: discordLogin }),
       });
-      const data = await res.json();
+      let data;
+      try { data = await res.json(); } catch { data = { error: 'Server returned an unexpected response' }; }
       if (!res.ok) {
         err.textContent = data.error || 'Login failed';
         err.style.display = '';
@@ -154,12 +181,13 @@ document.getElementById('register-form').addEventListener('submit', async e => {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, platform, position, discord, discord_id, email: email || undefined }),
     });
-    const data = await res.json();
+    let data;
+    try { data = await res.json(); } catch { data = { error: 'Server returned an unexpected response' }; }
     if (!res.ok) { err.textContent = data.error || 'Registration failed'; err.style.display = ''; return; }
     setPlayerToken(data.token);
     localStorage.setItem('ehl_player_user', JSON.stringify({ id: data.id, username: data.username, platform: data.platform }));
     ok.textContent = `Welcome, ${data.username}! Redirecting…`;
     ok.style.display = '';
     setTimeout(() => window.location.href = 'dashboard.html', 800);
-  } catch { err.textContent = 'Network error. Is the server running?'; err.style.display = ''; }
+  } catch { err.textContent = 'Network error — the server may be temporarily unavailable. Please try again.'; err.style.display = ''; }
 });

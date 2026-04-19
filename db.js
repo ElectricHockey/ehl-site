@@ -23,6 +23,9 @@ const DATABASE_URL = process.env.DATABASE_URL
   || process.env.POSTGRES_URL_NON_POOLING
   || '';
 
+// Detect serverless environment to tune pool settings.
+const IS_SERVERLESS = !!process.env.VERCEL || !!process.env.AWS_LAMBDA_FUNCTION_NAME;
+
 const pool = new Pool({
   connectionString: DATABASE_URL,
   // Supabase requires SSL; rejectUnauthorized must be false for their pooler
@@ -30,6 +33,14 @@ const pool = new Pool({
   ssl: DATABASE_URL && !DATABASE_URL.includes('localhost')
     ? { rejectUnauthorized: false }
     : false,
+  // Serverless functions need a small, short-lived pool to avoid connection leaks.
+  ...(IS_SERVERLESS ? { max: 3, connectionTimeoutMillis: 5000, idleTimeoutMillis: 10000 } : {}),
+});
+
+// Critical: handle idle connection errors so they don't crash the process.
+// Without this, Vercel functions get FUNCTION_INVOCATION_FAILED on stale connections.
+pool.on('error', (err) => {
+  console.error('[db] Unexpected pool error:', err.message);
 });
 
 // ── Placeholder conversion ─────────────────────────────────────────────────
