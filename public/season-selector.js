@@ -94,8 +94,8 @@ const SeasonSelector = (() => {
         fetch('/api/seasons?type=threes'),
         fetch('/api/seasons?type=sixes'),
       ]);
-      _seasonsCache.threes = await r3.json();
-      _seasonsCache.sixes  = await r6.json();
+      _seasonsCache.threes = r3.ok ? await r3.json() : [];
+      _seasonsCache.sixes  = r6.ok ? await r6.json() : [];
 
       const savedType = localStorage.getItem(STORAGE_TYPE) || 'threes';
 
@@ -126,7 +126,10 @@ const SeasonSelector = (() => {
         localStorage.setItem(STORAGE_SEASON[type], e.target.value);
         if (_onChange) _onChange();
       });
-    } catch { container.innerHTML = ''; }
+    } catch (err) {
+      console.warn('[SeasonSelector] init failed:', err);
+      container.innerHTML = '<p style="color:#f85149;font-size:0.85rem;padding:0.5rem;">Failed to load seasons. Please refresh the page.</p>';
+    }
   }
 
   return { init, getSelectedSeasonId, getSelectedLeagueType, getSelectedSeasonIsPlayoff, onSeasonChange };

@@ -334,10 +334,16 @@ async function loadPlayoff() {
 (async () => {
   // Check if we're on the standalone playoffs page (not embedded in standings)
   if (document.title.includes('Playoffs') && !document.getElementById('standings-root')) {
-    if (typeof SeasonSelector !== 'undefined') {
-      await SeasonSelector.init('season-selector-container');
-      SeasonSelector.onSeasonChange(() => loadPlayoff());
+    try {
+      if (typeof SeasonSelector !== 'undefined') {
+        await SeasonSelector.init('season-selector-container');
+        SeasonSelector.onSeasonChange(() => loadPlayoff());
+      }
+      loadPlayoff();
+    } catch (err) {
+      console.error('[playoffs] init error:', err);
+      const root = document.getElementById('playoff-root');
+      if (root) root.innerHTML = '<p style="color:#f85149;">Failed to load playoffs. Please refresh the page.</p>';
     }
-    loadPlayoff();
   }
 })();

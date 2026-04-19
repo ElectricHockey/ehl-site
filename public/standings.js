@@ -136,9 +136,15 @@ function showForSelectedSeason() {
 }
 
 (async () => {
-  if (typeof SeasonSelector !== 'undefined') {
-    await SeasonSelector.init('season-selector-container');
-    SeasonSelector.onSeasonChange(() => showForSelectedSeason());
+  try {
+    if (typeof SeasonSelector !== 'undefined') {
+      await SeasonSelector.init('season-selector-container');
+      SeasonSelector.onSeasonChange(() => showForSelectedSeason());
+    }
+    showForSelectedSeason();
+  } catch (err) {
+    console.error('[standings] init error:', err);
+    const root = document.getElementById('standings-root');
+    if (root) root.innerHTML = '<p style="color:#f85149;">Failed to load standings. Please refresh the page.</p>';
   }
-  showForSelectedSeason();
 })();
