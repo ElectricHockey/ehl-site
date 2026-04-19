@@ -182,6 +182,9 @@ thead th {
 
 tbody tr:nth-child(even) { background: #161b22; }
 tbody tr:hover { background: #21262d; }
+/* Team colour gradient rows – must override the generic tbody rules above */
+tbody tr.team-row { background: linear-gradient(90deg, rgba(var(--c1),0.28) 0%, rgba(var(--c2),0.20) 50%, transparent 100%); }
+tbody tr.team-row:hover { background: linear-gradient(90deg, rgba(var(--c1),0.42) 0%, rgba(var(--c2),0.32) 50%, transparent 100%); }
 
 td {
   padding: 0.55rem 0.8rem;
@@ -309,12 +312,8 @@ button:hover, .btn:hover { opacity: 0.85; }
 #status-msg.error   { background: #4b1f1f; color: #f85149; display: block; }
 
 /* ── Team colour gradient rows ─────────────────────────────────────────────── */
-.team-row {
-  background: linear-gradient(90deg, rgba(var(--c1),0.28) 0%, rgba(var(--c2),0.20) 50%, transparent 100%);
-}
-.team-row:hover {
-  background: linear-gradient(90deg, rgba(var(--c1),0.42) 0%, rgba(var(--c2),0.32) 50%, transparent 100%);
-}
+/* Gradient rules live in the tbody tr.team-row selectors above (higher       */
+/* specificity so they override the generic tbody tr:nth-child/hover rules).  */
 
 /* ── League type section headings (dual 3's/6's layout) ──────────────────── */
 .league-section-heading {
