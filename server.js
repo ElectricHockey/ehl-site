@@ -465,7 +465,7 @@ app.post('/api/seasons', requireOwner, async (req, res) => {
   const lt = league_type || '';
   // Place new seasons at the end of the list
   const maxOrder = await db.prepare('SELECT COALESCE(MAX(sort_order), 0) AS m FROM seasons').get();
-  const nextOrder = (maxOrder ? maxOrder.m : 0) + 1;
+  const nextOrder = maxOrder.m + 1;
   const result = await db.prepare('INSERT INTO seasons (name, is_active, league_type, sort_order) VALUES (?, ?, ?, ?)').run(name.trim(), make_active ? 1 : 0, lt, nextOrder);
   res.status(201).json({ id: result.lastInsertRowid, name: name.trim(), is_active: make_active ? 1 : 0, league_type: lt, sort_order: nextOrder });
 });
@@ -529,14 +529,22 @@ app.post('/api/seasons/:id/reorder', requireOwner, async (req, res) => {
   const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
   if (swapIdx < 0 || swapIdx >= all.length) return res.json({ ok: true }); // already at boundary
 
-  // Swap sort_order values
+  // Swap sort_order values between the two seasons.
+  // If legacy data has identical sort_order values, assign distinct values so the swap
+  // produces a visible change: the moved season gets the neighbor's position,
+  // and the neighbor shifts to make room.
   const myOrder = all[idx].sort_order;
   const theirOrder = all[swapIdx].sort_order;
-  // If they have the same sort_order (legacy data), give distinct values
-  const newMy = theirOrder;
-  const newTheir = myOrder !== theirOrder ? myOrder : (direction === 'up' ? myOrder + 1 : myOrder - 1);
-  await db.prepare('UPDATE seasons SET sort_order = ? WHERE id = ?').run(newMy, all[idx].id);
-  await db.prepare('UPDATE seasons SET sort_order = ? WHERE id = ?').run(newTheir, all[swapIdx].id);
+  if (myOrder !== theirOrder) {
+    // Normal case: just swap the two sort_order values
+    await db.prepare('UPDATE seasons SET sort_order = ? WHERE id = ?').run(theirOrder, all[idx].id);
+    await db.prepare('UPDATE seasons SET sort_order = ? WHERE id = ?').run(myOrder, all[swapIdx].id);
+  } else {
+    // Legacy data: both have the same sort_order, so assign idx-based values
+    // Moving "up" means this item gets a lower sort_order
+    const baseOrder = myOrder;
+    await db.prepare('UPDATE seasons SET sort_order = ? WHERE id = ?').run(direction === 'up' ? baseOrder - 1 : baseOrder + 1, all[idx].id);
+  }
   res.json({ ok: true });
 });
 
@@ -2884,7 +2892,7 @@ app.post('/api/admin/import-mso-json', requireOwner, async (req, res) => {
   if (!Array.isArray(games) || games.length === 0) {
     return res.status(400).json({ error: '"games" must be a non-empty array.' });
   }
-  const sName = season_name ? String(season_name).trim() : '';
+  const sName = (season_name || '').trim();
   const lt = String(league_type || '').trim();
 
   // ── Helpers ──────────────────────────────────────────────────────────────
