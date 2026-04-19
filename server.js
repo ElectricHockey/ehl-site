@@ -1008,8 +1008,8 @@ async function fetchEA(url) {
 // ── Shared stat SQL fragments ──────────────────────────────────────────────
 
 const SKATER_SELECT = `
-  gps.player_name AS name, t.name AS team_name, t.logo_url AS team_logo,
-  t.color1 AS team_color1, t.color2 AS team_color2, gps.position,
+  MAX(gps.player_name) AS name, MAX(t.name) AS team_name, MAX(t.logo_url) AS team_logo,
+  MAX(t.color1) AS team_color1, MAX(t.color2) AS team_color2, MAX(gps.position) AS position,
   COUNT(DISTINCT gps.game_id) AS gp,
   ROUND(AVG(NULLIF(gps.overall_rating,0)),0)    AS overall_rating,
   ROUND(AVG(NULLIF(gps.offensive_rating,0)),0)  AS offensive_rating,
@@ -1047,8 +1047,8 @@ const SKATER_SELECT = `
   SUM(gps.hat_tricks) AS hat_tricks`;
 
 const GOALIE_SELECT = `
-  gps.player_name AS name, t.name AS team_name, t.logo_url AS team_logo,
-  t.color1 AS team_color1, t.color2 AS team_color2,
+  MAX(gps.player_name) AS name, MAX(t.name) AS team_name, MAX(t.logo_url) AS team_logo,
+  MAX(t.color1) AS team_color1, MAX(t.color2) AS team_color2,
   COUNT(DISTINCT gps.game_id) AS gp,
   SUM(gps.goals) AS goals, SUM(gps.assists) AS assists,
   SUM(gps.shots_against) AS shots_against,
@@ -1188,7 +1188,7 @@ app.get('/api/teams/:id/records', async (req, res) => {
     const where = pos === 'G' ? "gps.position = 'G'" : "gps.position != 'G'";
     return await db.prepare(`
       SELECT gps.player_name AS name,
-        g.season_id, COALESCE(s.name, 'No Season') AS season_name,
+        g.season_id, MAX(COALESCE(s.name, 'No Season')) AS season_name,
         ${agg} AS value,
         COUNT(DISTINCT gps.game_id) AS gp
       FROM game_player_stats gps
@@ -1236,7 +1236,7 @@ app.get('/api/records', async (req, res) => {
     const where = pos === 'G' ? "gps.position = 'G'" : "gps.position != 'G'";
     return await db.prepare(`
       WITH agg_vals AS (
-        SELECT gps.player_name AS name, t.name AS team_name,
+        SELECT gps.player_name AS name, MAX(t.name) AS team_name,
           ${agg} AS value,
           COUNT(DISTINCT gps.game_id) AS gp
         FROM game_player_stats gps
@@ -1258,8 +1258,8 @@ app.get('/api/records', async (req, res) => {
     const params = minGP ? [...p1, minGP] : p1;
     return await db.prepare(`
       WITH agg_vals AS (
-        SELECT gps.player_name AS name, t.name AS team_name,
-          g.season_id, COALESCE(s.name,'No Season') AS season_name,
+        SELECT gps.player_name AS name, MAX(t.name) AS team_name,
+          g.season_id, MAX(COALESCE(s.name,'No Season')) AS season_name,
           ${agg} AS value,
           COUNT(DISTINCT gps.game_id) AS gp
         FROM game_player_stats gps
@@ -1486,7 +1486,7 @@ app.get('/api/players/records/:name', async (req, res) => {
     const params = minGP ? [...p, minGP] : p;
     const rows = await db.prepare(`
       WITH agg_vals AS (
-        SELECT gps.player_name AS name, g.season_id, COALESCE(s.name,'No Season') AS season_name,
+        SELECT gps.player_name AS name, g.season_id, MAX(COALESCE(s.name,'No Season')) AS season_name,
           ${agg} AS value, COUNT(DISTINCT gps.game_id) AS gp
         FROM game_player_stats gps
         JOIN games g ON gps.game_id = g.id
@@ -1730,9 +1730,9 @@ app.get('/api/players/profile/:name', async (req, res) => {
 
   // Per-season per-team splits – always fetch both modes
   const rawGoalieStats = await db.prepare(`
-      SELECT g.season_id, COALESCE(s.name,'No Season') AS season_name,
-        COALESCE(s.league_type,'') AS league_type,
-        COALESCE(s.sort_order, g.season_id) AS _sort_order,
+      SELECT g.season_id, MAX(COALESCE(s.name,'No Season')) AS season_name,
+        MAX(COALESCE(s.league_type,'')) AS league_type,
+        MAX(COALESCE(s.sort_order, g.season_id)) AS _sort_order,
         CASE WHEN g.playoff_series_id IS NOT NULL THEN 1 ELSE 0 END AS is_playoff,
         ${GOALIE_SELECT}
       FROM game_player_stats gps
@@ -1741,13 +1741,13 @@ app.get('/api/players/profile/:name', async (req, res) => {
       LEFT JOIN seasons s ON g.season_id = s.id
       WHERE gps.player_name = ? AND gps.position = 'G' AND g.status IN ('complete','forfeit')
       GROUP BY g.season_id, gps.team_id, CASE WHEN g.playoff_series_id IS NOT NULL THEN 1 ELSE 0 END
-      ORDER BY COALESCE(s.sort_order, g.season_id) DESC, is_playoff
+      ORDER BY MAX(COALESCE(s.sort_order, g.season_id)) DESC, CASE WHEN g.playoff_series_id IS NOT NULL THEN 1 ELSE 0 END
     `).all(name);
 
   const rawSkaterStats = await db.prepare(`
-      SELECT g.season_id, COALESCE(s.name,'No Season') AS season_name,
-        COALESCE(s.league_type,'') AS league_type,
-        COALESCE(s.sort_order, g.season_id) AS _sort_order,
+      SELECT g.season_id, MAX(COALESCE(s.name,'No Season')) AS season_name,
+        MAX(COALESCE(s.league_type,'')) AS league_type,
+        MAX(COALESCE(s.sort_order, g.season_id)) AS _sort_order,
         CASE WHEN g.playoff_series_id IS NOT NULL THEN 1 ELSE 0 END AS is_playoff,
         ${SKATER_SELECT}
       FROM game_player_stats gps
@@ -1756,7 +1756,7 @@ app.get('/api/players/profile/:name', async (req, res) => {
       LEFT JOIN seasons s ON g.season_id = s.id
       WHERE gps.player_name = ? AND gps.position != 'G' AND g.status IN ('complete','forfeit')
       GROUP BY g.season_id, gps.team_id, CASE WHEN g.playoff_series_id IS NOT NULL THEN 1 ELSE 0 END
-      ORDER BY COALESCE(s.sort_order, g.season_id) DESC, is_playoff
+      ORDER BY MAX(COALESCE(s.sort_order, g.season_id)) DESC, CASE WHEN g.playoff_series_id IS NOT NULL THEN 1 ELSE 0 END
     `).all(name);
 
   // Last 5 games
@@ -2051,12 +2051,12 @@ app.get('/api/stats/leaders', async (req, res) => {
   const skaters = await db.prepare(`
     SELECT
       gps.player_name AS name,
-      rp.team_id AS team_id,
-      COALESCE(t.name, 'FA') AS team_name,
-      t.logo_url AS team_logo,
-      t.color1 AS team_color1,
-      t.color2 AS team_color2,
-      COALESCE(u.position, MAX(gps.position)) AS position,
+      MAX(rp.team_id) AS team_id,
+      MAX(COALESCE(t.name, 'FA')) AS team_name,
+      MAX(t.logo_url) AS team_logo,
+      MAX(t.color1) AS team_color1,
+      MAX(t.color2) AS team_color2,
+      COALESCE(MAX(u.position), MAX(gps.position)) AS position,
       COUNT(DISTINCT gps.game_id) AS gp,
       ROUND(AVG(NULLIF(gps.overall_rating,0)),0)    AS overall_rating,
       ROUND(AVG(NULLIF(gps.offensive_rating,0)),0)  AS offensive_rating,
@@ -2104,11 +2104,11 @@ app.get('/api/stats/leaders', async (req, res) => {
   const goalies = await db.prepare(`
     SELECT
       gps.player_name AS name,
-      rp.team_id AS team_id,
-      COALESCE(t.name, 'FA') AS team_name,
-      t.logo_url AS team_logo,
-      t.color1 AS team_color1,
-      t.color2 AS team_color2,
+      MAX(rp.team_id) AS team_id,
+      MAX(COALESCE(t.name, 'FA')) AS team_name,
+      MAX(t.logo_url) AS team_logo,
+      MAX(t.color1) AS team_color1,
+      MAX(t.color2) AS team_color2,
       COUNT(DISTINCT gps.game_id) AS gp,
       SUM(gps.goals) AS goals, SUM(gps.assists) AS assists,
       SUM(gps.shots_against) AS shots_against,
@@ -2188,7 +2188,7 @@ app.get('/api/stats/leaders', async (req, res) => {
 
 app.get('/api/admin/unrostered-stats', requireOwner, async (req, res) => {
   const rows = await db.prepare(`
-    SELECT DISTINCT gps.player_name, t.name AS team_name, t.id AS team_id,
+    SELECT gps.player_name, MAX(t.name) AS team_name, MAX(t.id) AS team_id,
       COUNT(DISTINCT gps.game_id) AS game_count
     FROM game_player_stats gps
     JOIN teams t ON gps.team_id = t.id
@@ -2196,7 +2196,7 @@ app.get('/api/admin/unrostered-stats', requireOwner, async (req, res) => {
     LEFT JOIN players p ON p.name = gps.player_name AND p.team_id = gps.team_id AND p.is_rostered = 1
     WHERE g.status IN ('complete','forfeit') AND p.id IS NULL
     GROUP BY gps.player_name, gps.team_id
-    ORDER BY t.name, gps.player_name
+    ORDER BY MAX(t.name), gps.player_name
   `).all();
   res.json(rows);
 });
@@ -3046,38 +3046,61 @@ app.post('/api/admin/import-mso-json', requireOwner, async (req, res) => {
 
   // ── Parse scraper stats into game_player_stats-compatible objects ───────
 
+  /** Round to integer (defence-in-depth for INTEGER columns). */
+  const iNum = v => Math.round(num(v));
+
   function parseSkaterStats(skatersObj, side) {
     const players = [];
     if (!skatersObj || !skatersObj[side]) return players;
     const fields = skatersObj._fields || [];
     const fi = {};
     fields.forEach((f, i) => { fi[f.toUpperCase()] = i; });
+    const posIdx = fi['POS'];
+    const VALID_POS = new Set(['C','D','LW','RW','F','G','LD','RD','W']);
     for (const [key, vals] of Object.entries(skatersObj[side])) {
       if (key === '_fields' || !Array.isArray(vals)) continue;
-      const foW = num(vals[fi['FOW']]);
-      const foTotal = num(vals[fi['FO']]);
+      // Fix misalignment: if POS is in the header but missing from the values
+      // array (vals is shorter by 1), the values are shifted left. Detect this
+      // by checking whether the value at the POS index looks like a valid
+      // position string.  If not, insert a placeholder so the remaining
+      // indices line up with the _fields header again.
+      let v = vals;
+      if (posIdx !== undefined && v.length === fields.length - 1) {
+        const candidate = String(v[posIdx] || '').trim().toUpperCase();
+        if (!VALID_POS.has(candidate)) {
+          v = [...vals.slice(0, posIdx), '', ...vals.slice(posIdx)];
+        }
+      }
+      // Read actual position from POS field (e.g. C, LW, LD)
+      let pos = 'F';
+      if (posIdx !== undefined) {
+        const raw = String(v[posIdx] || '').replace(/\u00a0/g, '').trim().toUpperCase();
+        if (raw && VALID_POS.has(raw) && raw !== 'G') pos = raw;
+      }
+      const foW = iNum(v[fi['FOW']]);
+      const foTotal = iNum(v[fi['FO']]);
       players.push({
-        player_name: decodeEntities(vals[0] || key),
-        position:    'F',
-        goals:       num(vals[fi['G']]),
-        assists:     num(vals[fi['A']]),
-        shots:       num(vals[fi['S']]),
-        pim:         num(vals[fi['PIM']]),
-        plus_minus:  num(vals[fi['+/-']]),
-        pp_goals:    num(vals[fi['PPG']]),
-        sh_goals:    num(vals[fi['SHG']]),
-        gwg:         num(vals[fi['WG']]),
-        hits:        num(vals[fi['HITS']]),
-        toi:         num(vals[fi['TOI']]) * 60, // MSO stores TOI in minutes; convert to seconds
-        blocked_shots: num(vals[fi['BS']]),
+        player_name: decodeEntities(v[0] || key),
+        position:    pos,
+        goals:       iNum(v[fi['G']]),
+        assists:     iNum(v[fi['A']]),
+        shots:       iNum(v[fi['S']]),
+        pim:         iNum(v[fi['PIM']]),
+        plus_minus:  iNum(v[fi['+/-']]),
+        pp_goals:    iNum(v[fi['PPG']]),
+        sh_goals:    iNum(v[fi['SHG']]),
+        gwg:         iNum(v[fi['WG']]),
+        hits:        iNum(v[fi['HITS']]),
+        toi:         Math.round(num(v[fi['TOI']]) * 60), // MSO stores TOI in minutes; convert to seconds
+        blocked_shots: iNum(v[fi['BS']]),
         faceoff_wins:  foW,
         faceoff_losses: foTotal > foW ? foTotal - foW : 0,
-        interceptions:  num(vals[fi['INT']]),
-        giveaways:      num(vals[fi['GVA']]),
-        takeaways:      num(vals[fi['TKA']]),
-        pass_attempts:     num(vals[fi['PA']]),
-        pass_completions:  num(vals[fi['PC']]),
-        hat_tricks:        num(vals[fi['HT']]),
+        interceptions:  iNum(v[fi['INT']]),
+        giveaways:      iNum(v[fi['GVA']]),
+        takeaways:      iNum(v[fi['TKA']]),
+        pass_attempts:     iNum(v[fi['PA']]),
+        pass_completions:  iNum(v[fi['PC']]),
+        hat_tricks:        iNum(v[fi['HT']]),
       });
     }
     return players;
@@ -3101,20 +3124,21 @@ app.post('/api/admin/import-mso-json', requireOwner, async (req, res) => {
       players.push({
         player_name:   decodeEntities(vals[0] || key),
         position:      'G',
-        goals:         num(vals[fi['G']]),
-        assists:       num(vals[fi['A']]),
-        shots_against: num(vals[fi['SA']]),
-        goals_against: num(vals[fi['GA']]),
-        saves:         num(vals[fi['SV']]),
+        goals:         iNum(vals[fi['G']]),
+        assists:       iNum(vals[fi['A']]),
+        shots_against: iNum(vals[fi['SA']]),
+        goals_against: iNum(vals[fi['GA']]),
+        saves:         iNum(vals[fi['SV']]),
         save_pct:      svp,
         gaa:           fi['GAA'] !== undefined && vals[fi['GAA']] ? parseFloat(vals[fi['GAA']]) || null : null,
-        toi:           num(vals[fi['TOI']]) * 60, // MSO stores TOI in minutes; convert to seconds        shutouts:      flag(vals[fi['SO']]),
+        toi:           Math.round(num(vals[fi['TOI']]) * 60), // MSO stores TOI in minutes; convert to seconds
+        shutouts:      flag(vals[fi['SO']]),
         goalie_wins:   flag(vals[fi['W']]),
         goalie_losses: flag(vals[fi['L']]),
         goalie_otw:    flag(vals[fi['OTW']]),
         goalie_otl:    flag(vals[fi['OTL']]),
-        penalty_shot_attempts: num(vals[fi['PSA']]),
-        penalty_shot_ga:       num(vals[fi['PSGA']]),
+        penalty_shot_attempts: iNum(vals[fi['PSA']]),
+        penalty_shot_ga:       iNum(vals[fi['PSGA']]),
       });
     }
     return players;
@@ -3214,20 +3238,20 @@ app.post('/api/admin/import-mso-json', requireOwner, async (req, res) => {
               VALUES (?,?,?,?, ?,?,?,?,?,?, ?,?,?,?,?,?,?,?,?, ?,?,?,?, ?,?,?,?,?, ?,?, ?,?,?,?)
             `).run(
               gameId, teamId, p.player_name, p.position,
-              p.goals || 0, p.assists || 0, p.shots || 0, p.pim || 0,
-              p.plus_minus || 0, p.blocked_shots || 0,
-              p.faceoff_wins || 0, p.faceoff_losses || 0,
-              p.giveaways || 0, p.takeaways || 0,
-              p.pp_goals || 0, p.sh_goals || 0, p.gwg || 0, p.hits || 0, p.toi || 0,
-              isGoalie ? (p.saves || 0) : 0,
+              Math.round(p.goals || 0), Math.round(p.assists || 0), Math.round(p.shots || 0), Math.round(p.pim || 0),
+              Math.round(p.plus_minus || 0), Math.round(p.blocked_shots || 0),
+              Math.round(p.faceoff_wins || 0), Math.round(p.faceoff_losses || 0),
+              Math.round(p.giveaways || 0), Math.round(p.takeaways || 0),
+              Math.round(p.pp_goals || 0), Math.round(p.sh_goals || 0), Math.round(p.gwg || 0), Math.round(p.hits || 0), Math.round(p.toi || 0),
+              isGoalie ? Math.round(p.saves || 0) : 0,
               isGoalie ? p.save_pct : null,
-              isGoalie ? (p.goals_against || 0) : 0,
-              isGoalie ? (p.shots_against || 0) : 0,
+              isGoalie ? Math.round(p.goals_against || 0) : 0,
+              isGoalie ? Math.round(p.shots_against || 0) : 0,
               gw, gl, otw, otl, so,
-              isGoalie ? (p.penalty_shot_attempts || 0) : 0,
-              isGoalie ? (p.penalty_shot_ga || 0) : 0,
-              p.pass_attempts || 0, p.pass_completions || 0,
-              p.interceptions || 0, p.hat_tricks || 0
+              isGoalie ? Math.round(p.penalty_shot_attempts || 0) : 0,
+              isGoalie ? Math.round(p.penalty_shot_ga || 0) : 0,
+              Math.round(p.pass_attempts || 0), Math.round(p.pass_completions || 0),
+              Math.round(p.interceptions || 0), Math.round(p.hat_tricks || 0)
             );
           }
         };
