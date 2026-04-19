@@ -2043,14 +2043,9 @@ app.get('/api/stats/leaders', async (req, res) => {
 
   // Current-team subquery: pick the rostered player record per name (prefer user-linked row, then highest id)
   const rosterSub = `(
-    SELECT name, team_id FROM players
-    WHERE is_rostered = 1 AND id = (
-      SELECT id FROM players p2
-      WHERE p2.name = players.name AND p2.is_rostered = 1
-      ORDER BY (p2.user_id IS NOT NULL) DESC, p2.id DESC
-      LIMIT 1
-    )
-    GROUP BY name
+    SELECT DISTINCT ON (name) name, team_id FROM players
+    WHERE is_rostered = 1
+    ORDER BY name, (user_id IS NOT NULL) DESC, id DESC
   ) rp`;
 
   const skaters = await db.prepare(`
@@ -2070,7 +2065,7 @@ app.get('/api/stats/leaders', async (req, res) => {
       SUM(gps.goals) AS goals, SUM(gps.assists) AS assists,
       SUM(gps.goals + gps.assists) AS points,
       SUM(gps.plus_minus) AS plus_minus,
-      SUM(gps.shots) AS shots, SUM(gps.hits) AS hits,
+      SUM(gps.shots) AS shots, SUM(gps.shot_attempts) AS shot_attempts, SUM(gps.hits) AS hits,
       SUM(gps.pim) AS pim, SUM(gps.pp_goals) AS pp_goals,
       SUM(gps.sh_goals) AS sh_goals, SUM(gps.gwg) AS gwg,
       SUM(gps.toi) AS toi,
@@ -3073,7 +3068,7 @@ app.post('/api/admin/import-mso-json', requireOwner, async (req, res) => {
         sh_goals:    num(vals[fi['SHG']]),
         gwg:         num(vals[fi['WG']]),
         hits:        num(vals[fi['HITS']]),
-        toi:         num(vals[fi['TOI']]),
+        toi:         num(vals[fi['TOI']]) * 60, // MSO stores TOI in minutes; convert to seconds
         blocked_shots: num(vals[fi['BS']]),
         faceoff_wins:  foW,
         faceoff_losses: foTotal > foW ? foTotal - foW : 0,
@@ -3113,8 +3108,7 @@ app.post('/api/admin/import-mso-json', requireOwner, async (req, res) => {
         saves:         num(vals[fi['SV']]),
         save_pct:      svp,
         gaa:           fi['GAA'] !== undefined && vals[fi['GAA']] ? parseFloat(vals[fi['GAA']]) || null : null,
-        toi:           num(vals[fi['TOI']]),
-        shutouts:      flag(vals[fi['SO']]),
+        toi:           num(vals[fi['TOI']]) * 60, // MSO stores TOI in minutes; convert to seconds        shutouts:      flag(vals[fi['SO']]),
         goalie_wins:   flag(vals[fi['W']]),
         goalie_losses: flag(vals[fi['L']]),
         goalie_otw:    flag(vals[fi['OTW']]),
@@ -3185,10 +3179,13 @@ app.post('/api/admin/import-mso-json', requireOwner, async (req, res) => {
     // Parse and insert embedded stats
     if (g.stats && g.stats.skaters && g.stats.goalies) {
       try {
-        const homeSkaters = parseSkaterStats(g.stats.skaters, 'home');
-        const awaySkaters = parseSkaterStats(g.stats.skaters, 'away');
-        const homeGoalies = parseGoalieStats(g.stats.goalies, 'home');
-        const awayGoalies = parseGoalieStats(g.stats.goalies, 'away');
+        // NOTE: In MSO JSON the stats 'home'/'away' labels are inverted relative
+        // to the game's home_team/away_team.  The MSO scraper puts the first
+        // (visitor) section under 'home' and the second (home) under 'away'.
+        const homeSkaters = parseSkaterStats(g.stats.skaters, 'away');
+        const awaySkaters = parseSkaterStats(g.stats.skaters, 'home');
+        const homeGoalies = parseGoalieStats(g.stats.goalies, 'away');
+        const awayGoalies = parseGoalieStats(g.stats.goalies, 'home');
         const homeWon = homeScore > awayScore;
 
         const insertPlayers = async (players, teamId, teamWon) => {
@@ -3611,7 +3608,7 @@ function _mso_parseGameDetailHtml(html) {
         faceoff_losses: foTot > foW ? foTot - foW : 0,
         giveaways:      gvaIdx >= 0 ? _mso_num(row[gvaIdx]) : 0,
         takeaways:      tkaIdx >= 0 ? _mso_num(row[tkaIdx]) : 0,
-        toi:            toiIdx >= 0 ? _mso_num(row[toiIdx]) : 0,
+        toi:            toiIdx >= 0 ? _mso_num(row[toiIdx]) * 60 : 0, // MSO TOI is minutes; convert to seconds
       });
     }
   };
@@ -3655,7 +3652,7 @@ function _mso_parseGameDetailHtml(html) {
         goalie_losses: lIdx   >= 0 ? _mso_num(row[lIdx])   : 0,
         goalie_otw:    otwIdx >= 0 ? _mso_num(row[otwIdx]) : 0,
         goalie_otl:    otlIdx >= 0 ? _mso_num(row[otlIdx]) : 0,
-        toi:           toiIdx >= 0 ? _mso_num(row[toiIdx]) : 0,
+        toi:           toiIdx >= 0 ? _mso_num(row[toiIdx]) * 60 : 0, // MSO TOI is minutes; convert to seconds
         penalty_shot_attempts: psaIdx  >= 0 ? _mso_num(row[psaIdx])  : 0,
         penalty_shot_ga:       psgaIdx >= 0 ? _mso_num(row[psgaIdx]) : 0,
       });

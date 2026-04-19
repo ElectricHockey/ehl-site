@@ -193,7 +193,7 @@ if (typeof SeasonSelector !== 'undefined') {
     try {
       await SeasonSelector.init('season-selector-container');
       SeasonSelector.onSeasonChange(() => loadStats());
-      loadStats();
+      await loadStats();
     } catch (err) {
       console.error('[stats] init error:', err);
       const root = document.getElementById('skaters-root');
