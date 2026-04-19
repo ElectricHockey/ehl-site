@@ -142,13 +142,28 @@ if (!process.env.VERCEL) {
 // ── Run async initialisation (schema + seed teams) ───────────────────────
 // Store the promise so we can gate incoming requests until it resolves.
 // If init fails, every request gets 503 so the error is visible.
+// Retry once on failure to handle transient Vercel cold-start connection issues.
 let initError = null;
-const dbReady = db.initSchema()
-  .then(() => db.seedTeams())
-  .catch(err => {
-    console.error('[db] init error:', err);
-    initError = err;
-  });
+const dbReady = (async () => {
+  try {
+    await db.initSchema();
+    await db.seedTeams();
+    console.log('[db] init: schema + seed OK');
+  } catch (firstErr) {
+    console.warn('[db] init attempt 1 failed, retrying in 500ms:', firstErr.message);
+    await new Promise(r => setTimeout(r, 500));
+    try {
+      await db.initSchema();
+      await db.seedTeams();
+      console.log('[db] init: schema + seed OK (retry)');
+    } catch (retryErr) {
+      console.error('[db] init permanently failed:', retryErr.message);
+      throw retryErr;
+    }
+  }
+})().catch(err => {
+  initError = err;
+});
 
 // Block every request until schema + seed have finished (matters on Vercel
 // cold starts where the first request can arrive before init completes).
@@ -163,6 +178,17 @@ app.use((_req, res, next) => {
     }
     next();
   }, next);
+});
+
+// ── Health check ────────────────────────────────────────────────────────────
+// Quick endpoint to verify the API is up and the DB is connected.
+app.get('/api/health', async (_req, res) => {
+  try {
+    await db.prepare('SELECT 1 AS ok').get();
+    res.json({ status: 'ok', db: 'connected' });
+  } catch (err) {
+    res.status(503).json({ status: 'error', db: err.message });
+  }
 });
 
 // ── IP helpers ─────────────────────────────────────────────────────────────
@@ -324,6 +350,7 @@ app.get('/api/auth/status', async (req, res) => {
 
 app.post('/api/players/register', async (req, res) => {
   const { username, platform, email, position, discord, discord_id } = req.body;
+  console.log('[auth] register attempt:', { username, discord, discord_id: discord_id ? discord_id.slice(0, 6) + '…' : null });
   if (!username || !username.trim()) return res.status(400).json({ error: 'Username (gamertag) is required' });
   if (!discord || !discord.trim()) return res.status(400).json({ error: 'Discord account is required. Please connect with Discord.' });
   if (!discord_id) return res.status(400).json({ error: 'Discord account must be verified via OAuth. Please connect with Discord.' });
@@ -358,6 +385,7 @@ app.post('/api/players/register', async (req, res) => {
   }
 
   const token = _signPlayerToken(r.lastInsertRowid);
+  console.log('[auth] register success: user_id=', r.lastInsertRowid, 'merged=', merged);
   res.status(201).json({ token, id: r.lastInsertRowid, username: username.trim(), platform: plat, position: pos, player_id: playerId, merged });
 });
 
@@ -367,10 +395,17 @@ app.post('/api/players/login', async (req, res) => {
   const { discord_login_token } = req.body;
   if (!discord_login_token) return res.status(400).json({ error: 'Discord login token is required' });
   const payload = _verifyPayload(discord_login_token);
-  if (!payload || payload.purpose !== 'discord_login') return res.status(401).json({ error: 'Invalid or expired login token. Please try signing in with Discord again.' });
+  if (!payload || payload.purpose !== 'discord_login') {
+    console.warn('[auth] login: invalid/expired discord_login_token');
+    return res.status(401).json({ error: 'Invalid or expired login token. Please try signing in with Discord again.' });
+  }
   const user = await db.prepare('SELECT * FROM users WHERE discord_id = ?').get(payload.discord_id);
-  if (!user) return res.status(404).json({ error: 'No account found for this Discord account. Please register first.' });
+  if (!user) {
+    console.warn('[auth] login: no user for discord_id', payload.discord_id);
+    return res.status(404).json({ error: 'No account found for this Discord account. Please register first.' });
+  }
   const token = _signPlayerToken(user.id);
+  console.log('[auth] login success: user_id=', user.id, 'username=', user.username);
   res.json({ token, id: user.id, username: user.username, platform: user.platform, position: user.position });
 });
 
@@ -2479,6 +2514,7 @@ app.get('/api/discord/callback', async (req, res) => {
     const du = await userRes.json();
     const discord_id = du.id;
     const discord    = du.username;
+    console.log('[auth] discord callback: mode=', stateData.mode, 'discord_id=', discord_id, 'discord=', discord);
 
     if (stateData.mode === 'player') {
       // Update existing logged-in player
@@ -2492,6 +2528,7 @@ app.get('/api/discord/callback', async (req, res) => {
         // This avoids the fragile register.js → POST /api/players/login chain.
         const authToken = _signPlayerToken(existingUser.id);
         const userJson = encodeURIComponent(JSON.stringify({ id: existingUser.id, username: existingUser.username, platform: existingUser.platform }));
+        console.log('[auth] discord login: existing user found, redirecting to dashboard. user_id=', existingUser.id);
         return res.redirect(`/dashboard.html?auth_token=${encodeURIComponent(authToken)}&auth_user=${userJson}`);
       } else {
         // No account found — redirect to registration with Discord info pre-filled

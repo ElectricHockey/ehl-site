@@ -35,7 +35,14 @@ async function loadDashboard() {
         window.location.href = 'register.html';
         return;
       }
-      root.innerHTML = '<p class="error" style="text-align:center;margin:3rem;">Server error — please try again in a moment.</p>';
+      // Parse error safely — server might return HTML on 500
+      let detail = '';
+      try { const d = await res.json(); detail = d.detail || d.error || ''; } catch { /* ignore */ }
+      root.innerHTML = `<div style="text-align:center;margin:3rem;">
+        <p class="error">Server error (${res.status})${detail ? ': ' + detail : ''}</p>
+        <p style="color:#8b949e;font-size:0.88rem;margin-top:0.75rem;">Your session is saved — this is a temporary server issue.</p>
+        <button onclick="loadDashboard()" style="margin-top:1rem;padding:0.5rem 1.5rem;cursor:pointer;">🔄 Retry</button>
+      </div>`;
       return;
     }
     const { user, player, staff } = await res.json();
@@ -160,7 +167,11 @@ async function loadDashboard() {
 
     root.innerHTML = html;
   } catch (err) {
-    root.innerHTML = `<p class="error">Failed to load dashboard: ${err.message}</p>`;
+    root.innerHTML = `<div style="text-align:center;margin:3rem;">
+      <p class="error">Failed to load dashboard: ${err.message}</p>
+      <p style="color:#8b949e;font-size:0.88rem;margin-top:0.75rem;">Your session is saved — this may be a temporary issue.</p>
+      <button onclick="loadDashboard()" style="margin-top:1rem;padding:0.5rem 1.5rem;cursor:pointer;">🔄 Retry</button>
+    </div>`;
   }
 }
 

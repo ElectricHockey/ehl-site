@@ -95,7 +95,8 @@ function resetDiscordLink() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ discord_login_token: discordLogin }),
       });
-      const data = await res.json();
+      let data;
+      try { data = await res.json(); } catch { data = { error: 'Server returned an unexpected response' }; }
       if (!res.ok) {
         err.textContent = data.error || 'Login failed';
         err.style.display = '';
@@ -180,12 +181,13 @@ document.getElementById('register-form').addEventListener('submit', async e => {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, platform, position, discord, discord_id, email: email || undefined }),
     });
-    const data = await res.json();
+    let data;
+    try { data = await res.json(); } catch { data = { error: 'Server returned an unexpected response' }; }
     if (!res.ok) { err.textContent = data.error || 'Registration failed'; err.style.display = ''; return; }
     setPlayerToken(data.token);
     localStorage.setItem('ehl_player_user', JSON.stringify({ id: data.id, username: data.username, platform: data.platform }));
     ok.textContent = `Welcome, ${data.username}! Redirecting…`;
     ok.style.display = '';
     setTimeout(() => window.location.href = 'dashboard.html', 800);
-  } catch { err.textContent = 'Network error. Is the server running?'; err.style.display = ''; }
+  } catch { err.textContent = 'Network error — the server may be temporarily unavailable. Please try again.'; err.style.display = ''; }
 });
