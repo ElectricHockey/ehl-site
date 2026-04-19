@@ -2999,6 +2999,7 @@ app.post('/api/admin/import-mso-json', requireOwner, async (req, res) => {
     const awayScore = parseInt(g.away_score, 10) || 0;
     const isOT = g.ot ? 1 : 0;
     const isForfeit = g.forfeit ? 1 : 0;
+    // The scraper sets g.draw=true for cancelled/in-progress MSO games (not actual ties)
     const status = g.forfeit ? 'forfeit' : (g.draw ? 'cancelled' : 'complete');
 
     const r = await db.prepare(`
