@@ -501,18 +501,27 @@
         <div class="form-section" style="max-width:580px;margin-bottom:1.25rem;">
           <h3 style="font-size:1rem;margin-bottom:0.75rem;">Season Info</h3>
           <div class="form-group" style="flex-direction:column;margin-bottom:0.75rem;">
-            <label for="mso-season-name">Season name <span style="color:#f85149;">*</span></label>
-            <input type="text" id="mso-season-name" placeholder="e.g. Season 1"
-              style="background:#21262d;border:1px solid #30363d;border-radius:6px;padding:0.4rem 0.7rem;color:#e6edf3;font-size:0.9rem;max-width:360px;" />
-          </div>
-          <div class="form-group" style="flex-direction:column;flex:1;min-width:140px;margin-bottom:0.75rem;">
-            <label for="mso-league-type">League type</label>
-            <select id="mso-league-type"
-              style="background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.4rem 0.7rem;font-size:0.9rem;max-width:200px;">
-              <option value="">– unset –</option>
-              <option value="threes">3's (Threes)</option>
-              <option value="sixes">6's (Sixes)</option>
+            <label for="mso-season-select">Import into existing season</label>
+            <select id="mso-season-select"
+              style="background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.4rem 0.7rem;font-size:0.9rem;max-width:360px;">
+              <option value="">– Create new season –</option>
             </select>
+          </div>
+          <div id="mso-new-season-fields">
+            <div class="form-group" style="flex-direction:column;margin-bottom:0.75rem;">
+              <label for="mso-season-name">New season name <span style="color:#f85149;">*</span></label>
+              <input type="text" id="mso-season-name" placeholder="e.g. Season 1"
+                style="background:#21262d;border:1px solid #30363d;border-radius:6px;padding:0.4rem 0.7rem;color:#e6edf3;font-size:0.9rem;max-width:360px;" />
+            </div>
+            <div class="form-group" style="flex-direction:column;flex:1;min-width:140px;margin-bottom:0.75rem;">
+              <label for="mso-league-type">League type</label>
+              <select id="mso-league-type"
+                style="background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.4rem 0.7rem;font-size:0.9rem;max-width:200px;">
+                <option value="">– unset –</option>
+                <option value="threes">3's (Threes)</option>
+                <option value="sixes">6's (Sixes)</option>
+              </select>
+            </div>
           </div>
 
           <h3 style="font-size:1rem;margin-bottom:0.75rem;">Scraper JSON</h3>

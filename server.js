@@ -2822,14 +2822,14 @@ app.get('/api/stats/historical', async (req, res) => {
 // bracket structures (playoffs, playoff_series, playoff_teams tables).
 
 app.post('/api/admin/import-mso-json', requireOwner, async (req, res) => {
-  const { season_name, league_type, games } = req.body || {};
-  if (!season_name || typeof season_name !== 'string' || !season_name.trim()) {
-    return res.status(400).json({ error: '"season_name" is required.' });
+  const { season_name, season_id, league_type, games } = req.body || {};
+  if (!season_name && !season_id) {
+    return res.status(400).json({ error: '"season_name" or "season_id" is required.' });
   }
   if (!Array.isArray(games) || games.length === 0) {
     return res.status(400).json({ error: '"games" must be a non-empty array.' });
   }
-  const sName = season_name.trim();
+  const sName = season_name ? String(season_name).trim() : '';
   const lt = String(league_type || '').trim();
 
   // ── Helpers ──────────────────────────────────────────────────────────────
@@ -2956,7 +2956,7 @@ app.post('/api/admin/import-mso-json', requireOwner, async (req, res) => {
   // ── Main import logic ──────────────────────────────────────────────────
 
   const summary = {
-    season: sName,
+    season: sName || `Season #${season_id}`,
     teams_created: 0,
     games_created: 0,
     games_skipped: 0,
@@ -3081,13 +3081,27 @@ app.post('/api/admin/import-mso-json', requireOwner, async (req, res) => {
 
     // Create / find the regular season
     let seasonId;
-    const existingSeason = await db.prepare('SELECT id FROM seasons WHERE name = ?').get(sName);
-    if (existingSeason) {
-      seasonId = existingSeason.id;
+    let resolvedSeasonName = sName;
+    let resolvedLt = lt;
+    if (season_id) {
+      // Use the provided existing season
+      const existing = await db.prepare('SELECT id, name, league_type FROM seasons WHERE id = ?').get(season_id);
+      if (!existing) {
+        return res.status(400).json({ error: `Season with id ${season_id} not found.` });
+      }
+      seasonId = existing.id;
+      resolvedSeasonName = existing.name;
+      resolvedLt = existing.league_type || lt;
     } else {
-      const r = await db.prepare('INSERT INTO seasons (name, is_active, league_type) VALUES (?, 0, ?)').run(sName, lt);
-      seasonId = r.lastInsertRowid;
+      const existingSeason = await db.prepare('SELECT id FROM seasons WHERE name = ?').get(sName);
+      if (existingSeason) {
+        seasonId = existingSeason.id;
+      } else {
+        const r = await db.prepare('INSERT INTO seasons (name, is_active, league_type) VALUES (?, 0, ?)').run(sName, lt);
+        seasonId = r.lastInsertRowid;
+      }
     }
+    summary.season = resolvedSeasonName;
 
     // Import regular-season games
     for (const g of regularGames) {
@@ -3097,13 +3111,13 @@ app.post('/api/admin/import-mso-json', requireOwner, async (req, res) => {
     // Import playoff games
     if (playoffGames.length > 0) {
       // Create / find the playoff season
-      const playoffSeasonName = `${sName} Playoffs`;
+      const playoffSeasonName = `${resolvedSeasonName} Playoffs`;
       let playoffSeasonId;
       const existingPS = await db.prepare('SELECT id FROM seasons WHERE name = ?').get(playoffSeasonName);
       if (existingPS) {
         playoffSeasonId = existingPS.id;
       } else {
-        const r = await db.prepare('INSERT INTO seasons (name, is_active, league_type, is_playoff) VALUES (?, 0, ?, 1)').run(playoffSeasonName, lt);
+        const r = await db.prepare('INSERT INTO seasons (name, is_active, league_type, is_playoff) VALUES (?, 0, ?, 1)').run(playoffSeasonName, resolvedLt);
         playoffSeasonId = r.lastInsertRowid;
       }
 
