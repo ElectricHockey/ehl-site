@@ -113,17 +113,24 @@ const excelUpload = multer({
 });
 
 // ── Async error handling (Express 4 doesn't catch async errors by default) ──
-// Monkey-patch Express Router to automatically catch rejected Promises from
-// async route handlers, forwarding them to the global error handler.
+// Replace Express Router's handle_request so rejected Promises from async route
+// handlers are forwarded to the global error handler instead of hanging forever.
 {
   const Layer = require('express/lib/router/layer');
-  const origHandle = Layer.prototype.handle_request;
   Layer.prototype.handle_request = function handleRequest(req, res, next) {
-    const result = origHandle.call(this, req, res, next);
-    if (result && typeof result.catch === 'function') {
-      result.catch(next);
+    const fn = this.handle;
+    if (fn.length > 3) {
+      // not a standard request handler
+      return next();
     }
-    return result;
+    try {
+      const result = fn(req, res, next);
+      if (result && typeof result.catch === 'function') {
+        result.catch(next);
+      }
+    } catch (err) {
+      next(err);
+    }
   };
 }
 
@@ -1023,7 +1030,7 @@ const SKATER_SELECT = `
   SUM(gps.sh_goals) AS sh_goals, SUM(gps.gwg) AS gwg,
   SUM(gps.toi) AS toi,
   CASE WHEN COUNT(DISTINCT gps.game_id) > 0
-    THEN ROUND(CAST(SUM(gps.possession_secs) AS REAL)/COUNT(DISTINCT gps.game_id),0)
+    THEN ROUND(CAST(SUM(gps.possession_secs) AS NUMERIC)/COUNT(DISTINCT gps.game_id),0)
     ELSE 0 END AS apt,
   SUM(gps.penalties_drawn) AS penalties_drawn,
   SUM(gps.faceoff_wins) AS faceoff_wins,
@@ -1055,7 +1062,7 @@ const GOALIE_SELECT = `
   SUM(gps.goals_against) AS goals_against,
   SUM(gps.saves) AS saves,
   CASE WHEN SUM(gps.shots_against) > 0
-    THEN ROUND(CAST(SUM(gps.saves) AS REAL)/SUM(gps.shots_against),3)
+    THEN ROUND(CAST(SUM(gps.saves) AS NUMERIC)/SUM(gps.shots_against),3)
     ELSE NULL END AS save_pct,
   CASE WHEN SUM(gps.toi) > 0
     THEN ROUND(SUM(gps.goals_against)*3600.0/SUM(gps.toi),2)
@@ -1204,7 +1211,7 @@ app.get('/api/teams/:id/records', async (req, res) => {
     pts:         await careerRecord('points',      "SUM(gps.goals + gps.assists)", 'S', 'DESC'),
     goals:       await careerRecord('goals',       "SUM(gps.goals)",               'S', 'DESC'),
     plus_minus:  await careerRecord('plus_minus',  "SUM(gps.plus_minus)",          'S', 'DESC'),
-    save_pct:    await careerRecord('save_pct',    "CASE WHEN SUM(gps.shots_against)>0 THEN ROUND(CAST(SUM(gps.saves) AS REAL)/SUM(gps.shots_against),3) ELSE NULL END", 'G', 'DESC'),
+    save_pct:    await careerRecord('save_pct',    "CASE WHEN SUM(gps.shots_against)>0 THEN ROUND(CAST(SUM(gps.saves) AS NUMERIC)/SUM(gps.shots_against),3) ELSE NULL END", 'G', 'DESC'),
     gaa:         await careerRecord('gaa',         "CASE WHEN SUM(gps.toi)>0 THEN ROUND(SUM(gps.goals_against)*3600.0/SUM(gps.toi),2) ELSE NULL END",                    'G', 'ASC'),
     goalie_wins: await careerRecord('goalie_wins', "SUM(gps.goalie_wins)",          'G', 'DESC'),
   };
@@ -1213,7 +1220,7 @@ app.get('/api/teams/:id/records', async (req, res) => {
     pts:         await singleSeasonRecord('points',      "SUM(gps.goals + gps.assists)", 'S', 'DESC'),
     goals:       await singleSeasonRecord('goals',       "SUM(gps.goals)",               'S', 'DESC'),
     plus_minus:  await singleSeasonRecord('plus_minus',  "SUM(gps.plus_minus)",          'S', 'DESC'),
-    save_pct:    await singleSeasonRecord('save_pct',    "CASE WHEN SUM(gps.shots_against)>0 THEN ROUND(CAST(SUM(gps.saves) AS REAL)/SUM(gps.shots_against),3) ELSE NULL END", 'G', 'DESC'),
+    save_pct:    await singleSeasonRecord('save_pct',    "CASE WHEN SUM(gps.shots_against)>0 THEN ROUND(CAST(SUM(gps.saves) AS NUMERIC)/SUM(gps.shots_against),3) ELSE NULL END", 'G', 'DESC'),
     gaa:         await singleSeasonRecord('gaa',         "CASE WHEN SUM(gps.toi)>0 THEN ROUND(SUM(gps.goals_against)*3600.0/SUM(gps.toi),2) ELSE NULL END",                    'G', 'ASC'),
     goalie_wins: await singleSeasonRecord('goalie_wins', "SUM(gps.goalie_wins)",          'G', 'DESC'),
   };
@@ -1361,7 +1368,7 @@ app.get('/api/records', async (req, res) => {
     bksv:             await leagueSeasonRecord("SUM(gps.breakaway_saves)",    'G', 'DESC'),
     goals_against:    await leagueSeasonRecord("SUM(gps.goals_against)",      'G', 'DESC'),
     save_pct:         await leagueSeasonRecord(
-      "CASE WHEN SUM(gps.shots_against)>0 THEN ROUND(CAST(SUM(gps.saves) AS REAL)/SUM(gps.shots_against),3) ELSE NULL END",
+      "CASE WHEN SUM(gps.shots_against)>0 THEN ROUND(CAST(SUM(gps.saves) AS NUMERIC)/SUM(gps.shots_against),3) ELSE NULL END",
       'G', 'DESC', goalieSeasonMinGP
     ),
   };
@@ -1610,7 +1617,7 @@ app.get('/api/players/records/:name', async (req, res) => {
     await checkSeasonRecord('Season PSA',             "SUM(gps.penalty_shot_attempts)",  'G', 'DESC', lt, 'seasonal');
     await checkSeasonRecord('Season BKSV',            "SUM(gps.breakaway_saves)",        'G', 'DESC', lt, 'seasonal');
     await checkSeasonRecord('Season Goals Against',   "SUM(gps.goals_against)",          'G', 'DESC', lt, 'seasonal');
-    await checkSeasonRecord('Season Save%',           "CASE WHEN SUM(gps.shots_against)>0 THEN ROUND(CAST(SUM(gps.saves) AS REAL)/SUM(gps.shots_against),3) ELSE NULL END", 'G', 'DESC', lt, 'seasonal', goalieSeasonMinGP);
+    await checkSeasonRecord('Season Save%',           "CASE WHEN SUM(gps.shots_against)>0 THEN ROUND(CAST(SUM(gps.saves) AS NUMERIC)/SUM(gps.shots_against),3) ELSE NULL END", 'G', 'DESC', lt, 'seasonal', goalieSeasonMinGP);
     // Single-game skater records
     await checkSingleGameRecord('Single Game Goals',            'goals',              'S', 'DESC', lt, 'singlegame');
     await checkSingleGameRecord('Single Game Assists',          'assists',            'S', 'DESC', lt, 'singlegame');
@@ -2070,7 +2077,7 @@ app.get('/api/stats/leaders', async (req, res) => {
       SUM(gps.sh_goals) AS sh_goals, SUM(gps.gwg) AS gwg,
       SUM(gps.toi) AS toi,
       CASE WHEN COUNT(DISTINCT gps.game_id) > 0
-        THEN ROUND(CAST(SUM(gps.possession_secs) AS REAL)/COUNT(DISTINCT gps.game_id),0)
+        THEN ROUND(CAST(SUM(gps.possession_secs) AS NUMERIC)/COUNT(DISTINCT gps.game_id),0)
         ELSE 0 END AS apt,
       SUM(gps.penalties_drawn) AS penalties_drawn,
       SUM(gps.faceoff_wins) AS faceoff_wins,
@@ -2115,7 +2122,7 @@ app.get('/api/stats/leaders', async (req, res) => {
       SUM(gps.goals_against) AS goals_against,
       SUM(gps.saves) AS saves,
       CASE WHEN SUM(gps.shots_against) > 0
-        THEN ROUND(CAST(SUM(gps.saves) AS REAL)/SUM(gps.shots_against),3)
+        THEN ROUND(CAST(SUM(gps.saves) AS NUMERIC)/SUM(gps.shots_against),3)
         ELSE NULL END AS save_pct,
       CASE WHEN SUM(gps.toi) > 0
         THEN ROUND(SUM(gps.goals_against)*3600.0/SUM(gps.toi),2)
