@@ -288,17 +288,18 @@ app.get('/api/auth/status', async (req, res) => {
 // ── Player registration & login ────────────────────────────────────────────
 
 app.post('/api/players/register', async (req, res) => {
-  const { username, platform, password, email, position, discord, discord_id } = req.body;
+  const { username, platform, email, position, discord, discord_id } = req.body;
   if (!username || !username.trim()) return res.status(400).json({ error: 'Username (gamertag) is required' });
-  if (!password || password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
   if (!discord || !discord.trim()) return res.status(400).json({ error: 'Discord account is required. Please connect with Discord.' });
+  if (!discord_id) return res.status(400).json({ error: 'Discord account must be verified via OAuth. Please connect with Discord.' });
   const plat = (platform === 'psn' ? 'psn' : 'xbox');
   const pos = position ? position.trim() : null;
   const existing = await db.prepare('SELECT id FROM users WHERE username = ?').get(username.trim());
   if (existing) return res.status(409).json({ error: 'That gamertag is already registered' });
-  const hash = await hashPassword(password);
-  const r = await db.prepare('INSERT INTO users (username, platform, password_hash, email, position, discord, discord_id) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .run(username.trim(), plat, hash, email ? email.trim() : null, pos, discord.trim(), discord_id || null);
+  const existingDiscord = await db.prepare('SELECT id FROM users WHERE discord_id = ?').get(discord_id);
+  if (existingDiscord) return res.status(409).json({ error: 'That Discord account is already linked to another user. Please sign in instead.' });
+  const r = await db.prepare('INSERT INTO users (username, platform, email, position, discord, discord_id) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(username.trim(), plat, email ? email.trim() : null, pos, discord.trim(), discord_id);
 
   // Try to merge with an existing custom-added player whose discord_id matches.
   // This links their user account to the existing roster spot instead of creating a fresh record.
@@ -326,13 +327,15 @@ app.post('/api/players/register', async (req, res) => {
   res.status(201).json({ token, id: r.lastInsertRowid, username: username.trim(), platform: plat, position: pos, player_id: playerId, merged });
 });
 
+// Discord-based login: exchange a signed discord login token for a session.
+// The token is created by /api/discord/callback when mode=login.
 app.post('/api/players/login', async (req, res) => {
-  const { username, password } = req.body;
-  if (!username || !password) return res.status(400).json({ error: 'Username and password are required' });
-  const user = await db.prepare('SELECT * FROM users WHERE username = ?').get(username.trim());
-  if (!user) return res.status(401).json({ error: 'Invalid username or password' });
-  const ok = await verifyPassword(password, user.password_hash);
-  if (!ok) return res.status(401).json({ error: 'Invalid username or password' });
+  const { discord_login_token } = req.body;
+  if (!discord_login_token) return res.status(400).json({ error: 'Discord login token is required' });
+  const payload = _verifyPayload(discord_login_token);
+  if (!payload || payload.purpose !== 'discord_login') return res.status(401).json({ error: 'Invalid or expired login token. Please try signing in with Discord again.' });
+  const user = await db.prepare('SELECT * FROM users WHERE discord_id = ?').get(payload.discord_id);
+  if (!user) return res.status(404).json({ error: 'No account found for this Discord account. Please register first.' });
   const token = crypto.randomBytes(24).toString('hex');
   playerSessions.set(token, user.id);
   res.json({ token, id: user.id, username: user.username, platform: user.platform, position: user.position });
@@ -2398,7 +2401,15 @@ app.get('/api/discord/connect', async (req, res) => {
   if (!DISCORD_CLIENT_ID || !DISCORD_CLIENT_SECRET) return res.status(501).json({ error: 'Discord OAuth is not configured on this server. Set DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET environment variables.' });
   const redirectUri = DISCORD_REDIRECT_URI || `${req.protocol}://${req.get('host')}/api/discord/callback`;
   const playerToken = req.query.token || '';
-  const mode   = (playerToken && playerSessions.has(playerToken)) ? 'player' : 'register';
+  const explicitMode = req.query.mode || '';
+  let mode;
+  if (explicitMode === 'login') {
+    mode = 'login';
+  } else if (playerToken && playerSessions.has(playerToken)) {
+    mode = 'player';
+  } else {
+    mode = 'register';
+  }
   const userId = mode === 'player' ? playerSessions.get(playerToken) : null;
   // Encode state as an HMAC-signed token so it survives serverless cold starts
   const state  = _signPayload({ mode, userId, redirectUri, exp: Date.now() + 10 * 60 * 1000 });
@@ -2440,6 +2451,18 @@ app.get('/api/discord/callback', async (req, res) => {
       // Update existing logged-in player
       await db.prepare('UPDATE users SET discord_id = ?, discord = ? WHERE id = ?').run(discord_id, discord, stateData.userId);
       return res.redirect('/dashboard.html?discord_linked=1');
+    } else if (stateData.mode === 'login') {
+      // Discord login: check if a user with this discord_id exists
+      const existingUser = await db.prepare('SELECT id FROM users WHERE discord_id = ?').get(discord_id);
+      if (existingUser) {
+        // Create a signed login token the client can exchange for a real session
+        const loginToken = _signPayload({ purpose: 'discord_login', discord_id, discord, exp: Date.now() + 10 * 60 * 1000 });
+        return res.redirect(`/register.html?discord_login=${encodeURIComponent(loginToken)}`);
+      } else {
+        // No account found — redirect to registration with Discord info pre-filled
+        const linkToken = _signPayload({ discord_id, discord, exp: Date.now() + 10 * 60 * 1000 });
+        return res.redirect(`/register.html?discord_token=${encodeURIComponent(linkToken)}&discord_username=${encodeURIComponent(discord)}&discord_new=1`);
+      }
     } else {
       // Create a signed token for the registration page to pick up
       const linkToken = _signPayload({ discord_id, discord, exp: Date.now() + 10 * 60 * 1000 });
