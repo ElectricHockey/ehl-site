@@ -18,6 +18,10 @@ function selectPlatform(p) {
 
 // ── Discord OAuth helpers ──────────────────────────────────────────────────
 
+function startDiscordLogin() {
+  window.location.href = `${API}/discord/connect?mode=login`;
+}
+
 function startDiscordOAuth() {
   // Save current form state so we can restore it after the OAuth redirect
   sessionStorage.setItem('reg_form', JSON.stringify({
@@ -56,6 +60,37 @@ function resetDiscordLink() {
 
   const params = new URLSearchParams(window.location.search);
 
+  // Discord login callback – exchange the signed login token for a session
+  const discordLogin = params.get('discord_login');
+  if (discordLogin) {
+    const err = document.getElementById('login-error');
+    try {
+      const res = await fetch(`${API}/players/login`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ discord_login_token: discordLogin }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        err.textContent = data.error || 'Login failed';
+        err.style.display = '';
+        // If no account found, switch to register tab
+        if (res.status === 404) {
+          err.textContent = 'No account found for this Discord account. Please register below.';
+          showTab('register');
+        }
+      } else {
+        setPlayerToken(data.token);
+        localStorage.setItem('ehl_player_user', JSON.stringify({ id: data.id, username: data.username, platform: data.platform }));
+        window.location.href = 'dashboard.html';
+        return;
+      }
+    } catch {
+      err.textContent = 'Network error. Please try again.';
+      err.style.display = '';
+    }
+    window.history.replaceState({}, '', window.location.pathname);
+  }
+
   // Restore form values saved before OAuth redirect
   const saved = sessionStorage.getItem('reg_form');
   if (saved) {
@@ -69,7 +104,7 @@ function resetDiscordLink() {
     sessionStorage.removeItem('reg_form');
   }
 
-  // Discord OAuth returned successfully
+  // Discord OAuth returned successfully (for registration)
   const discordToken = params.get('discord_token');
   if (discordToken) {
     showTab('register');
@@ -78,6 +113,14 @@ function resetDiscordLink() {
       const { discord_id, discord } = await pendRes.json();
       applyDiscordLink(discord, discord_id);
     }
+    // If discord_new flag set, show helpful message
+    if (params.get('discord_new') === '1') {
+      const err = document.getElementById('register-error');
+      err.textContent = '';
+      const ok = document.getElementById('register-success');
+      ok.textContent = 'No existing account found. Fill out the form below to create your EHL profile.';
+      ok.style.display = '';
+    }
     // Clean URL without reloading
     window.history.replaceState({}, '', window.location.pathname);
   }
@@ -85,32 +128,13 @@ function resetDiscordLink() {
   // Discord OAuth error
   const discordError = params.get('discord_error');
   if (discordError) {
-    showTab('register');
-    const err = document.getElementById('register-error');
-    err.textContent = `Discord connection failed: ${discordError}. Please try again.`;
-    err.style.display = '';
+    showTab('login');
+    const loginErr = document.getElementById('login-error');
+    loginErr.textContent = `Discord connection failed: ${discordError}. Please try again.`;
+    loginErr.style.display = '';
     window.history.replaceState({}, '', window.location.pathname);
   }
 })();
-
-document.getElementById('login-form').addEventListener('submit', async e => {
-  e.preventDefault();
-  const err = document.getElementById('login-error');
-  err.style.display = 'none';
-  const username = document.getElementById('login-username').value.trim();
-  const password = document.getElementById('login-password').value;
-  try {
-    const res = await fetch(`${API}/players/login`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
-    });
-    const data = await res.json();
-    if (!res.ok) { err.textContent = data.error || 'Login failed'; err.style.display = ''; return; }
-    setPlayerToken(data.token);
-    localStorage.setItem('ehl_player_user', JSON.stringify({ id: data.id, username: data.username, platform: data.platform }));
-    window.location.href = 'dashboard.html';
-  } catch { err.textContent = 'Network error. Is the server running?'; err.style.display = ''; }
-});
 
 document.getElementById('register-form').addEventListener('submit', async e => {
   e.preventDefault();
@@ -123,15 +147,12 @@ document.getElementById('register-form').addEventListener('submit', async e => {
   const position   = document.getElementById('reg-position').value;
   const discord    = document.getElementById('reg-discord').value.trim();
   const discord_id = document.getElementById('reg-discord-id').value.trim() || null;
-  const password   = document.getElementById('reg-password').value;
-  const confirm    = document.getElementById('reg-confirm').value;
   if (!position) { err.textContent = 'Please select your position'; err.style.display = ''; return; }
   if (!discord) { err.textContent = 'Please connect your Discord account before registering'; err.style.display = ''; return; }
-  if (password !== confirm) { err.textContent = 'Passwords do not match'; err.style.display = ''; return; }
   try {
     const res = await fetch(`${API}/players/register`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, platform, position, password, discord, discord_id, email: email || undefined }),
+      body: JSON.stringify({ username, platform, position, discord, discord_id, email: email || undefined }),
     });
     const data = await res.json();
     if (!res.ok) { err.textContent = data.error || 'Registration failed'; err.style.display = ''; return; }

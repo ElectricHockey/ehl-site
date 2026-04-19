@@ -243,7 +243,7 @@ async function initSchema() {
       id            SERIAL PRIMARY KEY,
       username      ${usernameType} NOT NULL UNIQUE,
       platform      TEXT NOT NULL DEFAULT 'xbox',
-      password_hash TEXT NOT NULL,
+      password_hash TEXT,
       email         TEXT,
       position      TEXT,
       ip_hash       TEXT,
@@ -429,6 +429,17 @@ async function initSchema() {
   for (const sql of indexes) {
     try { await pool.query(sql); } catch (err) {
       console.warn('[db] Index warning:', err.message);
+    }
+  }
+
+  // ── 4. Migrations ───────────────────────────────────────────────────
+  // Make password_hash nullable (Discord-only auth, no password needed)
+  try {
+    await pool.query('ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL');
+  } catch (err) {
+    // Ignore if already nullable or column doesn't exist
+    if (err.message && !err.message.includes('does not exist')) {
+      console.warn('[db] Migration warning (password_hash nullable):', err.message);
     }
   }
 
