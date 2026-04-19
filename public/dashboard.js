@@ -2,6 +2,23 @@ const API = '/api';
 function getToken() { return localStorage.getItem('ehl_player_token') || ''; }
 function playerHeaders() { return { 'Content-Type': 'application/json', 'X-Player-Token': getToken() }; }
 
+// ── Handle direct login redirect (?auth_token=...&auth_user=...) ──────────
+// The Discord OAuth callback now redirects here directly with a signed session
+// token, eliminating the fragile register.js → POST chain.
+(function () {
+  const params = new URLSearchParams(window.location.search);
+  const authToken = params.get('auth_token');
+  if (authToken) {
+    localStorage.setItem('ehl_player_token', authToken);
+    const authUser = params.get('auth_user');
+    if (authUser) {
+      try { localStorage.setItem('ehl_player_user', authUser); } catch { /* ignore */ }
+    }
+    // Clean URL immediately so the token isn't in browser history
+    window.history.replaceState({}, '', window.location.pathname);
+  }
+})();
+
 async function loadDashboard() {
   const root = document.getElementById('dash-root');
   const token = getToken();
@@ -9,7 +26,18 @@ async function loadDashboard() {
 
   try {
     const res = await fetch(`${API}/players/me`, { headers: { 'X-Player-Token': token } });
-    if (!res.ok) { localStorage.removeItem('ehl_player_token'); window.location.href = 'register.html'; return; }
+    if (!res.ok) {
+      // Only clear the token on 401 (invalid/expired token).
+      // Do NOT clear on 500, 503, 429, etc. — those are transient server issues.
+      if (res.status === 401) {
+        localStorage.removeItem('ehl_player_token');
+        localStorage.removeItem('ehl_player_user');
+        window.location.href = 'register.html';
+        return;
+      }
+      root.innerHTML = '<p class="error" style="text-align:center;margin:3rem;">Server error — please try again in a moment.</p>';
+      return;
+    }
     const { user, player, staff } = await res.json();
 
     const ownerRole = staff.find(s => s.role === 'owner');

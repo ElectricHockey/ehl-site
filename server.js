@@ -129,7 +129,7 @@ const excelUpload = multer({
 
 // ── Rate limiting ──────────────────────────────────────────────────────────
 
-const apiLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 300, standardHeaders: true, legacyHeaders: false });
+const apiLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 300, standardHeaders: true, legacyHeaders: false, validate: { ip: false } });
 
 app.set('trust proxy', 1); // trust first proxy so req.ip reflects real client IP
 app.use(cors());
@@ -2486,11 +2486,13 @@ app.get('/api/discord/callback', async (req, res) => {
       return res.redirect('/dashboard.html?discord_linked=1');
     } else if (stateData.mode === 'login') {
       // Discord login: check if a user with this discord_id exists
-      const existingUser = await db.prepare('SELECT id FROM users WHERE discord_id = ?').get(discord_id);
+      const existingUser = await db.prepare('SELECT id, username, platform FROM users WHERE discord_id = ?').get(discord_id);
       if (existingUser) {
-        // Create a signed login token the client can exchange for a real session
-        const loginToken = _signPayload({ purpose: 'discord_login', discord_id, discord, exp: Date.now() + 10 * 60 * 1000 });
-        return res.redirect(`/register.html?discord_login=${encodeURIComponent(loginToken)}`);
+        // Create a player session token and redirect straight to dashboard.
+        // This avoids the fragile register.js → POST /api/players/login chain.
+        const authToken = _signPlayerToken(existingUser.id);
+        const userJson = encodeURIComponent(JSON.stringify({ id: existingUser.id, username: existingUser.username, platform: existingUser.platform }));
+        return res.redirect(`/dashboard.html?auth_token=${encodeURIComponent(authToken)}&auth_user=${userJson}`);
       } else {
         // No account found — redirect to registration with Discord info pre-filled
         const linkToken = _signPayload({ discord_id, discord, exp: Date.now() + 10 * 60 * 1000 });

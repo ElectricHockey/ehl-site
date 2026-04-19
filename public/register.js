@@ -53,14 +53,40 @@ function resetDiscordLink() {
 (async () => {
   const token = getPlayerToken();
   if (token) {
-    const res = await fetch(`${API}/players/me`, { headers: { 'X-Player-Token': token } }).catch(() => null);
-    if (res && res.ok) { window.location.href = 'dashboard.html'; return; }
-    clearPlayerToken();
+    try {
+      const res = await fetch(`${API}/players/me`, { headers: { 'X-Player-Token': token } });
+      if (res && res.ok) { window.location.href = 'dashboard.html'; return; }
+      // Only clear the token on explicit 401 (invalid/expired).
+      // Do NOT clear on 500, 503, 429, or network errors — those are transient.
+      if (res && res.status === 401) {
+        clearPlayerToken();
+      } else {
+        // Server is having issues — don't wipe the session; let the user see the login page
+        // but keep their token so they can retry.
+      }
+    } catch {
+      // Network error — don't clear token; the server may just be temporarily down.
+    }
   }
 
   const params = new URLSearchParams(window.location.search);
 
-  // Discord login callback – exchange the signed login token for a session
+  // ── Direct auth token from dashboard redirect (fallback path) ───────────
+  // If the user somehow landed here with an auth_token, save it and redirect.
+  const authToken = params.get('auth_token');
+  if (authToken) {
+    setPlayerToken(authToken);
+    const authUser = params.get('auth_user');
+    if (authUser) {
+      try { localStorage.setItem('ehl_player_user', authUser); } catch { /* ignore */ }
+    }
+    window.location.href = 'dashboard.html';
+    return;
+  }
+
+  // ── Discord login callback (legacy fallback) ────────────────────────────
+  // The primary login path now goes directly to dashboard.html, but keep this
+  // for backward compatibility with any stale URLs.
   const discordLogin = params.get('discord_login');
   if (discordLogin) {
     const err = document.getElementById('login-error');
