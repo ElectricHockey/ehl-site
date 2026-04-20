@@ -54,10 +54,12 @@ const SeasonSelector = (() => {
     return result;
   }
 
+  // Seasons come from the API already sorted by sort_order ASC, id ASC
+  // (matching the admin panel order). Just use them as-is.
   function _populateSeasonSelect(type) {
     const el = document.getElementById('season-select');
     if (!el) return;
-    const seasons = _sortWithPlayoffs(_seasonsCache[type] || []);
+    const seasons = _seasonsCache[type] || [];
     const key     = STORAGE_SEASON[type];
     if (seasons.length === 0) {
       el.innerHTML = '<option value="">No seasons</option>';

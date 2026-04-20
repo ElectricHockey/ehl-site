@@ -143,11 +143,21 @@ function sumGoalieRows(rows) {
 
 // ── Skater stats row ───────────────────────────────────────────────────────
 
+function teamLogoCell(p) {
+  // For total/career rows, show the label text instead of a logo
+  if (!p.team_logo && p.team_name) return p.team_name;
+  if (!p.team_logo) return '—';
+  const img = `<img src="${p.team_logo}" class="team-logo-xs" alt="${p.team_name || ''}" title="${p.team_name || ''}" />`;
+  if (p.team_id && p.season_id) return `<a href="team.html?id=${p.team_id}&season_id=${p.season_id}">${img}</a>`;
+  if (p.team_id) return `<a href="team.html?id=${p.team_id}">${img}</a>`;
+  return img;
+}
+
 function skaterRow(p, trClass = '') {
   const ovr = computeOvr(p);
   p._ovr = ovr;
   return `<tr class="${trClass}">
-    <td>${logoImg(p.team_logo, p.team_name)}${p.team_name || '—'}</td>
+    <td style="text-align:center;">${teamLogoCell(p)}</td>
     ${SKATER_COLS.map(c => `<td style="${c.style ? c.style(p) : ''}">${c.fmt(p)}</td>`).join('')}
   </tr>`;
 }
@@ -156,7 +166,7 @@ function goalieRow(p, trClass = '') {
   const ovr = computeOvr(p);
   p._ovr = ovr;
   return `<tr class="${trClass}">
-    <td>${logoImg(p.team_logo, p.team_name)}${p.team_name || '—'}</td>
+    <td style="text-align:center;">${teamLogoCell(p)}</td>
     ${GOALIE_COLS.map(c => `<td style="${c.style ? c.style(p) : ''}">${c.fmt(p)}</td>`).join('')}
   </tr>`;
 }

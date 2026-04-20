@@ -717,6 +717,11 @@
             <input type="number" id="rec-goalie-min-gp" value="16" min="1" max="999" style="width:100px;" />
             <span style="color:#8b949e;font-size:0.8rem;margin-top:0.3rem;">Goalies must have played at least this many games in a season to qualify for Save% records.</span>
           </div>
+          <div class="form-group" style="flex-direction:column;margin-bottom:1rem;">
+            <label for="goalie-stats-min-gp">Min. Games Played for Goalie SV% &amp; GAA Leaders</label>
+            <input type="number" id="goalie-stats-min-gp" value="5" min="1" max="999" style="width:100px;" />
+            <span style="color:#8b949e;font-size:0.8rem;margin-top:0.3rem;">Goalies must have played at least this many games in a season to appear in SV% and GAA stat leader columns.</span>
+          </div>
           <button onclick="saveRecordsSettings()">Save Settings</button>
           <span id="rec-settings-msg" style="margin-left:0.75rem;font-size:0.85rem;"></span>
         </div>

@@ -73,6 +73,7 @@ const leagueData = {
   threes: { skaters: [], goalies: [] },
   sixes:  { skaters: [], goalies: [] },
 };
+let goalieStatsMinGP = 5;
 const leagueSort = {
   threes: { skater: { key: 'points', dir: 'desc' }, goalie: { key: 'save_pct', dir: 'desc' } },
   sixes:  { skater: { key: 'points', dir: 'desc' }, goalie: { key: 'save_pct', dir: 'desc' } },
@@ -148,6 +149,7 @@ function renderGoalies(league) {
   const sorted = sortData(filtered, leagueSort[league].goalie.key, leagueSort[league].goalie.dir);
   const s = k => thClass(k, leagueSort[league].goalie);
   const prevScroll = root.firstElementChild?.scrollLeft || 0;
+  const minGPNote = goalieStatsMinGP ? `<p style="color:#8b949e;font-size:0.8rem;margin:0.35rem 0 0;">SV% and GAA require a minimum of ${goalieStatsMinGP} games played.</p>` : '';
   root.innerHTML = `<div style="overflow-x:auto;"><table id="goalies-table">
     <thead><tr>
       <th>Player</th><th>Team</th>
@@ -158,7 +160,7 @@ function renderGoalies(league) {
       <td style="text-align:center;">${p.team_logo ? `<a href="team.html?id=${p.team_id}" title="${p.team_name}"><img src="${p.team_logo}" style="width:20px;height:20px;object-fit:contain;vertical-align:middle;border-radius:2px;" /></a>` : '–'}</td>
       ${GOALIE_COLS.map(c => `<td style="${c.style ? c.style(p) : ''}">${c.fmt(p)}</td>`).join('')}
     </tr>`).join('')}</tbody>
-  </table></div>`;
+  </table></div>${minGPNote}`;
   if (root.firstElementChild && prevScroll) root.firstElementChild.scrollLeft = prevScroll;
 }
 
@@ -184,6 +186,7 @@ async function loadStats() {
   const data = await fetchLeagueStats(sid);
   leagueData[league].skaters = data.skaters || [];
   leagueData[league].goalies = data.goalies || [];
+  if (data.goalieStatsMinGP !== undefined) goalieStatsMinGP = data.goalieStatsMinGP;
 
   renderSkaters(league);
   renderGoalies(league);
