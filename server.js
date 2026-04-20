@@ -513,10 +513,7 @@ app.delete('/api/seasons/:id', requireOwner, async (req, res) => {
   }
 
   // Delete all game stats and games from this season
-  const seasonGames = await db.prepare('SELECT id FROM games WHERE season_id = ?').all(req.params.id);
-  for (const g of seasonGames) {
-    await db.prepare('DELETE FROM game_player_stats WHERE game_id = ?').run(g.id);
-  }
+  await db.prepare('DELETE FROM game_player_stats WHERE game_id IN (SELECT id FROM games WHERE season_id = ?)').run(req.params.id);
   await db.prepare('DELETE FROM games WHERE season_id = ?').run(req.params.id);
 
   // Delete season_player_stats (imported historical data) — CASCADE handles this,

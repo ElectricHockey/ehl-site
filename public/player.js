@@ -144,7 +144,9 @@ function sumGoalieRows(rows) {
 // ── Skater stats row ───────────────────────────────────────────────────────
 
 function teamLogoCell(p) {
-  if (!p.team_logo) return p.team_name || '—';
+  // For total/career rows, show the label text instead of a logo
+  if (!p.team_logo && p.team_name) return p.team_name;
+  if (!p.team_logo) return '—';
   const img = `<img src="${p.team_logo}" class="team-logo-xs" alt="${p.team_name || ''}" title="${p.team_name || ''}" />`;
   if (p.team_id && p.season_id) return `<a href="team.html?id=${p.team_id}&season_id=${p.season_id}">${img}</a>`;
   if (p.team_id) return `<a href="team.html?id=${p.team_id}">${img}</a>`;
