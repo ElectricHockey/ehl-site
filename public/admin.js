@@ -277,7 +277,22 @@ async function loadSeasons() {
   _wireGseAdmin(); // keep GSE season list in sync
 
   // Filter for display list by selected league
-  const filteredSeasons = allSeasons.filter(s => !s.league_type || s.league_type === adminLeagueFilter);
+  const filtered = allSeasons.filter(s => !s.league_type || s.league_type === adminLeagueFilter);
+  // Group playoff seasons directly above their parent regular season
+  const regularSeasons2 = filtered.filter(s => !s.is_playoff);
+  const playoffSeasons = filtered.filter(s => s.is_playoff);
+  const parentMap = new Map();
+  for (const ps of playoffSeasons) {
+    if (ps.parent_season_id) parentMap.set(ps.parent_season_id, ps);
+  }
+  const filteredSeasons = [];
+  for (const s of regularSeasons2) {
+    const ps = parentMap.get(s.id);
+    if (ps) { filteredSeasons.push(ps); parentMap.delete(s.id); }
+    filteredSeasons.push(s);
+  }
+  // Append any orphan playoff seasons not matched to a parent
+  for (const ps of parentMap.values()) filteredSeasons.push(ps);
   const list = document.getElementById('seasons-list');
 
   if (filteredSeasons.length === 0) {

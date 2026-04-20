@@ -33,7 +33,7 @@ function gameRef(r) {
 // rec may be a single object or an array (tied record holders)
 function buildRow(label, rec, fmtType, extraFn) {
   const recs = Array.isArray(rec) ? rec : (rec ? [rec] : []);
-  if (recs.length === 0 || recs[0] === null || recs[0].value === null || recs[0].value === undefined) {
+  if (recs.length === 0 || recs[0] === null || recs[0].value === null || recs[0].value === undefined || recs[0].value === 0) {
     return `<tr><td class="rec-meta">${label}</td><td colspan="3" class="rec-meta">–</td></tr>`;
   }
   if (recs.length === 1) {

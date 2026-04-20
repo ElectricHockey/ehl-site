@@ -460,8 +460,8 @@ app.patch('/api/users/:id', requireOwner, async (req, res) => {
 app.get('/api/seasons', async (req, res) => {
   const { type } = req.query;
   const seasons = type
-    ? await db.prepare('SELECT * FROM seasons WHERE league_type = ? ORDER BY sort_order ASC, id ASC').all(type)
-    : await db.prepare('SELECT * FROM seasons ORDER BY sort_order ASC, id ASC').all();
+    ? await db.prepare('SELECT s.*, p.season_id AS parent_season_id FROM seasons s LEFT JOIN playoffs p ON s.id = p.playoff_season_id WHERE s.league_type = ? ORDER BY s.sort_order ASC, s.id ASC').all(type)
+    : await db.prepare('SELECT s.*, p.season_id AS parent_season_id FROM seasons s LEFT JOIN playoffs p ON s.id = p.playoff_season_id ORDER BY s.sort_order ASC, s.id ASC').all();
   res.json(seasons);
 });
 
@@ -534,8 +534,11 @@ app.post('/api/seasons/:id/reorder', requireOwner, async (req, res) => {
   const season = await db.prepare('SELECT * FROM seasons WHERE id = ?').get(req.params.id);
   if (!season) return res.status(404).json({ error: 'Season not found' });
 
-  // Get all seasons ordered by sort_order
-  const all = await db.prepare('SELECT id, sort_order FROM seasons ORDER BY sort_order ASC, id ASC').all();
+  // Get only seasons of the same league_type so arrows move within the filtered view
+  const lt = season.league_type || '';
+  const all = lt
+    ? await db.prepare('SELECT id, sort_order FROM seasons WHERE league_type = ? ORDER BY sort_order ASC, id ASC').all(lt)
+    : await db.prepare('SELECT id, sort_order FROM seasons ORDER BY sort_order ASC, id ASC').all();
   const idx = all.findIndex(s => s.id === Number(req.params.id));
   if (idx < 0) return res.status(404).json({ error: 'Season not found in list' });
 
