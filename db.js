@@ -13,7 +13,13 @@
 //   • `db.transaction(fn)` runs fn(txDb) inside BEGIN…COMMIT
 // ═══════════════════════════════════════════════════════════════════════════
 
-const { Pool } = require('pg');
+const { Pool, types } = require('pg');
+
+// PostgreSQL returns BIGINT and NUMERIC as strings by default.
+// Register type parsers so they come back as native JS numbers, avoiding
+// string-concatenation bugs in += operations and .toFixed() errors.
+types.setTypeParser(20, val => parseInt(val, 10));    // BIGINT  (OID 20)
+types.setTypeParser(1700, val => parseFloat(val));     // NUMERIC (OID 1700)
 
 // Accept either the app's own DATABASE_URL or the Vercel/Supabase integration
 // names (POSTGRES_URL, POSTGRES_URL_NON_POOLING) so no manual env var setup is

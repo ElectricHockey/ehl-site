@@ -20,7 +20,8 @@ function formatToi(s) {
 function fmt1(v) { return v !== null && v !== undefined ? Number(v).toFixed(1) : '–'; }
 function pct3(v) {
   if (v === null || v === undefined) return '–';
-  const frac = v > 1 ? v / 100 : v;
+  const num = Number(v);
+  const frac = num > 1 ? num / 100 : num;
   return frac.toFixed(3).replace(/^0(?=\.)/, '');
 }
 function computeOvr(p) {
@@ -56,35 +57,35 @@ function sumSkaterRows(rows) {
     _or_sum: 0, _offr_sum: 0, _dr_sum: 0, _tpr_sum: 0, _r_count: 0,
   };
   for (const r of rows) {
-    tot.gp += r.gp || 0;
-    tot.goals += r.goals || 0;
-    tot.assists += r.assists || 0;
-    tot.points += r.points || 0;
-    tot.plus_minus += r.plus_minus || 0;
-    tot.shots += r.shots || 0;
-    tot.shot_attempts += r.shot_attempts || 0;
-    tot.hits += r.hits || 0;
-    tot.blocked_shots += r.blocked_shots || 0;
-    tot.takeaways += r.takeaways || 0;
-    tot.giveaways += r.giveaways || 0;
-    tot.pp_goals += r.pp_goals || 0;
-    tot.sh_goals += r.sh_goals || 0;
-    tot.gwg += r.gwg || 0;
-    tot.pim += r.pim || 0;
-    tot.penalties_drawn += r.penalties_drawn || 0;
-    tot.faceoff_wins += r.faceoff_wins || 0;
-    tot.faceoff_total += r.faceoff_total || 0;
-    tot.deflections += r.deflections || 0;
-    tot.interceptions += r.interceptions || 0;
-    tot.pass_attempts += r.pass_attempts || 0;
-    tot.pass_completions += r.pass_completions || 0;
-    tot.hat_tricks += r.hat_tricks || 0;
-    if (r.apt) { tot._apt_sum += r.apt * (r.gp || 1); tot._apt_gp += r.gp || 1; }
-    tot.toi += r.toi || 0;
-    if (r.overall_rating > 0)    { tot._or_sum   += r.overall_rating;   tot._r_count++; }
-    if (r.offensive_rating > 0)    tot._offr_sum += r.offensive_rating;
-    if (r.defensive_rating > 0)    tot._dr_sum   += r.defensive_rating;
-    if (r.team_play_rating > 0)    tot._tpr_sum  += r.team_play_rating;
+    tot.gp += Number(r.gp) || 0;
+    tot.goals += Number(r.goals) || 0;
+    tot.assists += Number(r.assists) || 0;
+    tot.points += Number(r.points) || 0;
+    tot.plus_minus += Number(r.plus_minus) || 0;
+    tot.shots += Number(r.shots) || 0;
+    tot.shot_attempts += Number(r.shot_attempts) || 0;
+    tot.hits += Number(r.hits) || 0;
+    tot.blocked_shots += Number(r.blocked_shots) || 0;
+    tot.takeaways += Number(r.takeaways) || 0;
+    tot.giveaways += Number(r.giveaways) || 0;
+    tot.pp_goals += Number(r.pp_goals) || 0;
+    tot.sh_goals += Number(r.sh_goals) || 0;
+    tot.gwg += Number(r.gwg) || 0;
+    tot.pim += Number(r.pim) || 0;
+    tot.penalties_drawn += Number(r.penalties_drawn) || 0;
+    tot.faceoff_wins += Number(r.faceoff_wins) || 0;
+    tot.faceoff_total += Number(r.faceoff_total) || 0;
+    tot.deflections += Number(r.deflections) || 0;
+    tot.interceptions += Number(r.interceptions) || 0;
+    tot.pass_attempts += Number(r.pass_attempts) || 0;
+    tot.pass_completions += Number(r.pass_completions) || 0;
+    tot.hat_tricks += Number(r.hat_tricks) || 0;
+    if (r.apt) { tot._apt_sum += Number(r.apt) * (Number(r.gp) || 1); tot._apt_gp += Number(r.gp) || 1; }
+    tot.toi += Number(r.toi) || 0;
+    if (Number(r.overall_rating) > 0)    { tot._or_sum   += Number(r.overall_rating);   tot._r_count++; }
+    if (Number(r.offensive_rating) > 0)    tot._offr_sum += Number(r.offensive_rating);
+    if (Number(r.defensive_rating) > 0)    tot._dr_sum   += Number(r.defensive_rating);
+    if (Number(r.team_play_rating) > 0)    tot._tpr_sum  += Number(r.team_play_rating);
   }
   const n = tot._r_count || 1;
   tot.overall_rating    = tot._r_count ? Math.round(tot._or_sum   / n) : 0;
@@ -109,26 +110,26 @@ function sumGoalieRows(rows) {
     _or_sum: 0, _offr_sum: 0, _dr_sum: 0, _tpr_sum: 0, _r_count: 0,
   };
   for (const r of rows) {
-    tot.gp += r.gp || 0;
-    tot.goals += r.goals || 0;
-    tot.assists += r.assists || 0;
-    tot.saves += r.saves || 0;
-    tot.goals_against += r.goals_against || 0;
-    tot.shots_against += r.shots_against || 0;
-    tot.toi += r.toi || 0;
-    tot.shutouts += r.shutouts || 0;
-    tot.penalty_shot_attempts += r.penalty_shot_attempts || 0;
-    tot.penalty_shot_ga += r.penalty_shot_ga || 0;
-    tot.breakaway_shots += r.breakaway_shots || 0;
-    tot.breakaway_saves += r.breakaway_saves || 0;
-    tot.goalie_wins += r.goalie_wins || 0;
-    tot.goalie_losses += r.goalie_losses || 0;
-    tot.goalie_otw += r.goalie_otw || 0;
-    tot.goalie_otl += r.goalie_otl || 0;
-    if (r.overall_rating > 0)  { tot._or_sum   += r.overall_rating;   tot._r_count++; }
-    if (r.offensive_rating > 0)  tot._offr_sum += r.offensive_rating;
-    if (r.defensive_rating > 0)  tot._dr_sum   += r.defensive_rating;
-    if (r.team_play_rating > 0)  tot._tpr_sum  += r.team_play_rating;
+    tot.gp += Number(r.gp) || 0;
+    tot.goals += Number(r.goals) || 0;
+    tot.assists += Number(r.assists) || 0;
+    tot.saves += Number(r.saves) || 0;
+    tot.goals_against += Number(r.goals_against) || 0;
+    tot.shots_against += Number(r.shots_against) || 0;
+    tot.toi += Number(r.toi) || 0;
+    tot.shutouts += Number(r.shutouts) || 0;
+    tot.penalty_shot_attempts += Number(r.penalty_shot_attempts) || 0;
+    tot.penalty_shot_ga += Number(r.penalty_shot_ga) || 0;
+    tot.breakaway_shots += Number(r.breakaway_shots) || 0;
+    tot.breakaway_saves += Number(r.breakaway_saves) || 0;
+    tot.goalie_wins += Number(r.goalie_wins) || 0;
+    tot.goalie_losses += Number(r.goalie_losses) || 0;
+    tot.goalie_otw += Number(r.goalie_otw) || 0;
+    tot.goalie_otl += Number(r.goalie_otl) || 0;
+    if (Number(r.overall_rating) > 0)  { tot._or_sum   += Number(r.overall_rating);   tot._r_count++; }
+    if (Number(r.offensive_rating) > 0)  tot._offr_sum += Number(r.offensive_rating);
+    if (Number(r.defensive_rating) > 0)  tot._dr_sum   += Number(r.defensive_rating);
+    if (Number(r.team_play_rating) > 0)  tot._tpr_sum  += Number(r.team_play_rating);
   }
   const n = tot._r_count || 1;
   tot.overall_rating    = tot._r_count ? Math.round(tot._or_sum   / n) : 0;
