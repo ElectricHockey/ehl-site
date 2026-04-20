@@ -279,14 +279,14 @@ async function loadSeasons() {
   // Filter for display list by selected league
   const filtered = allSeasons.filter(s => !s.league_type || s.league_type === adminLeagueFilter);
   // Group playoff seasons directly above their parent regular season
-  const regularSeasons2 = filtered.filter(s => !s.is_playoff);
+  const nonPlayoff = filtered.filter(s => !s.is_playoff);
   const playoffSeasons = filtered.filter(s => s.is_playoff);
   const parentMap = new Map();
   for (const ps of playoffSeasons) {
     if (ps.parent_season_id) parentMap.set(ps.parent_season_id, ps);
   }
   const filteredSeasons = [];
-  for (const s of regularSeasons2) {
+  for (const s of nonPlayoff) {
     const ps = parentMap.get(s.id);
     if (ps) { filteredSeasons.push(ps); parentMap.delete(s.id); }
     filteredSeasons.push(s);
