@@ -460,8 +460,8 @@ app.patch('/api/users/:id', requireOwner, async (req, res) => {
 app.get('/api/seasons', async (req, res) => {
   const { type } = req.query;
   const seasons = type
-    ? await db.prepare('SELECT * FROM seasons WHERE league_type = ? ORDER BY sort_order ASC, id ASC').all(type)
-    : await db.prepare('SELECT * FROM seasons ORDER BY sort_order ASC, id ASC').all();
+    ? await db.prepare('SELECT s.*, p.season_id AS parent_season_id FROM seasons s LEFT JOIN playoffs p ON s.id = p.playoff_season_id WHERE s.league_type = ? ORDER BY s.sort_order ASC, s.id ASC').all(type)
+    : await db.prepare('SELECT s.*, p.season_id AS parent_season_id FROM seasons s LEFT JOIN playoffs p ON s.id = p.playoff_season_id ORDER BY s.sort_order ASC, s.id ASC').all();
   res.json(seasons);
 });
 
@@ -534,8 +534,11 @@ app.post('/api/seasons/:id/reorder', requireOwner, async (req, res) => {
   const season = await db.prepare('SELECT * FROM seasons WHERE id = ?').get(req.params.id);
   if (!season) return res.status(404).json({ error: 'Season not found' });
 
-  // Get all seasons ordered by sort_order
-  const all = await db.prepare('SELECT id, sort_order FROM seasons ORDER BY sort_order ASC, id ASC').all();
+  // Get only seasons of the same league_type so arrows move within the filtered view
+  const lt = season.league_type || '';
+  const all = lt
+    ? await db.prepare('SELECT id, sort_order FROM seasons WHERE league_type = ? ORDER BY sort_order ASC, id ASC').all(lt)
+    : await db.prepare('SELECT id, sort_order FROM seasons ORDER BY sort_order ASC, id ASC').all();
   const idx = all.findIndex(s => s.id === Number(req.params.id));
   if (idx < 0) return res.status(404).json({ error: 'Season not found in list' });
 
@@ -1392,7 +1395,6 @@ app.get('/api/records', async (req, res) => {
     pim:              await leagueSingleGameRecord('pim',                'S', 'DESC'),
     pp_goals:         await leagueSingleGameRecord('pp_goals',           'S', 'DESC'),
     sh_goals:         await leagueSingleGameRecord('sh_goals',           'S', 'DESC'),
-    gwg:              await leagueSingleGameRecord('gwg',                'S', 'DESC'),
     hat_tricks:       await leagueSingleGameRecord('hat_tricks',         'S', 'DESC'),
     faceoff_wins:     await leagueSingleGameRecord('faceoff_wins',       'S', 'DESC'),
     deflections:      await leagueSingleGameRecord('deflections',        'S', 'DESC'),
@@ -1403,7 +1405,6 @@ app.get('/api/records', async (req, res) => {
     penalties_drawn:  await leagueSingleGameRecord('penalties_drawn',    'S', 'DESC'),
     // Goalie single game
     saves:            await leagueSingleGameRecord('saves',              'G', 'DESC'),
-    shutouts:         await leagueSingleGameRecord('shutouts',           'G', 'DESC'),
     psa:              await leagueSingleGameRecord('penalty_shot_attempts', 'G', 'DESC'),
     bksv:             await leagueSingleGameRecord('breakaway_saves',    'G', 'DESC'),
     goals_against:    await leagueSingleGameRecord('goals_against',      'G', 'DESC'),
@@ -1653,7 +1654,6 @@ app.get('/api/players/records/:name', async (req, res) => {
       await checkSingleGameRecord('Single Game PP Goals',         'pp_goals',           'S', 'DESC', lt, 'singlegame');
       await checkSingleGameRecord('Single Game SH Goals',         'sh_goals',           'S', 'DESC', lt, 'singlegame');
     }
-    await checkSingleGameRecord('Single Game GWG',              'gwg',                'S', 'DESC', lt, 'singlegame');
     await checkSingleGameRecord('Single Game Hat Tricks',       'hat_tricks',         'S', 'DESC', lt, 'singlegame');
     await checkSingleGameRecord('Single Game Faceoff Wins',     'faceoff_wins',       'S', 'DESC', lt, 'singlegame');
     await checkSingleGameRecord('Single Game Deflections',      'deflections',        'S', 'DESC', lt, 'singlegame');
@@ -1664,7 +1664,6 @@ app.get('/api/players/records/:name', async (req, res) => {
     await checkSingleGameRecord('Single Game Penalties Drawn',  'penalties_drawn',    'S', 'DESC', lt, 'singlegame');
     // Single-game goalie records
     await checkSingleGameRecord('Single Game Saves',        'saves',                  'G', 'DESC', lt, 'singlegame');
-    await checkSingleGameRecord('Single Game Shutouts',     'shutouts',               'G', 'DESC', lt, 'singlegame');
     await checkSingleGameRecord('Single Game PSA',          'penalty_shot_attempts',  'G', 'DESC', lt, 'singlegame');
     await checkSingleGameRecord('Single Game BKSV',         'breakaway_saves',        'G', 'DESC', lt, 'singlegame');
     await checkSingleGameRecord('Single Game Goals Against','goals_against',           'G', 'DESC', lt, 'singlegame');
@@ -3142,6 +3141,7 @@ app.post('/api/admin/import-mso-json', requireOwner, async (req, res) => {
         pass_attempts:     iNum(v[fi['PA']]),
         pass_completions:  iNum(v[fi['PC']]),
         hat_tricks:        iNum(v[fi['HT']]),
+        penalties_drawn:   iNum(v[fi['PS']]),
       });
     }
     return players;
@@ -3275,8 +3275,8 @@ app.post('/api/admin/import-mso-json', requireOwner, async (req, res) => {
                  saves, save_pct, goals_against, shots_against,
                  goalie_wins, goalie_losses, goalie_otw, goalie_otl, shutouts,
                  penalty_shot_attempts, penalty_shot_ga,
-                 pass_attempts, pass_completions, interceptions, hat_tricks)
-              VALUES (?,?,?,?, ?,?,?,?,?,?, ?,?,?,?,?,?,?,?,?, ?,?,?,?, ?,?,?,?,?, ?,?, ?,?,?,?)
+                 pass_attempts, pass_completions, interceptions, hat_tricks, penalties_drawn)
+              VALUES (?,?,?,?, ?,?,?,?,?,?, ?,?,?,?,?,?,?,?,?, ?,?,?,?, ?,?,?,?,?, ?,?, ?,?,?,?,?)
             `).run(
               gameId, teamId, p.player_name, p.position,
               Math.round(p.goals || 0), Math.round(p.assists || 0), Math.round(p.shots || 0), Math.round(p.pim || 0),
@@ -3292,7 +3292,8 @@ app.post('/api/admin/import-mso-json', requireOwner, async (req, res) => {
               isGoalie ? Math.round(p.penalty_shot_attempts || 0) : 0,
               isGoalie ? Math.round(p.penalty_shot_ga || 0) : 0,
               Math.round(p.pass_attempts || 0), Math.round(p.pass_completions || 0),
-              Math.round(p.interceptions || 0), Math.round(p.hat_tricks || 0)
+              Math.round(p.interceptions || 0), Math.round(p.hat_tricks || 0),
+              Math.round(p.penalties_drawn || 0)
             );
           }
         };
