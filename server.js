@@ -1506,8 +1506,9 @@ app.get('/api/players/records/:name', async (req, res) => {
       ORDER BY gp DESC
     `).all(...p);
     if (rows.some(r => r.name === name)) {
-      const co_holders = rows.filter(r => r.name !== name).map(r => r.name);
       const myRow = rows.find(r => r.name === name);
+      if (myRow.value === 0) return;
+      const co_holders = rows.filter(r => r.name !== name).map(r => r.name);
       holdings.push({ category, label, value: myRow.value, league_type: leagueType || 'all', scope: 'league', co_holders });
     }
   }
@@ -1534,6 +1535,7 @@ app.get('/api/players/records/:name', async (req, res) => {
     `).all(...params);
     if (rows.some(r => r.name === name)) {
       const myRow = rows.find(r => r.name === name);
+      if (myRow.value === 0) return;
       const co_holders = rows.filter(r => r.name !== name).map(r => r.name);
       holdings.push({ category, label, value: myRow.value, season_name: myRow.season_name, league_type: leagueType || 'all', scope: 'league', co_holders });
     }
@@ -1561,6 +1563,7 @@ app.get('/api/players/records/:name', async (req, res) => {
     `).all(...p);
     if (rows.some(r => r.name === name)) {
       const myRow = rows.find(r => r.name === name);
+      if (myRow.value === 0) return;
       const co_holders = rows.filter(r => r.name !== name).map(r => r.name);
       holdings.push({ category, label, value: myRow.value, game_id: myRow.game_id, home_team: myRow.home_team, away_team: myRow.away_team, date: myRow.date, league_type: leagueType || 'all', scope: 'league', co_holders });
     }
@@ -1575,7 +1578,7 @@ app.get('/api/players/records/:name', async (req, res) => {
       WHERE gps.team_id = ? AND ${where} AND g.status IN ('complete','forfeit')
       GROUP BY gps.player_name ORDER BY value ${orderDir}, gp DESC LIMIT 1
     `).get(teamId);
-    if (row && row.name === name) {
+    if (row && row.name === name && row.value !== 0) {
       holdings.push({ category: mode, label, value: row.value, team_name: teamName, scope: 'team' });
     }
   }
