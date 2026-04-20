@@ -1241,7 +1241,11 @@ app.get('/api/teams/:id/records', async (req, res) => {
 
 app.get('/api/records', async (req, res) => {
   const lt = req.query.league_type || null; // 'threes' | 'sixes' | null for both
+  const st = req.query.season_type || null; // 'regular' | 'playoffs' | null for both
   const ltFilter = lt ? 'AND COALESCE(s.league_type,\'\') = ?' : '';
+  const stFilter = st === 'playoffs' ? 'AND g.playoff_series_id IS NOT NULL'
+                 : st === 'regular'  ? 'AND g.playoff_series_id IS NULL'
+                 : '';
   const p1 = lt ? [lt] : [];
 
   const minGPRow = await db.prepare("SELECT value FROM settings WHERE key = 'goalie_season_min_gp'").get();
@@ -1259,7 +1263,7 @@ app.get('/api/records', async (req, res) => {
         JOIN games g ON gps.game_id = g.id
         JOIN teams t ON gps.team_id = t.id
         LEFT JOIN seasons s ON g.season_id = s.id
-        WHERE ${where} AND g.status IN ('complete','forfeit') ${ltFilter}
+        WHERE ${where} AND g.status IN ('complete','forfeit') ${ltFilter} ${stFilter}
         GROUP BY gps.player_name
       ),
       top_val AS (SELECT value FROM agg_vals ORDER BY value ${orderDir} LIMIT 1)
@@ -1282,7 +1286,7 @@ app.get('/api/records', async (req, res) => {
         JOIN games g ON gps.game_id = g.id
         JOIN teams t ON gps.team_id = t.id
         LEFT JOIN seasons s ON g.season_id = s.id
-        WHERE ${where} AND g.status IN ('complete','forfeit') ${ltFilter}
+        WHERE ${where} AND g.status IN ('complete','forfeit') ${ltFilter} ${stFilter}
         GROUP BY gps.player_name, g.season_id
         ${having}
       ),
@@ -1306,7 +1310,7 @@ app.get('/api/records', async (req, res) => {
         JOIN teams ht ON g.home_team_id = ht.id
         JOIN teams at2 ON g.away_team_id = at2.id
         LEFT JOIN seasons s ON g.season_id = s.id
-        WHERE ${where} AND g.status IN ('complete','forfeit') ${ltFilter}
+        WHERE ${where} AND g.status IN ('complete','forfeit') ${ltFilter} ${stFilter}
       ),
       top_val AS (SELECT value FROM game_vals ORDER BY value ${orderDir} LIMIT 1)
       SELECT gv.* FROM game_vals gv WHERE gv.value = (SELECT value FROM top_val)
@@ -1424,7 +1428,7 @@ app.get('/api/records', async (req, res) => {
       JOIN teams ht ON g.home_team_id = ht.id
       JOIN teams at2 ON g.away_team_id = at2.id
       LEFT JOIN seasons s ON g.season_id = s.id
-      WHERE gps.position != 'G' AND g.status IN ('complete','forfeit') ${ltFilterSg}
+      WHERE gps.position != 'G' AND g.status IN ('complete','forfeit') ${ltFilterSg} ${stFilter}
     ),
     top_val AS (SELECT value FROM game_vals ORDER BY value DESC LIMIT 1)
     SELECT gv.* FROM game_vals gv WHERE gv.value = (SELECT value FROM top_val)

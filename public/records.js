@@ -2,8 +2,9 @@
 const API = '/api';
 
 let _leagueType = 'threes';
+let _seasonType = 'regular';   // 'regular' | 'playoffs'
 let _category   = 'alltime';
-let _data       = {};   // cache: { threes: {...}, sixes: {...} }
+let _data       = {};   // cache keyed by "leagueType:seasonType"
 
 // ── Format helpers ─────────────────────────────────────────────────────────
 function fmt(v, type) {
@@ -199,9 +200,11 @@ function renderSingleGame(sg) {
 }
 
 // ── Main render ────────────────────────────────────────────────────────────
+function cacheKey() { return _leagueType + ':' + _seasonType; }
+
 function render() {
   const root = document.getElementById('records-root');
-  const d = _data[_leagueType];
+  const d = _data[cacheKey()];
   if (!d) { root.innerHTML = '<p class="loading">Loading…</p>'; return; }
   const minGP = d.goalieSeasonMinGP || 16;
   if (_category === 'alltime')    root.innerHTML = renderAllTime(d.career);
@@ -210,15 +213,16 @@ function render() {
 }
 
 // ── Fetch ──────────────────────────────────────────────────────────────────
-async function loadRecords(lt) {
-  if (_data[lt]) { render(); return; }
+async function loadRecords(lt, st) {
+  const key = lt + ':' + st;
+  if (_data[key]) { render(); return; }
   document.getElementById('records-root').innerHTML = '<p class="loading">Loading…</p>';
   try {
-    const res = await fetch(`${API}/records?league_type=${lt}`);
+    const res = await fetch(`${API}/records?league_type=${lt}&season_type=${st}`);
     if (!res.ok) throw new Error('HTTP ' + res.status);
-    _data[lt] = await res.json();
+    _data[key] = await res.json();
   } catch (e) {
-    _data[lt] = null;
+    _data[key] = null;
     document.getElementById('records-root').innerHTML = `<p style="color:#f85149;">Failed to load records.</p>`;
     return;
   }
@@ -227,12 +231,21 @@ async function loadRecords(lt) {
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-  document.querySelectorAll('.league-tab-btn').forEach(btn => {
+  document.querySelectorAll('.league-tab-btn[data-lt]').forEach(btn => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('.league-tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.league-tab-btn[data-lt]').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       _leagueType = btn.dataset.lt;
-      loadRecords(_leagueType);
+      loadRecords(_leagueType, _seasonType);
+    });
+  });
+
+  document.querySelectorAll('#season-type-bar .league-tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#season-type-bar .league-tab-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      _seasonType = btn.dataset.st;
+      loadRecords(_leagueType, _seasonType);
     });
   });
 
@@ -245,5 +258,5 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  loadRecords(_leagueType);
+  loadRecords(_leagueType, _seasonType);
 });
