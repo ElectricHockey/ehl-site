@@ -3143,6 +3143,7 @@ app.post('/api/admin/import-mso-json', requireOwner, async (req, res) => {
         pass_attempts:     iNum(v[fi['PA']]),
         pass_completions:  iNum(v[fi['PC']]),
         hat_tricks:        iNum(v[fi['HT']]),
+        penalties_drawn:   iNum(v[fi['PS']]),
       });
     }
     return players;
@@ -3276,8 +3277,8 @@ app.post('/api/admin/import-mso-json', requireOwner, async (req, res) => {
                  saves, save_pct, goals_against, shots_against,
                  goalie_wins, goalie_losses, goalie_otw, goalie_otl, shutouts,
                  penalty_shot_attempts, penalty_shot_ga,
-                 pass_attempts, pass_completions, interceptions, hat_tricks)
-              VALUES (?,?,?,?, ?,?,?,?,?,?, ?,?,?,?,?,?,?,?,?, ?,?,?,?, ?,?,?,?,?, ?,?, ?,?,?,?)
+                 pass_attempts, pass_completions, interceptions, hat_tricks, penalties_drawn)
+              VALUES (?,?,?,?, ?,?,?,?,?,?, ?,?,?,?,?,?,?,?,?, ?,?,?,?, ?,?,?,?,?, ?,?, ?,?,?,?,?)
             `).run(
               gameId, teamId, p.player_name, p.position,
               Math.round(p.goals || 0), Math.round(p.assists || 0), Math.round(p.shots || 0), Math.round(p.pim || 0),
@@ -3293,7 +3294,8 @@ app.post('/api/admin/import-mso-json', requireOwner, async (req, res) => {
               isGoalie ? Math.round(p.penalty_shot_attempts || 0) : 0,
               isGoalie ? Math.round(p.penalty_shot_ga || 0) : 0,
               Math.round(p.pass_attempts || 0), Math.round(p.pass_completions || 0),
-              Math.round(p.interceptions || 0), Math.round(p.hat_tricks || 0)
+              Math.round(p.interceptions || 0), Math.round(p.hat_tricks || 0),
+              Math.round(p.penalties_drawn || 0)
             );
           }
         };
