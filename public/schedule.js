@@ -3,7 +3,8 @@ const API = '/api';
 // Save percentage: display as hockey-standard decimal, e.g. .922
 function pct3(v) {
   if (v === null || v === undefined) return '–';
-  const frac = v > 1 ? v / 100 : v;
+  const num = Number(v);
+  const frac = num > 1 ? num / 100 : num;
   return frac.toFixed(3).replace(/^0(?=\.)/, '');
 }
 
