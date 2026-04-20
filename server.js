@@ -512,8 +512,17 @@ app.delete('/api/seasons/:id', requireOwner, async (req, res) => {
     }
   }
 
-  // Unassign games from this season
-  await db.prepare('UPDATE games SET season_id = NULL WHERE season_id = ?').run(req.params.id);
+  // Delete all game stats and games from this season
+  const seasonGames = await db.prepare('SELECT id FROM games WHERE season_id = ?').all(req.params.id);
+  for (const g of seasonGames) {
+    await db.prepare('DELETE FROM game_player_stats WHERE game_id = ?').run(g.id);
+  }
+  await db.prepare('DELETE FROM games WHERE season_id = ?').run(req.params.id);
+
+  // Delete season_player_stats (imported historical data) — CASCADE handles this,
+  // but be explicit for clarity
+  await db.prepare('DELETE FROM season_player_stats WHERE season_id = ?').run(req.params.id);
+
   const result = await db.prepare('DELETE FROM seasons WHERE id = ?').run(req.params.id);
   if (result.changes === 0) return res.status(404).json({ error: 'Season not found' });
   res.json({ deleted: true });
@@ -1015,7 +1024,7 @@ async function fetchEA(url) {
 // ── Shared stat SQL fragments ──────────────────────────────────────────────
 
 const SKATER_SELECT = `
-  MAX(gps.player_name) AS name, MAX(t.name) AS team_name, MAX(t.logo_url) AS team_logo,
+  MAX(gps.player_name) AS name, MAX(gps.team_id) AS team_id, MAX(t.name) AS team_name, MAX(t.logo_url) AS team_logo,
   MAX(t.color1) AS team_color1, MAX(t.color2) AS team_color2, MAX(gps.position) AS position,
   COUNT(DISTINCT gps.game_id) AS gp,
   ROUND(AVG(NULLIF(gps.overall_rating,0)),0)    AS overall_rating,
@@ -1054,7 +1063,7 @@ const SKATER_SELECT = `
   SUM(gps.hat_tricks) AS hat_tricks`;
 
 const GOALIE_SELECT = `
-  MAX(gps.player_name) AS name, MAX(t.name) AS team_name, MAX(t.logo_url) AS team_logo,
+  MAX(gps.player_name) AS name, MAX(gps.team_id) AS team_id, MAX(t.name) AS team_name, MAX(t.logo_url) AS team_logo,
   MAX(t.color1) AS team_color1, MAX(t.color2) AS team_color2,
   COUNT(DISTINCT gps.game_id) AS gp,
   SUM(gps.goals) AS goals, SUM(gps.assists) AS assists,
@@ -1441,14 +1450,30 @@ app.get('/api/records', async (req, res) => {
 
 app.get('/api/admin/records-settings', requireOwner, async (_req, res) => {
   const row = await db.prepare("SELECT value FROM settings WHERE key = 'goalie_season_min_gp'").get();
-  res.json({ goalie_season_min_gp: row ? (parseInt(row.value, 10) || 16) : 16 });
+  const row2 = await db.prepare("SELECT value FROM settings WHERE key = 'goalie_stats_min_gp'").get();
+  res.json({
+    goalie_season_min_gp: row ? (parseInt(row.value, 10) || 16) : 16,
+    goalie_stats_min_gp: row2 ? (parseInt(row2.value, 10) || 5) : 5,
+  });
 });
 
 app.post('/api/admin/records-settings', requireOwner, async (req, res) => {
   const val = parseInt(req.body.goalie_season_min_gp, 10);
   if (isNaN(val) || val < 1) return res.status(400).json({ error: 'Invalid value' });
   await db.prepare("INSERT INTO settings (key, value) VALUES ('goalie_season_min_gp', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(String(val));
-  res.json({ goalie_season_min_gp: val });
+
+  // Save goalie stats min GP if provided
+  if (req.body.goalie_stats_min_gp !== undefined) {
+    const val2 = parseInt(req.body.goalie_stats_min_gp, 10);
+    if (isNaN(val2) || val2 < 1) return res.status(400).json({ error: 'Invalid goalie_stats_min_gp value' });
+    await db.prepare("INSERT INTO settings (key, value) VALUES ('goalie_stats_min_gp', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(String(val2));
+  }
+
+  const row2 = await db.prepare("SELECT value FROM settings WHERE key = 'goalie_stats_min_gp'").get();
+  res.json({
+    goalie_season_min_gp: val,
+    goalie_stats_min_gp: row2 ? (parseInt(row2.value, 10) || 5) : 5,
+  });
 });
 
 // ── Player record holdings (which records does this player hold) ────────────
@@ -2048,6 +2073,10 @@ app.get('/api/stats/leaders', async (req, res) => {
   const sf = seasonId ? 'AND g.season_id = ?' : '';
   const p = seasonId ? [seasonId] : [];
 
+  // Goalie stats min GP setting
+  const minGPRow = await db.prepare("SELECT value FROM settings WHERE key = 'goalie_stats_min_gp'").get();
+  const goalieStatsMinGP = minGPRow ? (parseInt(minGPRow.value, 10) || 5) : 5;
+
   // Current-team subquery: pick the rostered player record per name (prefer user-linked row, then highest id)
   const rosterSub = `(
     SELECT DISTINCT ON (name) name, team_id FROM players
@@ -2149,6 +2178,14 @@ app.get('/api/stats/leaders', async (req, res) => {
     GROUP BY gps.player_name ORDER BY save_pct DESC
   `).all(...p);
 
+  // Null out save_pct and gaa for goalies below min GP threshold
+  for (const g of goalies) {
+    if (g.gp < goalieStatsMinGP) {
+      g.save_pct = null;
+      g.gaa = null;
+    }
+  }
+
   // If a specific season was requested and it has no game_player_stats,
   // fall back to season_player_stats (imported historical data).
   if (seasonId && skaters.length === 0 && goalies.length === 0) {
@@ -2187,10 +2224,10 @@ app.get('/api/stats/leaders', async (req, res) => {
       WHERE sps.season_id = ? AND sps.position = 'G'
       ORDER BY sps.save_pct DESC
     `).all(seasonId);
-    return res.json({ skaters: histSkaters, goalies: histGoalies });
+    return res.json({ skaters: histSkaters, goalies: histGoalies, goalieStatsMinGP });
   }
 
-  res.json({ skaters, goalies });
+  res.json({ skaters, goalies, goalieStatsMinGP });
 });
 
 app.get('/api/admin/unrostered-stats', requireOwner, async (req, res) => {

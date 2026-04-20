@@ -330,8 +330,8 @@ async function setActiveSeason(id) {
 
 async function deleteSeason(id, isPlayoff) {
   const msg = isPlayoff
-    ? 'Delete this playoff season? Associated playoff bracket, series, and game links will be removed.'
-    : 'Delete this season? Games in this season will become unassigned.';
+    ? 'Delete this playoff season? All games, stats, playoff brackets, and series will be permanently deleted.'
+    : 'Delete this season? All games and stats from this season will be permanently deleted.';
   if (!confirm(msg)) return;
   await fetch(`${API}/seasons/${id}`, { method: 'DELETE', headers: adminHeaders() });
   await loadSeasons(); await loadGames();
@@ -1501,24 +1501,35 @@ async function loadRecordsSettings() {
     const data = await res.json();
     const inp = document.getElementById('rec-goalie-min-gp');
     if (inp) inp.value = data.goalie_season_min_gp ?? 16;
+    const inp2 = document.getElementById('goalie-stats-min-gp');
+    if (inp2) inp2.value = data.goalie_stats_min_gp ?? 5;
   } catch (e) { /* silently ignore */ }
 }
 
 async function saveRecordsSettings() {
   const inp = document.getElementById('rec-goalie-min-gp');
+  const inp2 = document.getElementById('goalie-stats-min-gp');
   const msg = document.getElementById('rec-settings-msg');
   if (!inp) return;
   const val = parseInt(inp.value, 10);
+  const val2 = inp2 ? parseInt(inp2.value, 10) : null;
   if (isNaN(val) || val < 1) {
     msg.textContent = '⚠ Enter a valid number ≥ 1';
     msg.style.color = '#f85149';
     return;
   }
+  if (val2 !== null && (isNaN(val2) || val2 < 1)) {
+    msg.textContent = '⚠ Enter a valid number ≥ 1 for stats min GP';
+    msg.style.color = '#f85149';
+    return;
+  }
+  const body = { goalie_season_min_gp: val };
+  if (val2 !== null) body.goalie_stats_min_gp = val2;
   try {
     const res = await fetch(`${API}/admin/records-settings`, {
       method: 'POST',
       headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ goalie_season_min_gp: val }),
+      body: JSON.stringify(body),
     });
     if (res.ok) {
       msg.textContent = '✅ Saved';
