@@ -190,7 +190,6 @@ function renderSingleGame(sg) {
   ];
   const goalieRows = [
     buildRow('Saves',            sg.saves,            null, gameRef),
-    buildRow('Shutouts',         sg.shutouts,         null, gameRef),
     buildRow('PSA',              sg.psa,              null, gameRef),
     buildRow('BKSV',             sg.bksv,             null, gameRef),
     buildRow('Goals Against',    sg.goals_against,    null, gameRef),

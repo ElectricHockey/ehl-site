@@ -1405,7 +1405,6 @@ app.get('/api/records', async (req, res) => {
     penalties_drawn:  await leagueSingleGameRecord('penalties_drawn',    'S', 'DESC'),
     // Goalie single game
     saves:            await leagueSingleGameRecord('saves',              'G', 'DESC'),
-    shutouts:         await leagueSingleGameRecord('shutouts',           'G', 'DESC'),
     psa:              await leagueSingleGameRecord('penalty_shot_attempts', 'G', 'DESC'),
     bksv:             await leagueSingleGameRecord('breakaway_saves',    'G', 'DESC'),
     goals_against:    await leagueSingleGameRecord('goals_against',      'G', 'DESC'),
@@ -1665,7 +1664,6 @@ app.get('/api/players/records/:name', async (req, res) => {
     await checkSingleGameRecord('Single Game Penalties Drawn',  'penalties_drawn',    'S', 'DESC', lt, 'singlegame');
     // Single-game goalie records
     await checkSingleGameRecord('Single Game Saves',        'saves',                  'G', 'DESC', lt, 'singlegame');
-    await checkSingleGameRecord('Single Game Shutouts',     'shutouts',               'G', 'DESC', lt, 'singlegame');
     await checkSingleGameRecord('Single Game PSA',          'penalty_shot_attempts',  'G', 'DESC', lt, 'singlegame');
     await checkSingleGameRecord('Single Game BKSV',         'breakaway_saves',        'G', 'DESC', lt, 'singlegame');
     await checkSingleGameRecord('Single Game Goals Against','goals_against',           'G', 'DESC', lt, 'singlegame');
