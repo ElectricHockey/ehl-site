@@ -179,7 +179,6 @@ function renderSingleGame(sg) {
       buildRow('PP Goals',       sg.pp_goals,         null, gameRef),
       buildRow('SH Goals',       sg.sh_goals,         null, gameRef),
     ] : []),
-    buildRow('GWG',              sg.gwg,              null, gameRef),
     buildRow('Hat Tricks',       sg.hat_tricks,       null, gameRef),
     buildRow('Faceoff Wins',     sg.faceoff_wins,     null, gameRef),
     buildRow('Deflections',      sg.deflections,      null, gameRef),

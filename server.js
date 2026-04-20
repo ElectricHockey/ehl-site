@@ -1395,7 +1395,6 @@ app.get('/api/records', async (req, res) => {
     pim:              await leagueSingleGameRecord('pim',                'S', 'DESC'),
     pp_goals:         await leagueSingleGameRecord('pp_goals',           'S', 'DESC'),
     sh_goals:         await leagueSingleGameRecord('sh_goals',           'S', 'DESC'),
-    gwg:              await leagueSingleGameRecord('gwg',                'S', 'DESC'),
     hat_tricks:       await leagueSingleGameRecord('hat_tricks',         'S', 'DESC'),
     faceoff_wins:     await leagueSingleGameRecord('faceoff_wins',       'S', 'DESC'),
     deflections:      await leagueSingleGameRecord('deflections',        'S', 'DESC'),
@@ -1656,7 +1655,6 @@ app.get('/api/players/records/:name', async (req, res) => {
       await checkSingleGameRecord('Single Game PP Goals',         'pp_goals',           'S', 'DESC', lt, 'singlegame');
       await checkSingleGameRecord('Single Game SH Goals',         'sh_goals',           'S', 'DESC', lt, 'singlegame');
     }
-    await checkSingleGameRecord('Single Game GWG',              'gwg',                'S', 'DESC', lt, 'singlegame');
     await checkSingleGameRecord('Single Game Hat Tricks',       'hat_tricks',         'S', 'DESC', lt, 'singlegame');
     await checkSingleGameRecord('Single Game Faceoff Wins',     'faceoff_wins',       'S', 'DESC', lt, 'singlegame');
     await checkSingleGameRecord('Single Game Deflections',      'deflections',        'S', 'DESC', lt, 'singlegame');
