@@ -174,7 +174,7 @@ const SEED_TEAMS = [
 /** Run seed upserts — called once at startup from server.js. */
 async function seedTeams() {
   for (const t of SEED_TEAMS) {
-    // Use PostgreSQL INSERT … ON CONFLICT to upsert
+    // DO NOTHING (not DO UPDATE) so that admin-deleted teams remain deleted across restarts.
     await pool.query(
       `INSERT INTO teams (name, conference, division, league_type, ea_club_id, color1, color2)
        VALUES ($1, '', '', $2, $3, $4, $5)
