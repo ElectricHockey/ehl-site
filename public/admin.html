@@ -97,6 +97,7 @@
         <button class="admin-tab-btn" data-tab="game-admins" data-owner-only onclick="showAdminTab('game-admins')">👥 Game Admins</button>
         <button class="admin-tab-btn" data-tab="import" data-owner-only onclick="showAdminTab('import')">📥 Import</button>
         <button class="admin-tab-btn" data-tab="records-settings" data-owner-only onclick="showAdminTab('records-settings')">🏅 Records</button>
+        <button class="admin-tab-btn" data-tab="name-changes" data-owner-only onclick="showAdminTab('name-changes')">✏️ Name Changes</button>
       </div>
 
       <div id="status-msg" style="display:none;padding:0.5rem 1rem;border-radius:6px;margin-bottom:1rem;font-size:0.88rem;"></div>
@@ -272,6 +273,7 @@
           <form id="game-form">
             <div class="form-group"><label for="game-season">Season</label><select id="game-season"><option value="">— No Season —</option></select></div>
             <div class="form-group"><label for="game-date">Date</label><input type="date" id="game-date" required /></div>
+            <div class="form-group"><label for="game-time">Time (UTC)</label><input type="time" id="game-time" /></div>
             <div class="form-group"><label for="game-home">Home Team</label><select id="game-home" required><option value="">Select team</option></select></div>
             <div class="form-group"><label for="game-home-score">Home Score</label><input type="number" id="game-home-score" value="0" min="0" style="width:70px;" /></div>
             <div class="form-group"><label for="game-away">Away Team</label><select id="game-away" required><option value="">Select team</option></select></div>
@@ -694,6 +696,13 @@
             <label for="ep-discord-id">Discord ID <span style="color:#8b949e;font-size:0.78rem;">(used to auto-link on registration)</span></label>
             <input type="text" id="ep-discord-id" placeholder="e.g. 123456789012345678" />
           </div>
+          <!-- Custom-player-only: link to registered user -->
+          <div id="ep-row-linkuser" class="form-group" style="flex-direction:column;margin-bottom:0.6rem;display:none;">
+            <label for="ep-linked-user">Link to Registered User <span style="color:#8b949e;font-size:0.78rem;">(connects stats to their Discord account)</span></label>
+            <select id="ep-linked-user" style="background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.35rem 0.6rem;">
+              <option value="">— Not linked —</option>
+            </select>
+          </div>
           <div id="ep-error" style="color:#f85149;font-size:0.83rem;margin-bottom:0.5rem;display:none;"></div>
           <div style="display:flex;gap:0.5rem;margin-top:0.75rem;">
             <button onclick="savePlayerEdit()">Save Changes</button>
@@ -724,6 +733,17 @@
           </div>
           <button onclick="saveRecordsSettings()">Save Settings</button>
           <span id="rec-settings-msg" style="margin-left:0.75rem;font-size:0.85rem;"></span>
+        </div>
+      </div>
+
+  <!-- ── Name Changes Tab ─────────────────────────────────────────── -->
+      <div id="admin-tab-name-changes" class="admin-section">
+        <h2>Gamertag Change Requests</h2>
+        <p style="color:#8b949e;font-size:0.9rem;margin-bottom:1.25rem;">
+          Review and approve or decline player gamertag change requests.
+        </p>
+        <div id="name-change-list">
+          <p style="color:#8b949e;font-size:0.88rem;">Loading...</p>
         </div>
       </div>
 

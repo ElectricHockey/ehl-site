@@ -146,11 +146,19 @@ function playoffRoundLabel(roundNum, totalRounds) {
   return `Round ${roundNum}`;
 }
 
+function formatGameTime(dateStr, timeStr) {
+  if (!timeStr) return '';
+  try {
+    const dt = new Date(dateStr + 'T' + timeStr + ':00Z');
+    return dt.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', timeZoneName: 'short' });
+  } catch { return timeStr + ' UTC'; }
+}
+
 function buildGameRow(g) {
   return `
     <tr class="game-row" id="game-row-${g.id}" data-game-id="${g.id}"
       onclick="toggleGameDetail(${g.id}, event)">
-      <td>${g.date}</td>
+      <td>${g.date}${g.game_time ? `<br><span style="color:#8b949e;font-size:0.78rem;">${formatGameTime(g.date, g.game_time)}</span>` : ''}</td>
       <td>${g.home_logo ? `<img src="${g.home_logo}" style="width:22px;height:22px;object-fit:contain;vertical-align:middle;margin-right:0.3rem;border-radius:3px;" />` : ''}${g.home_team_name}</td>
       <td>${(g.status === 'complete' || g.status === 'forfeit') ? `${g.home_score} – ${g.away_score}` : '–'}</td>
       <td>${g.away_logo ? `<img src="${g.away_logo}" style="width:22px;height:22px;object-fit:contain;vertical-align:middle;margin-right:0.3rem;border-radius:3px;" />` : ''}${g.away_team_name}</td>

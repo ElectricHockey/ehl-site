@@ -388,7 +388,7 @@ function renderPlayerRecords(holdings) {
       return `<tr>
         <td style="color:#8b949e;padding:0.4rem 0.5rem;">${r.label}</td>
         <td style="padding:0.4rem 0.5rem;font-weight:700;color:#e3b341;">${fmtVal(r.label, r.value)}</td>
-        <td style="padding:0.4rem 0.5rem;font-size:0.8rem;color:#58a6ff;">${scope}${lt ? ' · ' + lt : ''}</td>
+        <td style="padding:0.4rem 0.5rem;font-size:0.8rem;color:#58a6ff;">${scope}${lt ? ' · ' + lt : ''}${r.season_type === 'playoffs' ? ' · <span style="color:#e3b341;">Playoffs</span>' : r.season_type === 'regular' ? ' · Regular' : ''}</td>
         <td style="padding:0.4rem 0.5rem;">${extra}${tiedWith}</td>
       </tr>`;
     }).join('');
@@ -404,12 +404,12 @@ function renderPlayerRecords(holdings) {
     </table></div>`;
   }
 
-  const threes = holdings.filter(h => h.league_type === 'threes' || (h.scope === 'team' && h.league_type !== 'sixes'));
+  const threes = holdings.filter(h => h.league_type === 'threes');
   const sixes  = holdings.filter(h => h.league_type === 'sixes');
 
   // Group by category within each section
   function groupRows(arr) {
-    const alltime    = arr.filter(h => h.category === 'alltime' || h.category === 'team-career');
+    const alltime    = arr.filter(h => h.category === 'alltime');
     const seasonal   = arr.filter(h => h.category === 'seasonal');
     const singlegame = arr.filter(h => h.category === 'singlegame');
     return { alltime, seasonal, singlegame };
@@ -429,13 +429,6 @@ function renderPlayerRecords(holdings) {
     html += buildSection('All-Time Records', g6.alltime);
     html += buildSection('Single-Season Records', g6.seasonal);
     html += buildSection('Single-Game Records', g6.singlegame);
-  }
-  // Team records (scope === 'team', any league type)
-  const teamHoldings = holdings.filter(h => h.scope === 'team');
-  if (teamHoldings.length) {
-    const { alltime: ta } = groupRows(teamHoldings);
-    html += `<h3 style="color:#58a6ff;margin-top:1rem;margin-bottom:0.25rem;">Team Records</h3>`;
-    html += buildSection('Career Records', ta);
   }
 
   return html || '<p style="color:#8b949e;padding:1.5rem 0;">This player does not currently hold any records.</p>';

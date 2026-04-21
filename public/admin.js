@@ -155,6 +155,7 @@ function showAdminPanel(role, username) {
     loadRegPlayers();
     loadAdminPlayoffs();
     loadGameAdmins();
+    loadNameChangeRequests();
     showAdminTab('seasons');
   } else {
     // game_admin: land directly on Games
@@ -622,6 +623,7 @@ async function loadPlayers() {
             data-number="${escAttr(p.number)}"
             data-discord="${escAttr(p.discord)}"
             data-discordid="${escAttr(p.discord_id)}"
+            data-userid="${escAttr(p.user_id)}"
           >Edit</button>
           <button class="btn-danger" style="font-size:0.78rem;padding:0.2rem 0.4rem;" onclick="deletePlayer(${p.id})">Delete</button>
         </td>
@@ -715,8 +717,9 @@ document.getElementById('game-form').addEventListener('submit', async e => {
   const season_id = document.getElementById('game-season').value || null;
   const status = document.getElementById('game-status-select').value;
   const is_overtime = document.getElementById('game-overtime').checked ? 1 : 0;
+  const game_time = document.getElementById('game-time') ? document.getElementById('game-time').value || null : null;
   if (home_team_id === away_team_id) { alert('Home and away teams must differ.'); return; }
-  await fetch(`${API}/games`, { method: 'POST', headers: adminJsonHeaders(), body: JSON.stringify({ date, home_team_id, away_team_id, home_score, away_score, season_id, status, is_overtime }) });
+  await fetch(`${API}/games`, { method: 'POST', headers: adminJsonHeaders(), body: JSON.stringify({ date, home_team_id, away_team_id, home_score, away_score, season_id, status, is_overtime, game_time }) });
   e.target.reset(); await loadGames();
 });
 
@@ -828,13 +831,24 @@ document.addEventListener('click', e => {
 document.addEventListener('click', e => {
   const btn = e.target.closest('[data-action="edit-custom-player"]');
   if (!btn) return;
-  const { pid, name, position, number, discord, discordid } = btn.dataset;
-  openEditModal({ type: 'player', id: Number(pid), name, position, number, discord: discord || '', discordId: discordid || '' });
+  const { pid, name, position, number, discord, discordid, userid } = btn.dataset;
+  openEditModal({ type: 'player', id: Number(pid), name, position, number, discord: discord || '', discordId: discordid || '', userId: userid ? Number(userid) : null });
 });
 
 // ── Edit player modal ─────────────────────────────────────────────────────
 
-function openEditModal({ type = 'user', id, username, name, platform, position, email, discord, discordId, number }) {
+// Cache of registered users for the "Link User" dropdown
+let _regUsersCache = null;
+async function _loadRegUsersForDropdown() {
+  if (_regUsersCache) return _regUsersCache;
+  try {
+    const res = await fetch(`${API}/admin/users`, { headers: adminHeaders() });
+    _regUsersCache = res.ok ? await res.json() : [];
+  } catch { _regUsersCache = []; }
+  return _regUsersCache;
+}
+
+async function openEditModal({ type = 'user', id, username, name, platform, position, email, discord, discordId, number, userId }) {
   const isCustom = type === 'player';
   document.getElementById('ep-id').value = id;
   document.getElementById('ep-type').value = type;
@@ -847,12 +861,19 @@ function openEditModal({ type = 'user', id, username, name, platform, position, 
   document.getElementById('ep-row-email').style.display     = isCustom ? 'none' : '';
   document.getElementById('ep-row-number').style.display    = isCustom ? '' : 'none';
   document.getElementById('ep-row-discordid').style.display = isCustom ? '' : 'none';
+  document.getElementById('ep-row-linkuser').style.display  = isCustom ? '' : 'none';
 
   // Populate fields
   if (isCustom) {
     document.getElementById('ep-name').value       = name || '';
     document.getElementById('ep-number').value     = number || '';
     document.getElementById('ep-discord-id').value = discordId || '';
+    // Populate the registered-user link dropdown
+    const users = await _loadRegUsersForDropdown();
+    const sel = document.getElementById('ep-linked-user');
+    sel.innerHTML = '<option value="">— Not linked —</option>' +
+      users.map(u => `<option value="${u.id}">${escAttr(u.username)}${u.discord ? ' (' + escAttr(u.discord) + ')' : ''}</option>`).join('');
+    sel.value = userId ? String(userId) : '';
   } else {
     document.getElementById('ep-username').value = username || '';
     document.getElementById('ep-platform').value = platform || 'xbox';
@@ -881,10 +902,12 @@ async function savePlayerEdit() {
     const name      = document.getElementById('ep-name').value.trim();
     const number    = document.getElementById('ep-number').value || null;
     const discordId = document.getElementById('ep-discord-id').value.trim() || null;
+    const linkedUser = document.getElementById('ep-linked-user').value;
+    const user_id = linkedUser ? Number(linkedUser) : null;
     if (!name) { errEl.textContent = 'Name cannot be empty'; errEl.style.display = ''; return; }
     const res = await fetch(`${API}/players/${id}`, {
       method: 'PATCH', headers: adminJsonHeaders(),
-      body: JSON.stringify({ name, position: position || null, number: number ? Number(number) : null, discord: discord || null, discord_id: discordId }),
+      body: JSON.stringify({ name, position: position || null, number: number ? Number(number) : null, discord: discord || null, discord_id: discordId, user_id }),
     });
     if (!res.ok) {
       const e = await res.json().catch(() => ({}));
@@ -910,6 +933,7 @@ async function savePlayerEdit() {
       return;
     }
     closeEditModal();
+    _regUsersCache = null; // Invalidate cache so dropdown refreshes on next open
     await loadRegPlayers();
     await loadPlayers();
   }
@@ -1558,4 +1582,53 @@ async function saveRecordsSettings() {
     msg.style.color = '#f85149';
   }
   setTimeout(() => { if (msg) msg.textContent = ''; }, 3000);
+}
+
+async function loadNameChangeRequests() {
+  const container = document.getElementById('name-change-list');
+  if (!container) return;
+  try {
+    const res = await fetch(`${API}/admin/name-change-requests`, { headers: adminHeaders() });
+    if (!res.ok) { container.innerHTML = '<p style="color:#f85149;">Failed to load requests.</p>'; return; }
+    const requests = await res.json();
+    if (!requests.length) {
+      container.innerHTML = '<p style="color:#8b949e;font-size:0.88rem;">No pending name change requests.</p>';
+      return;
+    }
+    container.innerHTML = `<table style="width:100%;border-collapse:collapse;">
+      <thead><tr style="color:#8b949e;font-size:0.82rem;">
+        <th style="text-align:left;padding:0.35rem 0.5rem;">User</th>
+        <th style="text-align:left;padding:0.35rem 0.5rem;">Old Name</th>
+        <th style="text-align:left;padding:0.35rem 0.5rem;">New Name</th>
+        <th style="text-align:left;padding:0.35rem 0.5rem;">Date</th>
+        <th style="padding:0.35rem 0.5rem;"></th>
+      </tr></thead>
+      <tbody>${requests.map(r => `
+        <tr style="border-top:1px solid #21262d;">
+          <td style="padding:0.4rem 0.5rem;">${escAttr(r.current_username)}${r.discord ? ` <span style="color:#5865f2;font-size:0.8rem;">(${escAttr(r.discord)})</span>` : ''}</td>
+          <td style="padding:0.4rem 0.5rem;color:#8b949e;">${escAttr(r.old_name)}</td>
+          <td style="padding:0.4rem 0.5rem;font-weight:600;">${escAttr(r.new_name)}</td>
+          <td style="padding:0.4rem 0.5rem;color:#8b949e;font-size:0.8rem;">${new Date(r.created_at).toLocaleDateString()}</td>
+          <td style="padding:0.4rem 0.5rem;white-space:nowrap;">
+            <button onclick="approveNameChange(${r.id})" style="background:#1f4b2f;color:#3fb950;border:1px solid #3fb950;border-radius:4px;padding:0.2rem 0.6rem;font-size:0.8rem;cursor:pointer;margin-right:0.3rem;">Approve</button>
+            <button onclick="declineNameChange(${r.id})" style="background:#4b1f1f;color:#f85149;border:1px solid #f85149;border-radius:4px;padding:0.2rem 0.6rem;font-size:0.8rem;cursor:pointer;">Decline</button>
+          </td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+  } catch { container.innerHTML = '<p style="color:#f85149;font-size:0.88rem;">Failed to load name change requests.</p>'; }
+}
+
+async function approveNameChange(id) {
+  if (!confirm('Approve this name change? This will update all stats records.')) return;
+  const res = await fetch(`${API}/admin/name-change-requests/${id}/approve`, { method: 'POST', headers: adminHeaders() });
+  if (res.ok) { showStatus('Name change approved!'); await loadNameChangeRequests(); }
+  else { const e = await res.json().catch(() => ({})); alert(e.error || 'Failed to approve'); }
+}
+
+async function declineNameChange(id) {
+  if (!confirm('Decline this name change request?')) return;
+  const res = await fetch(`${API}/admin/name-change-requests/${id}/decline`, { method: 'POST', headers: adminHeaders() });
+  if (res.ok) { showStatus('Name change declined.'); await loadNameChangeRequests(); }
+  else { const e = await res.json().catch(() => ({})); alert(e.error || 'Failed to decline'); }
 }
