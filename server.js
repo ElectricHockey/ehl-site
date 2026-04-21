@@ -2818,22 +2818,24 @@ app.get('/api/discord/callback', async (req, res) => {
     const discord    = du.username;
     console.log('[auth] discord callback: mode=', stateData.mode, 'discord_id=', discord_id, 'discord=', discord);
 
+    // Auto-link an unlinked players record whose discord_id matches the authenticated Discord account.
+    async function autoLinkPlayerByDiscord(userId, discordId, discordName) {
+      const unlinked = await db.prepare('SELECT id FROM players WHERE discord_id = ? AND user_id IS NULL LIMIT 1').get(discordId);
+      if (unlinked) {
+        await db.prepare('UPDATE players SET user_id = ?, discord = ? WHERE id = ?').run(userId, discordName, unlinked.id);
+      }
+    }
+
     if (stateData.mode === 'player') {
       // Update existing logged-in player
       await db.prepare('UPDATE users SET discord_id = ?, discord = ? WHERE id = ?').run(discord_id, discord, stateData.userId);
-      const unlinkedPlayer = await db.prepare('SELECT id FROM players WHERE discord_id = ? AND user_id IS NULL LIMIT 1').get(discord_id);
-      if (unlinkedPlayer) {
-        await db.prepare('UPDATE players SET user_id = ?, discord = ? WHERE id = ?').run(stateData.userId, discord, unlinkedPlayer.id);
-      }
+      await autoLinkPlayerByDiscord(stateData.userId, discord_id, discord);
       return res.redirect('/dashboard.html?discord_linked=1');
     } else if (stateData.mode === 'login') {
       // Discord login: check if a user with this discord_id exists
       const existingUser = await db.prepare('SELECT id, username, platform FROM users WHERE discord_id = ?').get(discord_id);
       if (existingUser) {
-      const unlinkedPlayerForLogin = await db.prepare('SELECT id FROM players WHERE discord_id = ? AND user_id IS NULL LIMIT 1').get(discord_id);
-      if (unlinkedPlayerForLogin) {
-        await db.prepare('UPDATE players SET user_id = ?, discord = ? WHERE id = ?').run(existingUser.id, discord, unlinkedPlayerForLogin.id);
-      }
+        await autoLinkPlayerByDiscord(existingUser.id, discord_id, discord);
         // Create a player session token and redirect straight to dashboard.
         // This avoids the fragile register.js → POST /api/players/login chain.
         const authToken = _signPlayerToken(existingUser.id);
