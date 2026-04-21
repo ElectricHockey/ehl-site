@@ -422,7 +422,7 @@ app.post('/api/players/logout', async (req, res) => {
 });
 
 app.get('/api/players/me', requirePlayer, async (req, res) => {
-  const user = await db.prepare('SELECT id, username, platform, email, position, discord, discord_id, created_at FROM users WHERE id = ?').get(req.userId);
+  const user = await db.prepare('SELECT id, username, platform, email, position, secondary_position, discord, discord_id, created_at FROM users WHERE id = ?').get(req.userId);
   if (!user) return res.status(404).json({ error: 'User not found' });
   const player = await db.prepare('SELECT * FROM players WHERE user_id = ?').get(req.userId);
   const staff = await db.prepare(`
@@ -430,6 +430,68 @@ app.get('/api/players/me', requirePlayer, async (req, res) => {
     FROM team_staff ts JOIN teams t ON ts.team_id = t.id WHERE ts.user_id = ?
   `).all(req.userId);
   res.json({ user, player, staff });
+});
+
+app.patch('/api/players/me', requirePlayer, async (req, res) => {
+  const { position, secondary_position } = req.body;
+  const VALID_POS = ['G','C','LW','RW','LD','RD','D','F','W'];
+  const pos = position && VALID_POS.includes(position) ? position : null;
+  const sec = secondary_position && VALID_POS.includes(secondary_position) ? secondary_position : null;
+  await db.prepare('UPDATE users SET position = ?, secondary_position = ? WHERE id = ?').run(pos, sec, req.userId);
+  const player = await db.prepare('SELECT id FROM players WHERE user_id = ?').get(req.userId);
+  if (player) await db.prepare('UPDATE players SET position = ?, secondary_position = ? WHERE id = ?').run(pos, sec, player.id);
+  res.json({ ok: true });
+});
+
+app.post('/api/players/me/name-change', requirePlayer, async (req, res) => {
+  const { new_name } = req.body;
+  if (!new_name || !new_name.trim()) return res.status(400).json({ error: 'new_name is required' });
+  const trimmed = new_name.trim();
+  const user = await db.prepare('SELECT id, username FROM users WHERE id = ?').get(req.userId);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  if (user.username.toLowerCase() === trimmed.toLowerCase()) return res.status(400).json({ error: 'New name is the same as current name' });
+  const clash = await db.prepare('SELECT id FROM users WHERE LOWER(username) = LOWER(?) AND id != ?').get(trimmed, req.userId);
+  if (clash) return res.status(409).json({ error: 'That gamertag is already taken' });
+  const pending = await db.prepare("SELECT id FROM name_change_requests WHERE user_id = ? AND status = 'pending'").get(req.userId);
+  if (pending) return res.status(409).json({ error: 'You already have a pending name change request' });
+  const result = await db.prepare("INSERT INTO name_change_requests (user_id, old_name, new_name) VALUES (?, ?, ?)").run(req.userId, user.username, trimmed);
+  res.status(201).json({ id: result.lastInsertRowid, old_name: user.username, new_name: trimmed, status: 'pending' });
+});
+
+app.get('/api/admin/name-change-requests', requireOwner, async (req, res) => {
+  const requests = await db.prepare(`
+    SELECT ncr.*, u.username AS current_username, u.discord
+    FROM name_change_requests ncr
+    JOIN users u ON ncr.user_id = u.id
+    WHERE ncr.status = 'pending'
+    ORDER BY ncr.created_at ASC
+  `).all();
+  res.json(requests);
+});
+
+app.post('/api/admin/name-change-requests/:id/approve', requireOwner, async (req, res) => {
+  const ncr = await db.prepare("SELECT * FROM name_change_requests WHERE id = ? AND status = 'pending'").get(req.params.id);
+  if (!ncr) return res.status(404).json({ error: 'Request not found or already processed' });
+  const clash = await db.prepare('SELECT id FROM users WHERE LOWER(username) = LOWER(?) AND id != ?').get(ncr.new_name, ncr.user_id);
+  if (clash) {
+    await db.prepare("UPDATE name_change_requests SET status = 'declined' WHERE id = ?").run(ncr.id);
+    return res.status(409).json({ error: 'That gamertag is now taken; request declined' });
+  }
+  await db.transaction(async (tx) => {
+    await tx.prepare('UPDATE users SET username = ? WHERE id = ?').run(ncr.new_name, ncr.user_id);
+    await tx.prepare('UPDATE players SET name = ? WHERE name = ? AND user_id = ?').run(ncr.new_name, ncr.old_name, ncr.user_id);
+    await tx.prepare('UPDATE game_player_stats SET player_name = ? WHERE player_name = ?').run(ncr.new_name, ncr.old_name);
+    await tx.prepare('UPDATE season_player_stats SET player_name = ? WHERE player_name = ?').run(ncr.new_name, ncr.old_name);
+    await tx.prepare("UPDATE name_change_requests SET status = 'approved' WHERE id = ?").run(ncr.id);
+  });
+  res.json({ ok: true });
+});
+
+app.post('/api/admin/name-change-requests/:id/decline', requireOwner, async (req, res) => {
+  const ncr = await db.prepare("SELECT id FROM name_change_requests WHERE id = ? AND status = 'pending'").get(req.params.id);
+  if (!ncr) return res.status(404).json({ error: 'Request not found or already processed' });
+  await db.prepare("UPDATE name_change_requests SET status = 'declined' WHERE id = ?").run(ncr.id);
+  res.json({ ok: true });
 });
 
 // Admin edits a registered user's profile
@@ -683,48 +745,53 @@ app.post('/api/admin/merge-teams', requireOwner, async (req, res) => {
   if (!source) return res.status(404).json({ error: 'Source team not found' });
   if (!target) return res.status(404).json({ error: 'Target team not found' });
 
-  // Update all game_player_stats from source to target
-  await db.prepare('UPDATE game_player_stats SET team_id = ? WHERE team_id = ?').run(target_id, source_id);
+  await db.transaction(async (tx) => {
+    // Update all game_player_stats from source to target
+    await tx.prepare('UPDATE game_player_stats SET team_id = ? WHERE team_id = ?').run(target_id, source_id);
 
-  // Update all season_player_stats from source to target
-  await db.prepare('UPDATE season_player_stats SET team_id = ? WHERE team_id = ?').run(target_id, source_id);
+    // Update all season_player_stats from source to target
+    await tx.prepare('UPDATE season_player_stats SET team_id = ? WHERE team_id = ?').run(target_id, source_id);
 
-  // Update games: home_team_id and away_team_id
-  await db.prepare('UPDATE games SET home_team_id = ? WHERE home_team_id = ?').run(target_id, source_id);
-  await db.prepare('UPDATE games SET away_team_id = ? WHERE away_team_id = ?').run(target_id, source_id);
+    // Update games: home_team_id and away_team_id
+    await tx.prepare('UPDATE games SET home_team_id = ? WHERE home_team_id = ?').run(target_id, source_id);
+    await tx.prepare('UPDATE games SET away_team_id = ? WHERE away_team_id = ?').run(target_id, source_id);
 
-  // Update players: move roster entries (avoid duplicates – if player already exists on target, remove the source one)
-  const sourcePlayers = await db.prepare('SELECT * FROM players WHERE team_id = ?').all(source_id);
-  const targetPlayers = await db.prepare('SELECT id, name FROM players WHERE team_id = ?').all(target_id);
-  const targetPlayerNames = new Set(targetPlayers.map(p => p.name));
-  for (const sp of sourcePlayers) {
-    if (targetPlayerNames.has(sp.name)) {
-      // Player already on target team – remove the source player record
-      await db.prepare('DELETE FROM players WHERE id = ?').run(sp.id);
-    } else {
-      await db.prepare('UPDATE players SET team_id = ? WHERE id = ?').run(target_id, sp.id);
+    // Update players: move roster entries (avoid duplicates – if player already exists on target, remove the source one)
+    const sourcePlayers = await tx.prepare('SELECT * FROM players WHERE team_id = ?').all(source_id);
+    const targetPlayers = await tx.prepare('SELECT id, name FROM players WHERE team_id = ?').all(target_id);
+    const targetPlayerNames = new Set(targetPlayers.map(p => p.name));
+    for (const sp of sourcePlayers) {
+      if (targetPlayerNames.has(sp.name)) {
+        // Player already on target team – remove the source player record
+        await tx.prepare('DELETE FROM players WHERE id = ?').run(sp.id);
+      } else {
+        await tx.prepare('UPDATE players SET team_id = ? WHERE id = ?').run(target_id, sp.id);
+      }
     }
-  }
 
-  // Update playoff_teams
-  await db.prepare('UPDATE playoff_teams SET team_id = ? WHERE team_id = ?').run(target_id, source_id);
+    // Update playoff_teams
+    await tx.prepare('UPDATE playoff_teams SET team_id = ? WHERE team_id = ?').run(target_id, source_id);
 
-  // Update playoff_series
-  await db.prepare('UPDATE playoff_series SET high_seed_id = ? WHERE high_seed_id = ?').run(target_id, source_id);
-  await db.prepare('UPDATE playoff_series SET low_seed_id = ? WHERE low_seed_id = ?').run(target_id, source_id);
-  await db.prepare('UPDATE playoff_series SET winner_id = ? WHERE winner_id = ?').run(target_id, source_id);
+    // Update playoff_series
+    await tx.prepare('UPDATE playoff_series SET high_seed_id = ? WHERE high_seed_id = ?').run(target_id, source_id);
+    await tx.prepare('UPDATE playoff_series SET low_seed_id = ? WHERE low_seed_id = ?').run(target_id, source_id);
+    await tx.prepare('UPDATE playoff_series SET winner_id = ? WHERE winner_id = ?').run(target_id, source_id);
 
-  // Update signing_offers
-  await db.prepare('UPDATE signing_offers SET team_id = ? WHERE team_id = ?').run(target_id, source_id);
+    // Update signing_offers
+    await tx.prepare('UPDATE signing_offers SET team_id = ? WHERE team_id = ?').run(target_id, source_id);
 
-  // Move team_staff (skip duplicates)
-  await db.prepare('DELETE FROM team_staff WHERE team_id = ? AND user_id IN (SELECT user_id FROM team_staff WHERE team_id = ?)').run(source_id, target_id);
-  await db.prepare('UPDATE team_staff SET team_id = ? WHERE team_id = ?').run(target_id, source_id);
+    // Update transactions
+    await tx.prepare('UPDATE transactions SET team_id = ?, team_name = ? WHERE team_id = ?').run(target_id, target.name, source_id);
 
-  // Delete the source team
+    // Move team_staff (skip duplicates)
+    await tx.prepare('DELETE FROM team_staff WHERE team_id = ? AND user_id IN (SELECT user_id FROM team_staff WHERE team_id = ?)').run(source_id, target_id);
+    await tx.prepare('UPDATE team_staff SET team_id = ? WHERE team_id = ?').run(target_id, source_id);
+
+    // Delete the source team
+    await tx.prepare('DELETE FROM teams WHERE id = ?').run(source_id);
+  });
+
   if (source.logo_url) await deleteFromStorage(source.logo_url);
-  await db.prepare('DELETE FROM teams WHERE id = ?').run(source_id);
-
   res.json({ ok: true, merged: { source: source.name, target: target.name } });
 });
 
@@ -790,6 +857,14 @@ app.post('/api/teams/:id/owner', requireOwner, async (req, res) => {
   // Remove any existing owner for this team
   await db.prepare("DELETE FROM team_staff WHERE team_id = ? AND role = 'owner'").run(req.params.id);
   await db.prepare("INSERT INTO team_staff (team_id, user_id, role) VALUES (?, ?, 'owner') ON CONFLICT (team_id, user_id) DO UPDATE SET role = 'owner'").run(req.params.id, user_id);
+  const existingPlayer = await db.prepare('SELECT id, team_id FROM players WHERE user_id = ?').get(user_id);
+  if (existingPlayer) {
+    if (String(existingPlayer.team_id) !== String(req.params.id)) {
+      await db.prepare('UPDATE players SET team_id = ?, is_rostered = 1 WHERE id = ?').run(req.params.id, existingPlayer.id);
+    }
+  } else {
+    await db.prepare('INSERT INTO players (name, user_id, team_id, is_rostered, position) VALUES (?, ?, ?, 1, ?)').run(user.username, user_id, req.params.id, user.position || null);
+  }
   res.json({ ok: true });
 });
 
@@ -887,6 +962,11 @@ app.post('/api/players/offers/:id/accept', requirePlayer, async (req, res) => {
     const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.userId);
     await db.prepare('INSERT INTO players (name, user_id, team_id, is_rostered, position) VALUES (?, ?, ?, 1, ?)').run(user.username, req.userId, offer.team_id, user.position);
   }
+  const _txTeam = await db.prepare('SELECT name FROM teams WHERE id = ?').get(offer.team_id);
+  const _txUser = await db.prepare('SELECT username FROM users WHERE id = ?').get(req.userId);
+  if (_txTeam && _txUser) {
+    await db.prepare("INSERT INTO transactions (type, player_name, team_id, team_name) VALUES ('signing', ?, ?, ?)").run(_txUser.username, offer.team_id, _txTeam.name);
+  }
   res.json({ ok: true });
 });
 
@@ -903,6 +983,10 @@ app.delete('/api/teams/:id/roster/:playerId', requireTeamRole(['owner', 'gm']), 
   const player = await db.prepare('SELECT * FROM players WHERE id = ? AND team_id = ?').get(req.params.playerId, req.params.id);
   if (!player) return res.status(404).json({ error: 'Player not found on this team' });
   await db.prepare('UPDATE players SET team_id = NULL, is_rostered = 0 WHERE id = ?').run(req.params.playerId);
+  const _relTeam = await db.prepare('SELECT name FROM teams WHERE id = ?').get(req.params.id);
+  if (_relTeam) {
+    await db.prepare("INSERT INTO transactions (type, player_name, team_id, team_name) VALUES ('release', ?, ?, ?)").run(player.name, Number(req.params.id), _relTeam.name);
+  }
   res.json({ ok: true });
 });
 
@@ -1944,15 +2028,16 @@ app.get('/api/games', async (req, res) => {
 });
 
 app.post('/api/games', requireAdmin, async (req, res) => {
-  const { home_team_id, away_team_id, home_score, away_score, date, season_id, status, is_overtime, playoff_series_id } = req.body;
+  const { home_team_id, away_team_id, home_score, away_score, date, season_id, status, is_overtime, playoff_series_id, game_time } = req.body;
   if (!home_team_id || !away_team_id || !date) return res.status(400).json({ error: 'home_team_id, away_team_id, and date are required' });
   const gameStatus = status === 'complete' ? 'complete' : 'scheduled';
   const ot = is_overtime ? 1 : 0;
   const psi = playoff_series_id ? Number(playoff_series_id) : null;
+  const gt = game_time && /^\d{2}:\d{2}$/.test(game_time) ? game_time : null;
   const result = await db.prepare(
-    'INSERT INTO games (home_team_id, away_team_id, home_score, away_score, date, status, season_id, is_overtime, playoff_series_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(home_team_id, away_team_id, home_score || 0, away_score || 0, date, gameStatus, season_id || null, ot, psi);
-  res.status(201).json({ id: result.lastInsertRowid, home_team_id, away_team_id, home_score: home_score || 0, away_score: away_score || 0, date, status: gameStatus, season_id: season_id || null, is_overtime: ot, playoff_series_id: psi });
+    'INSERT INTO games (home_team_id, away_team_id, home_score, away_score, date, status, season_id, is_overtime, playoff_series_id, game_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(home_team_id, away_team_id, home_score || 0, away_score || 0, date, gameStatus, season_id || null, ot, psi, gt);
+  res.status(201).json({ id: result.lastInsertRowid, home_team_id, away_team_id, home_score: home_score || 0, away_score: away_score || 0, date, status: gameStatus, season_id: season_id || null, is_overtime: ot, playoff_series_id: psi, game_time: gt });
 });
 
 app.delete('/api/games/:id', requireAdmin, async (req, res) => {
@@ -1972,6 +2057,7 @@ app.patch('/api/games/:id', requireAdmin, async (req, res) => {
   const is_overtime = req.body.is_overtime !== undefined ? (req.body.is_overtime ? 1 : 0) : (game.is_overtime || 0);
   const is_forfeit  = req.body.is_forfeit  !== undefined ? (req.body.is_forfeit  ? 1 : 0) : (game.is_forfeit  || 0);
   const date = req.body.date !== undefined ? req.body.date : game.date;
+  const game_time = req.body.game_time !== undefined ? (req.body.game_time && /^\d{2}:\d{2}$/.test(req.body.game_time) ? req.body.game_time : null) : game.game_time;
   if (req.body.home_score !== undefined) {
     home_score = parseInt(req.body.home_score, 10);
     if (isNaN(home_score) || home_score < 0 || home_score > 99) return res.status(400).json({ error: 'home_score must be 0–99' });
@@ -1980,8 +2066,8 @@ app.patch('/api/games/:id', requireAdmin, async (req, res) => {
     away_score = parseInt(req.body.away_score, 10);
     if (isNaN(away_score) || away_score < 0 || away_score > 99) return res.status(400).json({ error: 'away_score must be 0–99' });
   }
-  await db.prepare('UPDATE games SET home_score=?, away_score=?, ea_match_id=?, status=?, season_id=?, is_overtime=?, is_forfeit=?, date=? WHERE id=?')
-    .run(home_score, away_score, ea_match_id, status, season_id, is_overtime, is_forfeit, date, req.params.id);
+  await db.prepare('UPDATE games SET home_score=?, away_score=?, ea_match_id=?, status=?, season_id=?, is_overtime=?, is_forfeit=?, date=?, game_time=? WHERE id=?')
+    .run(home_score, away_score, ea_match_id, status, season_id, is_overtime, is_forfeit, date, game_time, req.params.id);
 
   // Auto-update the playoff series bracket whenever a playoff game is completed or updated
   const effectiveSeries = req.body.playoff_series_id !== undefined
@@ -2319,16 +2405,11 @@ app.get('/api/standings', async (req, res) => {
 app.get('/api/transactions', async (req, res) => {
   const limit = Math.min(Number(req.query.limit) || 25, 100);
   const rows = await db.prepare(`
-    SELECT so.id, so.status, so.created_at,
-           u.username  AS player_name,
-           t.id        AS team_id,
-           t.name      AS team_name,
-           t.logo_url  AS team_logo
-      FROM signing_offers so
-      JOIN users u ON so.user_id = u.id
-      JOIN teams t ON so.team_id = t.id
-     WHERE so.status = 'accepted'
-     ORDER BY so.created_at DESC
+    SELECT tx.id, tx.type, tx.player_name, tx.team_id, tx.team_name, tx.created_at,
+           t.logo_url AS team_logo
+      FROM transactions tx
+      LEFT JOIN teams t ON tx.team_id = t.id
+     ORDER BY tx.created_at DESC
      LIMIT ?
   `).all(limit);
   res.json(rows);
@@ -2735,11 +2816,19 @@ app.get('/api/discord/callback', async (req, res) => {
     if (stateData.mode === 'player') {
       // Update existing logged-in player
       await db.prepare('UPDATE users SET discord_id = ?, discord = ? WHERE id = ?').run(discord_id, discord, stateData.userId);
+      const unlinkedPlayer = await db.prepare('SELECT id FROM players WHERE discord_id = ? AND user_id IS NULL LIMIT 1').get(discord_id);
+      if (unlinkedPlayer) {
+        await db.prepare('UPDATE players SET user_id = ?, discord = ? WHERE id = ?').run(stateData.userId, discord, unlinkedPlayer.id);
+      }
       return res.redirect('/dashboard.html?discord_linked=1');
     } else if (stateData.mode === 'login') {
       // Discord login: check if a user with this discord_id exists
       const existingUser = await db.prepare('SELECT id, username, platform FROM users WHERE discord_id = ?').get(discord_id);
       if (existingUser) {
+        const unlinkedPlayer2 = await db.prepare('SELECT id FROM players WHERE discord_id = ? AND user_id IS NULL LIMIT 1').get(discord_id);
+        if (unlinkedPlayer2) {
+          await db.prepare('UPDATE players SET user_id = ?, discord = ? WHERE id = ?').run(existingUser.id, discord, unlinkedPlayer2.id);
+        }
         // Create a player session token and redirect straight to dashboard.
         // This avoids the fragile register.js → POST /api/players/login chain.
         const authToken = _signPlayerToken(existingUser.id);

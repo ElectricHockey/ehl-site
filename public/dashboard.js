@@ -93,6 +93,33 @@ async function loadDashboard() {
         ${player
           ? `<p><strong>Current Team:</strong> ${player.team_id ? `<a href="team.html?id=${player.team_id}">${player.team_id}</a>` : 'Free Agent'}</p>`
           : '<p style="color:#8b949e">No player profile yet.</p>'}
+        <div style="margin-top:1rem;padding-top:1rem;border-top:1px solid #21262d;">
+          <h3 style="font-size:0.9rem;margin-bottom:0.6rem;color:#8b949e;">Update Position</h3>
+          <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
+            <select id="pos-primary" style="background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.3rem 0.5rem;font-size:0.85rem;">
+              <option value="">— Primary —</option>
+              ${['G','C','LW','RW','LD','RD','D','F','W'].map(p => `<option value="${p}"${(user.position||'')==p?' selected':''}>${p}</option>`).join('')}
+            </select>
+            <select id="pos-secondary" style="background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.3rem 0.5rem;font-size:0.85rem;">
+              <option value="">— Secondary —</option>
+              ${['G','C','LW','RW','LD','RD','D','F','W'].map(p => `<option value="${p}"${(user.secondary_position||'')==p?' selected':''}>${p}</option>`).join('')}
+            </select>
+            <button onclick="savePosition()" class="btn-secondary" style="font-size:0.82rem;padding:0.3rem 0.7rem;">Save Position</button>
+            <span id="pos-msg" style="font-size:0.82rem;"></span>
+          </div>
+        </div>
+        <div style="margin-top:1rem;padding-top:1rem;border-top:1px solid #21262d;">
+          <h3 style="font-size:0.9rem;margin-bottom:0.6rem;color:#8b949e;">Request Gamertag Change</h3>
+          <div style="display:flex;flex-direction:column;gap:0.5rem;max-width:320px;">
+            <input type="text" id="name-change-new" placeholder="New gamertag" style="background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.35rem 0.6rem;font-size:0.85rem;" />
+            <input type="text" id="name-change-confirm" placeholder="Confirm new gamertag" style="background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.35rem 0.6rem;font-size:0.85rem;" />
+            <div style="display:flex;gap:0.5rem;align-items:center;">
+              <button onclick="requestNameChange()" class="btn-secondary" style="font-size:0.82rem;padding:0.3rem 0.7rem;">Request Change</button>
+              <span id="name-change-msg" style="font-size:0.82rem;"></span>
+            </div>
+            <p style="color:#8b949e;font-size:0.78rem;margin:0;">Name changes require admin approval.</p>
+          </div>
+        </div>
       </div>
     </div>`;
 
@@ -286,6 +313,48 @@ function logout() {
   localStorage.removeItem('ehl_player_token');
   localStorage.removeItem('ehl_player_user');
   window.location.href = 'register.html';
+}
+
+async function savePosition() {
+  const pos = document.getElementById('pos-primary').value;
+  const sec = document.getElementById('pos-secondary').value;
+  const msg = document.getElementById('pos-msg');
+  const res = await fetch(`${API}/players/me`, {
+    method: 'PATCH',
+    headers: playerHeaders(),
+    body: JSON.stringify({ position: pos || null, secondary_position: sec || null }),
+  });
+  const data = await res.json();
+  if (res.ok) {
+    msg.textContent = '✓ Saved';
+    msg.style.color = '#3fb950';
+  } else {
+    msg.textContent = data.error || 'Failed';
+    msg.style.color = '#f85149';
+  }
+  setTimeout(() => { if (msg) msg.textContent = ''; }, 3000);
+}
+
+async function requestNameChange() {
+  const newName = (document.getElementById('name-change-new').value || '').trim();
+  const confirm = (document.getElementById('name-change-confirm').value || '').trim();
+  const msg = document.getElementById('name-change-msg');
+  if (!newName) { msg.textContent = 'Enter a new gamertag'; msg.style.color = '#f85149'; return; }
+  if (newName !== confirm) { msg.textContent = 'Names do not match'; msg.style.color = '#f85149'; return; }
+  const res = await fetch(`${API}/players/me/name-change`, {
+    method: 'POST', headers: playerHeaders(), body: JSON.stringify({ new_name: newName }),
+  });
+  const data = await res.json();
+  if (res.ok) {
+    msg.textContent = '✓ Request submitted!';
+    msg.style.color = '#3fb950';
+    document.getElementById('name-change-new').value = '';
+    document.getElementById('name-change-confirm').value = '';
+  } else {
+    msg.textContent = data.error || 'Failed';
+    msg.style.color = '#f85149';
+  }
+  setTimeout(() => { if (msg) msg.textContent = ''; }, 4000);
 }
 
 // ── Discord link/relink ───────────────────────────────────────────────────

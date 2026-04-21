@@ -18,11 +18,14 @@ async function loadTransactions() {
           ? `<img src="${tx.team_logo}" style="width:24px;height:24px;object-fit:contain;vertical-align:middle;border-radius:4px;background:#21262d;padding:2px;margin-right:0.5rem;" />`
           : '';
         const date = tx.created_at ? new Date(tx.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+        const isSigning = tx.type === 'signing';
+        const icon = isSigning ? '✍️' : '🔄';
+        const verb = isSigning ? 'signed with' : 'released from';
         return `<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:0.65rem 1rem;display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;">
-          <span style="font-size:1.1rem;">✍️</span>
+          <span style="font-size:1.1rem;">${icon}</span>
           <span style="flex:1;min-width:0;">
             <a href="player.html?name=${encodeURIComponent(tx.player_name)}" style="color:#e6edf3;font-weight:600;text-decoration:none;">${tx.player_name}</a>
-            <span style="color:#8b949e;"> signed with </span>
+            <span style="color:#8b949e;"> ${verb} </span>
             <a href="team.html?id=${tx.team_id}" style="color:#3fb950;text-decoration:none;font-weight:600;">${logo}${tx.team_name}</a>
           </span>
           <span style="color:#484f58;font-size:0.82rem;white-space:nowrap;">${date}</span>

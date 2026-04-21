@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL,
   email         TEXT,
   position      TEXT,
+  secondary_position TEXT DEFAULT NULL,
   ip_hash       TEXT,
   discord       TEXT,
   discord_id    TEXT,
@@ -66,6 +67,7 @@ CREATE TABLE IF NOT EXISTS players (
   name        TEXT NOT NULL,
   team_id     INTEGER REFERENCES teams(id),
   position    TEXT,
+  secondary_position TEXT DEFAULT NULL,
   number      INTEGER,
   user_id     INTEGER,
   is_rostered INTEGER DEFAULT 1,
@@ -85,7 +87,8 @@ CREATE TABLE IF NOT EXISTS games (
   season_id         INTEGER,
   is_overtime       INTEGER DEFAULT 0,
   playoff_series_id INTEGER,
-  is_forfeit        INTEGER DEFAULT 0
+  is_forfeit        INTEGER DEFAULT 0,
+  game_time         TEXT DEFAULT NULL
 );
 
 CREATE TABLE IF NOT EXISTS playoffs (
@@ -214,3 +217,27 @@ CREATE INDEX IF NOT EXISTS idx_players_team          ON players(team_id);
 CREATE INDEX IF NOT EXISTS idx_players_user          ON players(user_id);
 CREATE INDEX IF NOT EXISTS idx_sps_season            ON season_player_stats(season_id);
 CREATE INDEX IF NOT EXISTS idx_sps_player            ON season_player_stats(player_name);
+
+-- ── Transactions ──────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS transactions (
+  id          SERIAL PRIMARY KEY,
+  type        TEXT NOT NULL,
+  player_name TEXT NOT NULL,
+  team_id     INTEGER REFERENCES teams(id) ON DELETE SET NULL,
+  team_name   TEXT NOT NULL,
+  created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_transactions_created ON transactions(created_at DESC);
+
+-- ── Name change requests ──────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS name_change_requests (
+  id           SERIAL PRIMARY KEY,
+  user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  old_name     TEXT NOT NULL,
+  new_name     TEXT NOT NULL,
+  status       TEXT NOT NULL DEFAULT 'pending',
+  created_at   TIMESTAMPTZ DEFAULT NOW()
+);

@@ -178,11 +178,7 @@ async function seedTeams() {
     await pool.query(
       `INSERT INTO teams (name, conference, division, league_type, ea_club_id, color1, color2)
        VALUES ($1, '', '', $2, $3, $4, $5)
-       ON CONFLICT (name) DO UPDATE SET
-         league_type = EXCLUDED.league_type,
-         ea_club_id  = EXCLUDED.ea_club_id,
-         color1      = EXCLUDED.color1,
-         color2      = EXCLUDED.color2`,
+       ON CONFLICT (name) DO NOTHING`,
       [t.name, t.league_type || '', t.ea_club_id || null, t.color1 || '', t.color2 || '']
     );
   }
@@ -414,6 +410,22 @@ async function initSchema() {
       gaa             REAL,
       source          TEXT DEFAULT 'import'
     )`,
+    `CREATE TABLE IF NOT EXISTS transactions (
+      id          SERIAL PRIMARY KEY,
+      type        TEXT NOT NULL,
+      player_name TEXT NOT NULL,
+      team_id     INTEGER REFERENCES teams(id) ON DELETE SET NULL,
+      team_name   TEXT NOT NULL,
+      created_at  TIMESTAMPTZ DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS name_change_requests (
+      id           SERIAL PRIMARY KEY,
+      user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      old_name     TEXT NOT NULL,
+      new_name     TEXT NOT NULL,
+      status       TEXT NOT NULL DEFAULT 'pending',
+      created_at   TIMESTAMPTZ DEFAULT NOW()
+    )`,
   ];
 
   for (const sql of tables) {
@@ -442,6 +454,7 @@ async function initSchema() {
     'CREATE INDEX IF NOT EXISTS idx_players_user          ON players(user_id)',
     'CREATE INDEX IF NOT EXISTS idx_sps_season            ON season_player_stats(season_id)',
     'CREATE INDEX IF NOT EXISTS idx_sps_player            ON season_player_stats(player_name)',
+    'CREATE INDEX IF NOT EXISTS idx_transactions_created ON transactions(created_at DESC)',
   ];
 
   for (const sql of indexes) {
@@ -468,6 +481,33 @@ async function initSchema() {
     // Ignore if column already exists
     if (!err.message || !err.message.includes('already exists')) {
       console.warn('[db] Migration warning (seasons sort_order):', err.message);
+    }
+  }
+
+  // Add game_time column to games (UTC time string HH:MM)
+  try {
+    await pool.query("ALTER TABLE games ADD COLUMN game_time TEXT DEFAULT NULL");
+  } catch (err) {
+    if (!err.message || !err.message.includes('already exists')) {
+      console.warn('[db] Migration warning (games game_time):', err.message);
+    }
+  }
+
+  // Add secondary_position to users
+  try {
+    await pool.query("ALTER TABLE users ADD COLUMN secondary_position TEXT DEFAULT NULL");
+  } catch (err) {
+    if (!err.message || !err.message.includes('already exists')) {
+      console.warn('[db] Migration warning (users secondary_position):', err.message);
+    }
+  }
+
+  // Add secondary_position to players
+  try {
+    await pool.query("ALTER TABLE players ADD COLUMN secondary_position TEXT DEFAULT NULL");
+  } catch (err) {
+    if (!err.message || !err.message.includes('already exists')) {
+      console.warn('[db] Migration warning (players secondary_position):', err.message);
     }
   }
 
