@@ -1102,12 +1102,25 @@ app.get('/api/teams/:id/stats', async (req, res) => {
   const params = seasonId ? [req.params.id, seasonId] : [req.params.id];
   const rp = seasonId ? [req.params.id, req.params.id, seasonId] : [req.params.id, req.params.id];
 
-  // Fetch rostered players
-  const roster = await db.prepare(`
-    SELECT p.id, p.name, p.position, p.number, p.user_id, u.platform
-    FROM players p LEFT JOIN users u ON p.user_id = u.id
-    WHERE p.team_id = ? AND p.is_rostered = 1 ORDER BY p.name
-  `).all(req.params.id);
+  // Fetch rostered players – when a specific season is selected, derive from game stats
+  // so historical rosters reflect who actually played that season
+  const roster = seasonId
+    ? await db.prepare(`
+        SELECT DISTINCT ON (gps.player_name)
+          gps.player_name AS name, gps.position,
+          p.id, p.number, p.user_id, u.platform
+        FROM game_player_stats gps
+        JOIN games g ON gps.game_id = g.id
+        LEFT JOIN players p ON p.name = gps.player_name AND p.team_id = gps.team_id
+        LEFT JOIN users u ON p.user_id = u.id
+        WHERE gps.team_id = ? AND g.season_id = ? AND g.status IN ('complete','forfeit')
+        ORDER BY gps.player_name
+      `).all(req.params.id, seasonId)
+    : await db.prepare(`
+        SELECT p.id, p.name, p.position, p.number, p.user_id, u.platform
+        FROM players p LEFT JOIN users u ON p.user_id = u.id
+        WHERE p.team_id = ? AND p.is_rostered = 1 ORDER BY p.name
+      `).all(req.params.id);
 
   const skaterStats = await db.prepare(`
     SELECT ${SKATER_SELECT}
@@ -1186,6 +1199,9 @@ app.get('/api/teams/:id/records', async (req, res) => {
   const team = await db.prepare('SELECT id FROM teams WHERE id = ?').get(id);
   if (!team) return res.status(404).json({ error: 'Team not found' });
 
+  const minGPRow = await db.prepare("SELECT value FROM settings WHERE key = 'goalie_season_min_gp'").get();
+  const goalieSeasonMinGP = minGPRow ? (parseInt(minGPRow.value, 10) || 16) : 16;
+
   async function careerRecord(col, agg, pos, orderDir) {
     const where = pos === 'G' ? "gps.position = 'G'" : "gps.position != 'G'";
     return await db.prepare(`
@@ -1200,8 +1216,9 @@ app.get('/api/teams/:id/records', async (req, res) => {
     `).get(id);
   }
 
-  async function singleSeasonRecord(col, agg, pos, orderDir) {
+  async function singleSeasonRecord(col, agg, pos, orderDir, minGP) {
     const where = pos === 'G' ? "gps.position = 'G'" : "gps.position != 'G'";
+    const having = minGP ? `HAVING COUNT(DISTINCT gps.game_id) >= ${parseInt(minGP, 10)}` : '';
     return await db.prepare(`
       SELECT gps.player_name AS name,
         g.season_id, MAX(COALESCE(s.name, 'No Season')) AS season_name,
@@ -1211,7 +1228,7 @@ app.get('/api/teams/:id/records', async (req, res) => {
       JOIN games g ON gps.game_id = g.id
       LEFT JOIN seasons s ON g.season_id = s.id
       WHERE gps.team_id = ? AND ${where} AND g.status IN ('complete','forfeit')
-      GROUP BY gps.player_name, g.season_id
+      GROUP BY gps.player_name, g.season_id ${having}
       ORDER BY value ${orderDir}, gp DESC LIMIT 1
     `).get(id);
   }
@@ -1229,8 +1246,8 @@ app.get('/api/teams/:id/records', async (req, res) => {
     pts:         await singleSeasonRecord('points',      "SUM(gps.goals + gps.assists)", 'S', 'DESC'),
     goals:       await singleSeasonRecord('goals',       "SUM(gps.goals)",               'S', 'DESC'),
     plus_minus:  await singleSeasonRecord('plus_minus',  "SUM(gps.plus_minus)",          'S', 'DESC'),
-    save_pct:    await singleSeasonRecord('save_pct',    "CASE WHEN SUM(gps.shots_against)>0 THEN ROUND(CAST(SUM(gps.saves) AS NUMERIC)/SUM(gps.shots_against),3) ELSE NULL END", 'G', 'DESC'),
-    gaa:         await singleSeasonRecord('gaa',         "CASE WHEN SUM(gps.toi)>0 THEN ROUND(SUM(gps.goals_against)*3600.0/SUM(gps.toi),2) ELSE NULL END",                    'G', 'ASC'),
+    save_pct:    await singleSeasonRecord('save_pct',    "CASE WHEN SUM(gps.shots_against)>0 THEN ROUND(CAST(SUM(gps.saves) AS NUMERIC)/SUM(gps.shots_against),3) ELSE NULL END", 'G', 'DESC', goalieSeasonMinGP),
+    gaa:         await singleSeasonRecord('gaa',         "CASE WHEN SUM(gps.toi)>0 THEN ROUND(SUM(gps.goals_against)*3600.0/SUM(gps.toi),2) ELSE NULL END",                    'G', 'ASC',  goalieSeasonMinGP),
     goalie_wins: await singleSeasonRecord('goalie_wins', "SUM(gps.goalie_wins)",          'G', 'DESC'),
   };
 
@@ -1488,7 +1505,7 @@ app.get('/api/players/records/:name', async (req, res) => {
   const goalieSeasonMinGP = minGPRow ? (parseInt(minGPRow.value, 10) || 16) : 16;
 
   // Helper: check if player holds a career (all-time) league record (handles ties)
-  async function checkLeagueRecord(label, agg, pos, orderDir, leagueType, category) {
+  async function checkLeagueRecord(label, agg, pos, orderDir, leagueType, category, stFilter, seasonType) {
     const where = pos === 'G' ? "gps.position = 'G'" : "gps.position != 'G'";
     const ltFilter = leagueType ? "AND COALESCE(s.league_type,'') = ?" : '';
     const p = leagueType ? [leagueType] : [];
@@ -1498,7 +1515,7 @@ app.get('/api/players/records/:name', async (req, res) => {
         FROM game_player_stats gps
         JOIN games g ON gps.game_id = g.id
         LEFT JOIN seasons s ON g.season_id = s.id
-        WHERE ${where} AND g.status IN ('complete','forfeit') ${ltFilter}
+        WHERE ${where} AND g.status IN ('complete','forfeit') ${ltFilter} ${stFilter}
         GROUP BY gps.player_name
       ),
       top_val AS (SELECT value FROM agg_vals ORDER BY value ${orderDir} LIMIT 1)
@@ -1509,11 +1526,11 @@ app.get('/api/players/records/:name', async (req, res) => {
       const myRow = rows.find(r => r.name === name);
       if (myRow.value === 0) return;
       const co_holders = rows.filter(r => r.name !== name).map(r => r.name);
-      holdings.push({ category, label, value: myRow.value, league_type: leagueType || 'all', scope: 'league', co_holders });
+      holdings.push({ category, label, value: myRow.value, league_type: leagueType || 'all', season_type: seasonType, scope: 'league', co_holders });
     }
   }
 
-  async function checkSeasonRecord(label, agg, pos, orderDir, leagueType, category, minGP) {
+  async function checkSeasonRecord(label, agg, pos, orderDir, leagueType, category, minGP, stFilter, seasonType) {
     const where = pos === 'G' ? "gps.position = 'G'" : "gps.position != 'G'";
     const ltFilter = leagueType ? "AND COALESCE(s.league_type,'') = ?" : '';
     const p = leagueType ? [leagueType] : [];
@@ -1526,7 +1543,7 @@ app.get('/api/players/records/:name', async (req, res) => {
         FROM game_player_stats gps
         JOIN games g ON gps.game_id = g.id
         LEFT JOIN seasons s ON g.season_id = s.id
-        WHERE ${where} AND g.status IN ('complete','forfeit') ${ltFilter}
+        WHERE ${where} AND g.status IN ('complete','forfeit') ${ltFilter} ${stFilter}
         GROUP BY gps.player_name, g.season_id ${having}
       ),
       top_val AS (SELECT value FROM agg_vals ORDER BY value ${orderDir} LIMIT 1)
@@ -1537,11 +1554,11 @@ app.get('/api/players/records/:name', async (req, res) => {
       const myRow = rows.find(r => r.name === name);
       if (myRow.value === 0) return;
       const co_holders = rows.filter(r => r.name !== name).map(r => r.name);
-      holdings.push({ category, label, value: myRow.value, season_name: myRow.season_name, league_type: leagueType || 'all', scope: 'league', co_holders });
+      holdings.push({ category, label, value: myRow.value, season_name: myRow.season_name, league_type: leagueType || 'all', season_type: seasonType, scope: 'league', co_holders });
     }
   }
 
-  async function checkSingleGameRecord(label, col, pos, orderDir, leagueType, category) {
+  async function checkSingleGameRecord(label, col, pos, orderDir, leagueType, category, stFilter, seasonType) {
     const where = pos === 'G' ? "gps.position = 'G'" : "gps.position != 'G'";
     const ltFilter = leagueType ? "AND COALESCE(s.league_type,'') = ?" : '';
     const p = leagueType ? [leagueType] : [];
@@ -1555,7 +1572,7 @@ app.get('/api/players/records/:name', async (req, res) => {
         JOIN teams ht ON g.home_team_id = ht.id
         JOIN teams at2 ON g.away_team_id = at2.id
         LEFT JOIN seasons s ON g.season_id = s.id
-        WHERE ${where} AND g.status IN ('complete','forfeit') ${ltFilter}
+        WHERE ${where} AND g.status IN ('complete','forfeit') ${ltFilter} ${stFilter}
       ),
       top_val AS (SELECT value FROM game_vals ORDER BY value ${orderDir} LIMIT 1)
       SELECT * FROM game_vals WHERE value = (SELECT value FROM top_val)
@@ -1565,164 +1582,133 @@ app.get('/api/players/records/:name', async (req, res) => {
       const myRow = rows.find(r => r.name === name);
       if (myRow.value === 0) return;
       const co_holders = rows.filter(r => r.name !== name).map(r => r.name);
-      holdings.push({ category, label, value: myRow.value, game_id: myRow.game_id, home_team: myRow.home_team, away_team: myRow.away_team, date: myRow.date, league_type: leagueType || 'all', scope: 'league', co_holders });
+      holdings.push({ category, label, value: myRow.value, game_id: myRow.game_id, home_team: myRow.home_team, away_team: myRow.away_team, date: myRow.date, league_type: leagueType || 'all', season_type: seasonType, scope: 'league', co_holders });
     }
   }
 
-  async function checkTeamRecord(label, agg, pos, orderDir, teamId, teamName, mode) {
-    const where = pos === 'G' ? "gps.position = 'G'" : "gps.position != 'G'";
-    const row = await db.prepare(`
-      SELECT gps.player_name AS name, ${agg} AS value, COUNT(DISTINCT gps.game_id) AS gp
-      FROM game_player_stats gps
-      JOIN games g ON gps.game_id = g.id
-      WHERE gps.team_id = ? AND ${where} AND g.status IN ('complete','forfeit')
-      GROUP BY gps.player_name ORDER BY value ${orderDir}, gp DESC LIMIT 1
-    `).get(teamId);
-    if (row && row.name === name && row.value !== 0) {
-      holdings.push({ category: mode, label, value: row.value, team_name: teamName, scope: 'team' });
-    }
-  }
-
-  // League records per league_type
+  // League records per league_type × season_type
+  const SEASON_TYPES = [
+    { st: 'regular',  stFilter: 'AND g.playoff_series_id IS NULL' },
+    { st: 'playoffs', stFilter: 'AND g.playoff_series_id IS NOT NULL' },
+  ];
   for (const lt of ['threes', 'sixes']) {
-    // All-time skater records
-    await checkLeagueRecord('Career GP',              "COUNT(DISTINCT gps.game_id)",     'S', 'DESC', lt, 'alltime');
-    await checkLeagueRecord('Career Pts',             "SUM(gps.goals+gps.assists)",      'S', 'DESC', lt, 'alltime');
-    await checkLeagueRecord('Career Goals',           "SUM(gps.goals)",                  'S', 'DESC', lt, 'alltime');
-    await checkLeagueRecord('Career Assists',         "SUM(gps.assists)",                'S', 'DESC', lt, 'alltime');
-    await checkLeagueRecord('Career +/-',             "SUM(gps.plus_minus)",             'S', 'DESC', lt, 'alltime');
-    await checkLeagueRecord('Career Hits',            "SUM(gps.hits)",                   'S', 'DESC', lt, 'alltime');
-    await checkLeagueRecord('Career Shots',           "SUM(gps.shots)",                  'S', 'DESC', lt, 'alltime');
-    await checkLeagueRecord('Career Shot Attempts',   "SUM(gps.shot_attempts)",          'S', 'DESC', lt, 'alltime');
-    await checkLeagueRecord('Career Blocked Shots',   "SUM(gps.blocked_shots)",          'S', 'DESC', lt, 'alltime');
-    await checkLeagueRecord('Career PIM',             "SUM(gps.pim)",                    'S', 'DESC', lt, 'alltime');
-    if (lt !== 'threes') {
-      await checkLeagueRecord('Career PP Goals',        "SUM(gps.pp_goals)",               'S', 'DESC', lt, 'alltime');
-      await checkLeagueRecord('Career SH Goals',        "SUM(gps.sh_goals)",               'S', 'DESC', lt, 'alltime');
-    }
-    await checkLeagueRecord('Career GWG',             "SUM(gps.gwg)",                    'S', 'DESC', lt, 'alltime');
-    await checkLeagueRecord('Career Hat Tricks',      "SUM(gps.hat_tricks)",             'S', 'DESC', lt, 'alltime');
-    await checkLeagueRecord('Career Faceoff Wins',    "SUM(gps.faceoff_wins)",           'S', 'DESC', lt, 'alltime');
-    await checkLeagueRecord('Career Deflections',     "SUM(gps.deflections)",            'S', 'DESC', lt, 'alltime');
-    await checkLeagueRecord('Career Interceptions',   "SUM(gps.interceptions)",          'S', 'DESC', lt, 'alltime');
-    await checkLeagueRecord('Career Takeaways',       "SUM(gps.takeaways)",              'S', 'DESC', lt, 'alltime');
-    await checkLeagueRecord('Career Giveaways',       "SUM(gps.giveaways)",              'S', 'DESC', lt, 'alltime');
-    await checkLeagueRecord('Career Pass Completions',"SUM(gps.pass_completions)",       'S', 'DESC', lt, 'alltime');
-    await checkLeagueRecord('Career Penalties Drawn', "SUM(gps.penalties_drawn)",        'S', 'DESC', lt, 'alltime');
-    // All-time goalie records
-    await checkLeagueRecord('Career GP',              "COUNT(DISTINCT gps.game_id)",     'G', 'DESC', lt, 'alltime');
-    await checkLeagueRecord('Career Wins',            "SUM(gps.goalie_wins)",            'G', 'DESC', lt, 'alltime');
-    await checkLeagueRecord('Career Saves',           "SUM(gps.saves)",                  'G', 'DESC', lt, 'alltime');
-    await checkLeagueRecord('Career Shutouts',        "SUM(gps.shutouts)",               'G', 'DESC', lt, 'alltime');
-    await checkLeagueRecord('Career PSA',             "SUM(gps.penalty_shot_attempts)",  'G', 'DESC', lt, 'alltime');
-    await checkLeagueRecord('Career BKSV',            "SUM(gps.breakaway_saves)",        'G', 'DESC', lt, 'alltime');
-    await checkLeagueRecord('Career Goals Against',   "SUM(gps.goals_against)",          'G', 'DESC', lt, 'alltime');
-    // Seasonal skater records
-    await checkSeasonRecord('Season Pts',             "SUM(gps.goals+gps.assists)",      'S', 'DESC', lt, 'seasonal');
-    await checkSeasonRecord('Season Goals',           "SUM(gps.goals)",                  'S', 'DESC', lt, 'seasonal');
-    await checkSeasonRecord('Season Assists',         "SUM(gps.assists)",                'S', 'DESC', lt, 'seasonal');
-    await checkSeasonRecord('Season +/-',             "SUM(gps.plus_minus)",             'S', 'DESC', lt, 'seasonal');
-    await checkSeasonRecord('Season Hits',            "SUM(gps.hits)",                   'S', 'DESC', lt, 'seasonal');
-    await checkSeasonRecord('Season Shots',           "SUM(gps.shots)",                  'S', 'DESC', lt, 'seasonal');
-    await checkSeasonRecord('Season Shot Attempts',   "SUM(gps.shot_attempts)",          'S', 'DESC', lt, 'seasonal');
-    await checkSeasonRecord('Season Blocked Shots',   "SUM(gps.blocked_shots)",          'S', 'DESC', lt, 'seasonal');
-    await checkSeasonRecord('Season PIM',             "SUM(gps.pim)",                    'S', 'DESC', lt, 'seasonal');
-    if (lt !== 'threes') {
-      await checkSeasonRecord('Season PP Goals',        "SUM(gps.pp_goals)",               'S', 'DESC', lt, 'seasonal');
-      await checkSeasonRecord('Season SH Goals',        "SUM(gps.sh_goals)",               'S', 'DESC', lt, 'seasonal');
-    }
-    await checkSeasonRecord('Season GWG',             "SUM(gps.gwg)",                    'S', 'DESC', lt, 'seasonal');
-    await checkSeasonRecord('Season Hat Tricks',      "SUM(gps.hat_tricks)",             'S', 'DESC', lt, 'seasonal');
-    await checkSeasonRecord('Season Faceoff Wins',    "SUM(gps.faceoff_wins)",           'S', 'DESC', lt, 'seasonal');
-    await checkSeasonRecord('Season Deflections',     "SUM(gps.deflections)",            'S', 'DESC', lt, 'seasonal');
-    await checkSeasonRecord('Season Interceptions',   "SUM(gps.interceptions)",          'S', 'DESC', lt, 'seasonal');
-    await checkSeasonRecord('Season Takeaways',       "SUM(gps.takeaways)",              'S', 'DESC', lt, 'seasonal');
-    await checkSeasonRecord('Season Giveaways',       "SUM(gps.giveaways)",              'S', 'DESC', lt, 'seasonal');
-    await checkSeasonRecord('Season Pass Completions',"SUM(gps.pass_completions)",       'S', 'DESC', lt, 'seasonal');
-    await checkSeasonRecord('Season Penalties Drawn', "SUM(gps.penalties_drawn)",        'S', 'DESC', lt, 'seasonal');
-    // Seasonal goalie records
-    await checkSeasonRecord('Season Wins',            "SUM(gps.goalie_wins)",            'G', 'DESC', lt, 'seasonal');
-    await checkSeasonRecord('Season Saves',           "SUM(gps.saves)",                  'G', 'DESC', lt, 'seasonal');
-    await checkSeasonRecord('Season Shutouts',        "SUM(gps.shutouts)",               'G', 'DESC', lt, 'seasonal');
-    await checkSeasonRecord('Season PSA',             "SUM(gps.penalty_shot_attempts)",  'G', 'DESC', lt, 'seasonal');
-    await checkSeasonRecord('Season BKSV',            "SUM(gps.breakaway_saves)",        'G', 'DESC', lt, 'seasonal');
-    await checkSeasonRecord('Season Goals Against',   "SUM(gps.goals_against)",          'G', 'DESC', lt, 'seasonal');
-    await checkSeasonRecord('Season Save%',           "CASE WHEN SUM(gps.shots_against)>0 THEN ROUND(CAST(SUM(gps.saves) AS NUMERIC)/SUM(gps.shots_against),3) ELSE NULL END", 'G', 'DESC', lt, 'seasonal', goalieSeasonMinGP);
-    // Single-game skater records
-    await checkSingleGameRecord('Single Game Goals',            'goals',              'S', 'DESC', lt, 'singlegame');
-    await checkSingleGameRecord('Single Game Assists',          'assists',            'S', 'DESC', lt, 'singlegame');
-    await checkSingleGameRecord('Single Game +/-',              'plus_minus',         'S', 'DESC', lt, 'singlegame');
-    await checkSingleGameRecord('Single Game Hits',             'hits',               'S', 'DESC', lt, 'singlegame');
-    await checkSingleGameRecord('Single Game Shots',            'shots',              'S', 'DESC', lt, 'singlegame');
-    await checkSingleGameRecord('Single Game Shot Attempts',    'shot_attempts',      'S', 'DESC', lt, 'singlegame');
-    await checkSingleGameRecord('Single Game Blocked Shots',    'blocked_shots',      'S', 'DESC', lt, 'singlegame');
-    await checkSingleGameRecord('Single Game PIM',              'pim',                'S', 'DESC', lt, 'singlegame');
-    if (lt !== 'threes') {
-      await checkSingleGameRecord('Single Game PP Goals',         'pp_goals',           'S', 'DESC', lt, 'singlegame');
-      await checkSingleGameRecord('Single Game SH Goals',         'sh_goals',           'S', 'DESC', lt, 'singlegame');
-    }
-    await checkSingleGameRecord('Single Game Hat Tricks',       'hat_tricks',         'S', 'DESC', lt, 'singlegame');
-    await checkSingleGameRecord('Single Game Faceoff Wins',     'faceoff_wins',       'S', 'DESC', lt, 'singlegame');
-    await checkSingleGameRecord('Single Game Deflections',      'deflections',        'S', 'DESC', lt, 'singlegame');
-    await checkSingleGameRecord('Single Game Interceptions',    'interceptions',      'S', 'DESC', lt, 'singlegame');
-    await checkSingleGameRecord('Single Game Takeaways',        'takeaways',          'S', 'DESC', lt, 'singlegame');
-    await checkSingleGameRecord('Single Game Giveaways',        'giveaways',          'S', 'DESC', lt, 'singlegame');
-    await checkSingleGameRecord('Single Game Pass Completions', 'pass_completions',   'S', 'DESC', lt, 'singlegame');
-    await checkSingleGameRecord('Single Game Penalties Drawn',  'penalties_drawn',    'S', 'DESC', lt, 'singlegame');
-    // Single-game goalie records
-    await checkSingleGameRecord('Single Game Saves',        'saves',                  'G', 'DESC', lt, 'singlegame');
-    await checkSingleGameRecord('Single Game PSA',          'penalty_shot_attempts',  'G', 'DESC', lt, 'singlegame');
-    await checkSingleGameRecord('Single Game BKSV',         'breakaway_saves',        'G', 'DESC', lt, 'singlegame');
-    await checkSingleGameRecord('Single Game Goals Against','goals_against',           'G', 'DESC', lt, 'singlegame');
-  }
+    for (const { st, stFilter } of SEASON_TYPES) {
+      // All-time skater records
+      await checkLeagueRecord('Career GP',              "COUNT(DISTINCT gps.game_id)",     'S', 'DESC', lt, 'alltime', stFilter, st);
+      await checkLeagueRecord('Career Pts',             "SUM(gps.goals+gps.assists)",      'S', 'DESC', lt, 'alltime', stFilter, st);
+      await checkLeagueRecord('Career Goals',           "SUM(gps.goals)",                  'S', 'DESC', lt, 'alltime', stFilter, st);
+      await checkLeagueRecord('Career Assists',         "SUM(gps.assists)",                'S', 'DESC', lt, 'alltime', stFilter, st);
+      await checkLeagueRecord('Career +/-',             "SUM(gps.plus_minus)",             'S', 'DESC', lt, 'alltime', stFilter, st);
+      await checkLeagueRecord('Career Hits',            "SUM(gps.hits)",                   'S', 'DESC', lt, 'alltime', stFilter, st);
+      await checkLeagueRecord('Career Shots',           "SUM(gps.shots)",                  'S', 'DESC', lt, 'alltime', stFilter, st);
+      await checkLeagueRecord('Career Shot Attempts',   "SUM(gps.shot_attempts)",          'S', 'DESC', lt, 'alltime', stFilter, st);
+      await checkLeagueRecord('Career Blocked Shots',   "SUM(gps.blocked_shots)",          'S', 'DESC', lt, 'alltime', stFilter, st);
+      await checkLeagueRecord('Career PIM',             "SUM(gps.pim)",                    'S', 'DESC', lt, 'alltime', stFilter, st);
+      if (lt !== 'threes') {
+        await checkLeagueRecord('Career PP Goals',      "SUM(gps.pp_goals)",               'S', 'DESC', lt, 'alltime', stFilter, st);
+        await checkLeagueRecord('Career SH Goals',      "SUM(gps.sh_goals)",               'S', 'DESC', lt, 'alltime', stFilter, st);
+      }
+      await checkLeagueRecord('Career GWG',             "SUM(gps.gwg)",                    'S', 'DESC', lt, 'alltime', stFilter, st);
+      await checkLeagueRecord('Career Hat Tricks',      "SUM(gps.hat_tricks)",             'S', 'DESC', lt, 'alltime', stFilter, st);
+      await checkLeagueRecord('Career Faceoff Wins',    "SUM(gps.faceoff_wins)",           'S', 'DESC', lt, 'alltime', stFilter, st);
+      await checkLeagueRecord('Career Deflections',     "SUM(gps.deflections)",            'S', 'DESC', lt, 'alltime', stFilter, st);
+      await checkLeagueRecord('Career Interceptions',   "SUM(gps.interceptions)",          'S', 'DESC', lt, 'alltime', stFilter, st);
+      await checkLeagueRecord('Career Takeaways',       "SUM(gps.takeaways)",              'S', 'DESC', lt, 'alltime', stFilter, st);
+      await checkLeagueRecord('Career Giveaways',       "SUM(gps.giveaways)",              'S', 'DESC', lt, 'alltime', stFilter, st);
+      await checkLeagueRecord('Career Pass Completions',"SUM(gps.pass_completions)",       'S', 'DESC', lt, 'alltime', stFilter, st);
+      await checkLeagueRecord('Career Penalties Drawn', "SUM(gps.penalties_drawn)",        'S', 'DESC', lt, 'alltime', stFilter, st);
+      // All-time goalie records
+      await checkLeagueRecord('Career GP',              "COUNT(DISTINCT gps.game_id)",     'G', 'DESC', lt, 'alltime', stFilter, st);
+      await checkLeagueRecord('Career Wins',            "SUM(gps.goalie_wins)",            'G', 'DESC', lt, 'alltime', stFilter, st);
+      await checkLeagueRecord('Career Saves',           "SUM(gps.saves)",                  'G', 'DESC', lt, 'alltime', stFilter, st);
+      await checkLeagueRecord('Career Shutouts',        "SUM(gps.shutouts)",               'G', 'DESC', lt, 'alltime', stFilter, st);
+      await checkLeagueRecord('Career PSA',             "SUM(gps.penalty_shot_attempts)",  'G', 'DESC', lt, 'alltime', stFilter, st);
+      await checkLeagueRecord('Career BKSV',            "SUM(gps.breakaway_saves)",        'G', 'DESC', lt, 'alltime', stFilter, st);
+      await checkLeagueRecord('Career Goals Against',   "SUM(gps.goals_against)",          'G', 'DESC', lt, 'alltime', stFilter, st);
+      // Seasonal skater records
+      await checkSeasonRecord('Season Pts',             "SUM(gps.goals+gps.assists)",      'S', 'DESC', lt, 'seasonal', null, stFilter, st);
+      await checkSeasonRecord('Season Goals',           "SUM(gps.goals)",                  'S', 'DESC', lt, 'seasonal', null, stFilter, st);
+      await checkSeasonRecord('Season Assists',         "SUM(gps.assists)",                'S', 'DESC', lt, 'seasonal', null, stFilter, st);
+      await checkSeasonRecord('Season +/-',             "SUM(gps.plus_minus)",             'S', 'DESC', lt, 'seasonal', null, stFilter, st);
+      await checkSeasonRecord('Season Hits',            "SUM(gps.hits)",                   'S', 'DESC', lt, 'seasonal', null, stFilter, st);
+      await checkSeasonRecord('Season Shots',           "SUM(gps.shots)",                  'S', 'DESC', lt, 'seasonal', null, stFilter, st);
+      await checkSeasonRecord('Season Shot Attempts',   "SUM(gps.shot_attempts)",          'S', 'DESC', lt, 'seasonal', null, stFilter, st);
+      await checkSeasonRecord('Season Blocked Shots',   "SUM(gps.blocked_shots)",          'S', 'DESC', lt, 'seasonal', null, stFilter, st);
+      await checkSeasonRecord('Season PIM',             "SUM(gps.pim)",                    'S', 'DESC', lt, 'seasonal', null, stFilter, st);
+      if (lt !== 'threes') {
+        await checkSeasonRecord('Season PP Goals',      "SUM(gps.pp_goals)",               'S', 'DESC', lt, 'seasonal', null, stFilter, st);
+        await checkSeasonRecord('Season SH Goals',      "SUM(gps.sh_goals)",               'S', 'DESC', lt, 'seasonal', null, stFilter, st);
+      }
+      await checkSeasonRecord('Season GWG',             "SUM(gps.gwg)",                    'S', 'DESC', lt, 'seasonal', null, stFilter, st);
+      await checkSeasonRecord('Season Hat Tricks',      "SUM(gps.hat_tricks)",             'S', 'DESC', lt, 'seasonal', null, stFilter, st);
+      await checkSeasonRecord('Season Faceoff Wins',    "SUM(gps.faceoff_wins)",           'S', 'DESC', lt, 'seasonal', null, stFilter, st);
+      await checkSeasonRecord('Season Deflections',     "SUM(gps.deflections)",            'S', 'DESC', lt, 'seasonal', null, stFilter, st);
+      await checkSeasonRecord('Season Interceptions',   "SUM(gps.interceptions)",          'S', 'DESC', lt, 'seasonal', null, stFilter, st);
+      await checkSeasonRecord('Season Takeaways',       "SUM(gps.takeaways)",              'S', 'DESC', lt, 'seasonal', null, stFilter, st);
+      await checkSeasonRecord('Season Giveaways',       "SUM(gps.giveaways)",              'S', 'DESC', lt, 'seasonal', null, stFilter, st);
+      await checkSeasonRecord('Season Pass Completions',"SUM(gps.pass_completions)",       'S', 'DESC', lt, 'seasonal', null, stFilter, st);
+      await checkSeasonRecord('Season Penalties Drawn', "SUM(gps.penalties_drawn)",        'S', 'DESC', lt, 'seasonal', null, stFilter, st);
+      // Seasonal goalie records
+      await checkSeasonRecord('Season Wins',            "SUM(gps.goalie_wins)",            'G', 'DESC', lt, 'seasonal', null, stFilter, st);
+      await checkSeasonRecord('Season Saves',           "SUM(gps.saves)",                  'G', 'DESC', lt, 'seasonal', null, stFilter, st);
+      await checkSeasonRecord('Season Shutouts',        "SUM(gps.shutouts)",               'G', 'DESC', lt, 'seasonal', null, stFilter, st);
+      await checkSeasonRecord('Season PSA',             "SUM(gps.penalty_shot_attempts)",  'G', 'DESC', lt, 'seasonal', null, stFilter, st);
+      await checkSeasonRecord('Season BKSV',            "SUM(gps.breakaway_saves)",        'G', 'DESC', lt, 'seasonal', null, stFilter, st);
+      await checkSeasonRecord('Season Goals Against',   "SUM(gps.goals_against)",          'G', 'DESC', lt, 'seasonal', null, stFilter, st);
+      await checkSeasonRecord('Season Save%',           "CASE WHEN SUM(gps.shots_against)>0 THEN ROUND(CAST(SUM(gps.saves) AS NUMERIC)/SUM(gps.shots_against),3) ELSE NULL END", 'G', 'DESC', lt, 'seasonal', goalieSeasonMinGP, stFilter, st);
+      // Single-game skater records
+      await checkSingleGameRecord('Single Game Goals',            'goals',              'S', 'DESC', lt, 'singlegame', stFilter, st);
+      await checkSingleGameRecord('Single Game Assists',          'assists',            'S', 'DESC', lt, 'singlegame', stFilter, st);
+      await checkSingleGameRecord('Single Game +/-',              'plus_minus',         'S', 'DESC', lt, 'singlegame', stFilter, st);
+      await checkSingleGameRecord('Single Game Hits',             'hits',               'S', 'DESC', lt, 'singlegame', stFilter, st);
+      await checkSingleGameRecord('Single Game Shots',            'shots',              'S', 'DESC', lt, 'singlegame', stFilter, st);
+      await checkSingleGameRecord('Single Game Shot Attempts',    'shot_attempts',      'S', 'DESC', lt, 'singlegame', stFilter, st);
+      await checkSingleGameRecord('Single Game Blocked Shots',    'blocked_shots',      'S', 'DESC', lt, 'singlegame', stFilter, st);
+      await checkSingleGameRecord('Single Game PIM',              'pim',                'S', 'DESC', lt, 'singlegame', stFilter, st);
+      if (lt !== 'threes') {
+        await checkSingleGameRecord('Single Game PP Goals',       'pp_goals',           'S', 'DESC', lt, 'singlegame', stFilter, st);
+        await checkSingleGameRecord('Single Game SH Goals',       'sh_goals',           'S', 'DESC', lt, 'singlegame', stFilter, st);
+      }
+      await checkSingleGameRecord('Single Game Hat Tricks',       'hat_tricks',         'S', 'DESC', lt, 'singlegame', stFilter, st);
+      await checkSingleGameRecord('Single Game Faceoff Wins',     'faceoff_wins',       'S', 'DESC', lt, 'singlegame', stFilter, st);
+      await checkSingleGameRecord('Single Game Deflections',      'deflections',        'S', 'DESC', lt, 'singlegame', stFilter, st);
+      await checkSingleGameRecord('Single Game Interceptions',    'interceptions',      'S', 'DESC', lt, 'singlegame', stFilter, st);
+      await checkSingleGameRecord('Single Game Takeaways',        'takeaways',          'S', 'DESC', lt, 'singlegame', stFilter, st);
+      await checkSingleGameRecord('Single Game Giveaways',        'giveaways',          'S', 'DESC', lt, 'singlegame', stFilter, st);
+      await checkSingleGameRecord('Single Game Pass Completions', 'pass_completions',   'S', 'DESC', lt, 'singlegame', stFilter, st);
+      await checkSingleGameRecord('Single Game Penalties Drawn',  'penalties_drawn',    'S', 'DESC', lt, 'singlegame', stFilter, st);
+      // Single-game goalie records
+      await checkSingleGameRecord('Single Game Saves',        'saves',                  'G', 'DESC', lt, 'singlegame', stFilter, st);
+      await checkSingleGameRecord('Single Game PSA',          'penalty_shot_attempts',  'G', 'DESC', lt, 'singlegame', stFilter, st);
+      await checkSingleGameRecord('Single Game BKSV',         'breakaway_saves',        'G', 'DESC', lt, 'singlegame', stFilter, st);
+      await checkSingleGameRecord('Single Game Goals Against','goals_against',           'G', 'DESC', lt, 'singlegame', stFilter, st);
 
-  // Also check single-game pts (goals+assists) which requires a computed expression
-  for (const lt of ['threes', 'sixes']) {
-    const ltFilterPts = `AND COALESCE(s.league_type,'') = ?`;
-    const rows = await db.prepare(`
-      WITH game_vals AS (
-        SELECT gps.player_name AS name, (gps.goals+gps.assists) AS value,
-          g.id AS game_id, g.date,
-          ht.name AS home_team, at2.name AS away_team
-        FROM game_player_stats gps
-        JOIN games g ON gps.game_id = g.id
-        JOIN teams ht ON g.home_team_id = ht.id
-        JOIN teams at2 ON g.away_team_id = at2.id
-        LEFT JOIN seasons s ON g.season_id = s.id
-        WHERE gps.position != 'G' AND g.status IN ('complete','forfeit') ${ltFilterPts}
-      ),
-      top_val AS (SELECT value FROM game_vals ORDER BY value DESC LIMIT 1)
-      SELECT * FROM game_vals WHERE value = (SELECT value FROM top_val)
-      ORDER BY date DESC
-    `).all(lt);
-    if (rows.some(r => r.name === name)) {
-      const myRow = rows.find(r => r.name === name);
-      const co_holders = rows.filter(r => r.name !== name).map(r => r.name);
-      holdings.push({ category: 'singlegame', label: 'Single Game Pts', value: myRow.value, game_id: myRow.game_id, home_team: myRow.home_team, away_team: myRow.away_team, date: myRow.date, league_type: lt, scope: 'league', co_holders });
+      // Single-game pts (goals+assists) – computed expression
+      const ltFilterPts = 'AND COALESCE(s.league_type,\'\') = ?';
+      const ptsRows = await db.prepare(`
+        WITH game_vals AS (
+          SELECT gps.player_name AS name, (gps.goals+gps.assists) AS value,
+            g.id AS game_id, g.date,
+            ht.name AS home_team, at2.name AS away_team
+          FROM game_player_stats gps
+          JOIN games g ON gps.game_id = g.id
+          JOIN teams ht ON g.home_team_id = ht.id
+          JOIN teams at2 ON g.away_team_id = at2.id
+          LEFT JOIN seasons s ON g.season_id = s.id
+          WHERE gps.position != 'G' AND g.status IN ('complete','forfeit') ${ltFilterPts} ${stFilter}
+        ),
+        top_val AS (SELECT value FROM game_vals ORDER BY value DESC LIMIT 1)
+        SELECT * FROM game_vals WHERE value = (SELECT value FROM top_val)
+        ORDER BY date DESC
+      `).all(lt);
+      if (ptsRows.some(r => r.name === name)) {
+        const myRow = ptsRows.find(r => r.name === name);
+        if (myRow.value !== 0) {
+          const co_holders = ptsRows.filter(r => r.name !== name).map(r => r.name);
+          holdings.push({ category: 'singlegame', label: 'Single Game Pts', value: myRow.value, game_id: myRow.game_id, home_team: myRow.home_team, away_team: myRow.away_team, date: myRow.date, league_type: lt, season_type: st, scope: 'league', co_holders });
+        }
+      }
     }
-  }
-
-  // Team records for the player's current team
-  const teamRow = await db.prepare(`
-    SELECT t.id, t.name FROM players p JOIN teams t ON p.team_id = t.id
-    WHERE p.name = ? AND p.is_rostered = 1 LIMIT 1
-  `).get(name);
-  if (teamRow) {
-    await checkTeamRecord('Career GP',              "COUNT(DISTINCT gps.game_id)",     'S', 'DESC', teamRow.id, teamRow.name, 'team-career');
-    await checkTeamRecord('Career Pts',             "SUM(gps.goals+gps.assists)",      'S', 'DESC', teamRow.id, teamRow.name, 'team-career');
-    await checkTeamRecord('Career Goals',           "SUM(gps.goals)",                  'S', 'DESC', teamRow.id, teamRow.name, 'team-career');
-    await checkTeamRecord('Career Assists',         "SUM(gps.assists)",                'S', 'DESC', teamRow.id, teamRow.name, 'team-career');
-    await checkTeamRecord('Career +/-',             "SUM(gps.plus_minus)",             'S', 'DESC', teamRow.id, teamRow.name, 'team-career');
-    await checkTeamRecord('Career Hits',            "SUM(gps.hits)",                   'S', 'DESC', teamRow.id, teamRow.name, 'team-career');
-    await checkTeamRecord('Career Shots',           "SUM(gps.shots)",                  'S', 'DESC', teamRow.id, teamRow.name, 'team-career');
-    await checkTeamRecord('Career Blocked Shots',   "SUM(gps.blocked_shots)",          'S', 'DESC', teamRow.id, teamRow.name, 'team-career');
-    await checkTeamRecord('Career PIM',             "SUM(gps.pim)",                    'S', 'DESC', teamRow.id, teamRow.name, 'team-career');
-    await checkTeamRecord('Career PP Goals',        "SUM(gps.pp_goals)",               'S', 'DESC', teamRow.id, teamRow.name, 'team-career');
-    await checkTeamRecord('Career GWG',             "SUM(gps.gwg)",                    'S', 'DESC', teamRow.id, teamRow.name, 'team-career');
-    await checkTeamRecord('Career Hat Tricks',      "SUM(gps.hat_tricks)",             'S', 'DESC', teamRow.id, teamRow.name, 'team-career');
-    await checkTeamRecord('Career Wins',            "SUM(gps.goalie_wins)",            'G', 'DESC', teamRow.id, teamRow.name, 'team-career');
-    await checkTeamRecord('Career Saves',           "SUM(gps.saves)",                  'G', 'DESC', teamRow.id, teamRow.name, 'team-career');
-    await checkTeamRecord('Career Shutouts',        "SUM(gps.shutouts)",               'G', 'DESC', teamRow.id, teamRow.name, 'team-career');
   }
 
   res.json({ holdings });
@@ -1912,8 +1898,22 @@ app.patch('/api/players/:id', requireOwner, async (req, res) => {
   const number     = req.body.number     !== undefined ? (req.body.number || null)              : player.number;
   const discord    = req.body.discord    !== undefined ? (req.body.discord || null)             : player.discord;
   const discord_id = req.body.discord_id !== undefined ? (req.body.discord_id || null)          : player.discord_id;
-  await db.prepare('UPDATE players SET name=?, team_id=?, is_rostered=?, position=?, number=?, discord=?, discord_id=? WHERE id=?')
-    .run(name, team_id, is_rostered, position, number, discord, discord_id, req.params.id);
+  // user_id: allow explicit null to unlink, or a valid user id to link
+  let user_id = player.user_id;
+  if (req.body.user_id !== undefined) {
+    if (req.body.user_id === null || req.body.user_id === '' || req.body.user_id === 0) {
+      user_id = null;
+    } else {
+      const uid = Number(req.body.user_id);
+      if (!isNaN(uid) && uid > 0) {
+        const userExists = await db.prepare('SELECT id FROM users WHERE id = ?').get(uid);
+        if (!userExists) return res.status(400).json({ error: 'User not found' });
+        user_id = uid;
+      }
+    }
+  }
+  await db.prepare('UPDATE players SET name=?, team_id=?, is_rostered=?, position=?, number=?, discord=?, discord_id=?, user_id=? WHERE id=?')
+    .run(name, team_id, is_rostered, position, number, discord, discord_id, user_id, req.params.id);
   res.json({ ok: true });
 });
 
@@ -2786,6 +2786,14 @@ app.get('/api/admin/users/search', requireOwner, async (req, res) => {
   const users = await db.prepare(
     "SELECT id, username, discord, role FROM users WHERE username ILIKE ? ORDER BY username LIMIT 20"
   ).all(`${q}%`);
+  res.json(users);
+});
+
+// List all registered users (for admin link-player dropdown)
+app.get('/api/admin/users', requireOwner, async (_req, res) => {
+  const users = await db.prepare(
+    'SELECT id, username, discord FROM users ORDER BY username'
+  ).all();
   res.json(users);
 });
 

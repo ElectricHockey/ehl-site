@@ -622,6 +622,7 @@ async function loadPlayers() {
             data-number="${escAttr(p.number)}"
             data-discord="${escAttr(p.discord)}"
             data-discordid="${escAttr(p.discord_id)}"
+            data-userid="${escAttr(p.user_id)}"
           >Edit</button>
           <button class="btn-danger" style="font-size:0.78rem;padding:0.2rem 0.4rem;" onclick="deletePlayer(${p.id})">Delete</button>
         </td>
@@ -828,13 +829,24 @@ document.addEventListener('click', e => {
 document.addEventListener('click', e => {
   const btn = e.target.closest('[data-action="edit-custom-player"]');
   if (!btn) return;
-  const { pid, name, position, number, discord, discordid } = btn.dataset;
-  openEditModal({ type: 'player', id: Number(pid), name, position, number, discord: discord || '', discordId: discordid || '' });
+  const { pid, name, position, number, discord, discordid, userid } = btn.dataset;
+  openEditModal({ type: 'player', id: Number(pid), name, position, number, discord: discord || '', discordId: discordid || '', userId: userid ? Number(userid) : null });
 });
 
 // ── Edit player modal ─────────────────────────────────────────────────────
 
-function openEditModal({ type = 'user', id, username, name, platform, position, email, discord, discordId, number }) {
+// Cache of registered users for the "Link User" dropdown
+let _regUsersCache = null;
+async function _loadRegUsersForDropdown() {
+  if (_regUsersCache) return _regUsersCache;
+  try {
+    const res = await fetch(`${API}/admin/users`, { headers: adminHeaders() });
+    _regUsersCache = res.ok ? await res.json() : [];
+  } catch { _regUsersCache = []; }
+  return _regUsersCache;
+}
+
+async function openEditModal({ type = 'user', id, username, name, platform, position, email, discord, discordId, number, userId }) {
   const isCustom = type === 'player';
   document.getElementById('ep-id').value = id;
   document.getElementById('ep-type').value = type;
@@ -847,12 +859,19 @@ function openEditModal({ type = 'user', id, username, name, platform, position, 
   document.getElementById('ep-row-email').style.display     = isCustom ? 'none' : '';
   document.getElementById('ep-row-number').style.display    = isCustom ? '' : 'none';
   document.getElementById('ep-row-discordid').style.display = isCustom ? '' : 'none';
+  document.getElementById('ep-row-linkuser').style.display  = isCustom ? '' : 'none';
 
   // Populate fields
   if (isCustom) {
     document.getElementById('ep-name').value       = name || '';
     document.getElementById('ep-number').value     = number || '';
     document.getElementById('ep-discord-id').value = discordId || '';
+    // Populate the registered-user link dropdown
+    const users = await _loadRegUsersForDropdown();
+    const sel = document.getElementById('ep-linked-user');
+    sel.innerHTML = '<option value="">— Not linked —</option>' +
+      users.map(u => `<option value="${u.id}">${escAttr(u.username)}${u.discord ? ' (' + escAttr(u.discord) + ')' : ''}</option>`).join('');
+    sel.value = userId ? String(userId) : '';
   } else {
     document.getElementById('ep-username').value = username || '';
     document.getElementById('ep-platform').value = platform || 'xbox';
@@ -881,10 +900,12 @@ async function savePlayerEdit() {
     const name      = document.getElementById('ep-name').value.trim();
     const number    = document.getElementById('ep-number').value || null;
     const discordId = document.getElementById('ep-discord-id').value.trim() || null;
+    const linkedUser = document.getElementById('ep-linked-user').value;
+    const user_id = linkedUser ? Number(linkedUser) : null;
     if (!name) { errEl.textContent = 'Name cannot be empty'; errEl.style.display = ''; return; }
     const res = await fetch(`${API}/players/${id}`, {
       method: 'PATCH', headers: adminJsonHeaders(),
-      body: JSON.stringify({ name, position: position || null, number: number ? Number(number) : null, discord: discord || null, discord_id: discordId }),
+      body: JSON.stringify({ name, position: position || null, number: number ? Number(number) : null, discord: discord || null, discord_id: discordId, user_id }),
     });
     if (!res.ok) {
       const e = await res.json().catch(() => ({}));
@@ -910,6 +931,7 @@ async function savePlayerEdit() {
       return;
     }
     closeEditModal();
+    _regUsersCache = null; // Invalidate cache so dropdown refreshes on next open
     await loadRegPlayers();
     await loadPlayers();
   }
