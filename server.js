@@ -962,10 +962,10 @@ app.post('/api/players/offers/:id/accept', requirePlayer, async (req, res) => {
     const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.userId);
     await db.prepare('INSERT INTO players (name, user_id, team_id, is_rostered, position) VALUES (?, ?, ?, 1, ?)').run(user.username, req.userId, offer.team_id, user.position);
   }
-  const _txTeam = await db.prepare('SELECT name FROM teams WHERE id = ?').get(offer.team_id);
-  const _txUser = await db.prepare('SELECT username FROM users WHERE id = ?').get(req.userId);
-  if (_txTeam && _txUser) {
-    await db.prepare("INSERT INTO transactions (type, player_name, team_id, team_name) VALUES ('signing', ?, ?, ?)").run(_txUser.username, offer.team_id, _txTeam.name);
+  const signingTeam = await db.prepare('SELECT name FROM teams WHERE id = ?').get(offer.team_id);
+  const signingUser = await db.prepare('SELECT username FROM users WHERE id = ?').get(req.userId);
+  if (signingTeam && signingUser) {
+    await db.prepare("INSERT INTO transactions (type, player_name, team_id, team_name) VALUES ('signing', ?, ?, ?)").run(signingUser.username, offer.team_id, signingTeam.name);
   }
   res.json({ ok: true });
 });
@@ -983,9 +983,9 @@ app.delete('/api/teams/:id/roster/:playerId', requireTeamRole(['owner', 'gm']), 
   const player = await db.prepare('SELECT * FROM players WHERE id = ? AND team_id = ?').get(req.params.playerId, req.params.id);
   if (!player) return res.status(404).json({ error: 'Player not found on this team' });
   await db.prepare('UPDATE players SET team_id = NULL, is_rostered = 0 WHERE id = ?').run(req.params.playerId);
-  const _relTeam = await db.prepare('SELECT name FROM teams WHERE id = ?').get(req.params.id);
-  if (_relTeam) {
-    await db.prepare("INSERT INTO transactions (type, player_name, team_id, team_name) VALUES ('release', ?, ?, ?)").run(player.name, Number(req.params.id), _relTeam.name);
+  const releaseTeam = await db.prepare('SELECT name FROM teams WHERE id = ?').get(req.params.id);
+  if (releaseTeam) {
+    await db.prepare("INSERT INTO transactions (type, player_name, team_id, team_name) VALUES ('release', ?, ?, ?)").run(player.name, Number(req.params.id), releaseTeam.name);
   }
   res.json({ ok: true });
 });
@@ -2004,6 +2004,11 @@ app.patch('/api/players/:id', requireOwner, async (req, res) => {
 
 // ── Games ──────────────────────────────────────────────────────────────────
 
+/** Validate and normalise a game_time string (HH:MM UTC) or return null. */
+function parseGameTime(t) {
+  return t && /^\d{2}:\d{2}$/.test(t) ? t : null;
+}
+
 app.get('/api/games', async (req, res) => {
   const seasonId = req.query.season_id ? Number(req.query.season_id) : null;
   const status   = req.query.status   || null;
@@ -2033,7 +2038,7 @@ app.post('/api/games', requireAdmin, async (req, res) => {
   const gameStatus = status === 'complete' ? 'complete' : 'scheduled';
   const ot = is_overtime ? 1 : 0;
   const psi = playoff_series_id ? Number(playoff_series_id) : null;
-  const gt = game_time && /^\d{2}:\d{2}$/.test(game_time) ? game_time : null;
+  const gt = parseGameTime(game_time);
   const result = await db.prepare(
     'INSERT INTO games (home_team_id, away_team_id, home_score, away_score, date, status, season_id, is_overtime, playoff_series_id, game_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   ).run(home_team_id, away_team_id, home_score || 0, away_score || 0, date, gameStatus, season_id || null, ot, psi, gt);
@@ -2057,7 +2062,7 @@ app.patch('/api/games/:id', requireAdmin, async (req, res) => {
   const is_overtime = req.body.is_overtime !== undefined ? (req.body.is_overtime ? 1 : 0) : (game.is_overtime || 0);
   const is_forfeit  = req.body.is_forfeit  !== undefined ? (req.body.is_forfeit  ? 1 : 0) : (game.is_forfeit  || 0);
   const date = req.body.date !== undefined ? req.body.date : game.date;
-  const game_time = req.body.game_time !== undefined ? (req.body.game_time && /^\d{2}:\d{2}$/.test(req.body.game_time) ? req.body.game_time : null) : game.game_time;
+  const game_time = req.body.game_time !== undefined ? parseGameTime(req.body.game_time) : game.game_time;
   if (req.body.home_score !== undefined) {
     home_score = parseInt(req.body.home_score, 10);
     if (isNaN(home_score) || home_score < 0 || home_score > 99) return res.status(400).json({ error: 'home_score must be 0–99' });
@@ -2825,10 +2830,10 @@ app.get('/api/discord/callback', async (req, res) => {
       // Discord login: check if a user with this discord_id exists
       const existingUser = await db.prepare('SELECT id, username, platform FROM users WHERE discord_id = ?').get(discord_id);
       if (existingUser) {
-        const unlinkedPlayer2 = await db.prepare('SELECT id FROM players WHERE discord_id = ? AND user_id IS NULL LIMIT 1').get(discord_id);
-        if (unlinkedPlayer2) {
-          await db.prepare('UPDATE players SET user_id = ?, discord = ? WHERE id = ?').run(existingUser.id, discord, unlinkedPlayer2.id);
-        }
+      const unlinkedPlayerForLogin = await db.prepare('SELECT id FROM players WHERE discord_id = ? AND user_id IS NULL LIMIT 1').get(discord_id);
+      if (unlinkedPlayerForLogin) {
+        await db.prepare('UPDATE players SET user_id = ?, discord = ? WHERE id = ?').run(existingUser.id, discord, unlinkedPlayerForLogin.id);
+      }
         // Create a player session token and redirect straight to dashboard.
         // This avoids the fragile register.js → POST /api/players/login chain.
         const authToken = _signPlayerToken(existingUser.id);
