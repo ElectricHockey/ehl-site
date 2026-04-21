@@ -1218,7 +1218,8 @@ app.get('/api/teams/:id/records', async (req, res) => {
 
   async function singleSeasonRecord(col, agg, pos, orderDir, minGP) {
     const where = pos === 'G' ? "gps.position = 'G'" : "gps.position != 'G'";
-    const having = minGP ? `HAVING COUNT(DISTINCT gps.game_id) >= ${parseInt(minGP, 10)}` : '';
+    const having = minGP ? 'HAVING COUNT(DISTINCT gps.game_id) >= ?' : '';
+    const params = minGP ? [id, parseInt(minGP, 10)] : [id];
     return await db.prepare(`
       SELECT gps.player_name AS name,
         g.season_id, MAX(COALESCE(s.name, 'No Season')) AS season_name,
@@ -1230,7 +1231,7 @@ app.get('/api/teams/:id/records', async (req, res) => {
       WHERE gps.team_id = ? AND ${where} AND g.status IN ('complete','forfeit')
       GROUP BY gps.player_name, g.season_id ${having}
       ORDER BY value ${orderDir}, gp DESC LIMIT 1
-    `).get(id);
+    `).get(...params);
   }
 
   const career = {
@@ -1524,7 +1525,7 @@ app.get('/api/players/records/:name', async (req, res) => {
     `).all(...p);
     if (rows.some(r => r.name === name)) {
       const myRow = rows.find(r => r.name === name);
-      if (myRow.value === 0) return;
+      if (myRow.value === 0 || myRow.value === null) return;
       const co_holders = rows.filter(r => r.name !== name).map(r => r.name);
       holdings.push({ category, label, value: myRow.value, league_type: leagueType || 'all', season_type: seasonType, scope: 'league', co_holders });
     }
@@ -1552,7 +1553,7 @@ app.get('/api/players/records/:name', async (req, res) => {
     `).all(...params);
     if (rows.some(r => r.name === name)) {
       const myRow = rows.find(r => r.name === name);
-      if (myRow.value === 0) return;
+      if (myRow.value === 0 || myRow.value === null) return;
       const co_holders = rows.filter(r => r.name !== name).map(r => r.name);
       holdings.push({ category, label, value: myRow.value, season_name: myRow.season_name, league_type: leagueType || 'all', season_type: seasonType, scope: 'league', co_holders });
     }
@@ -1580,7 +1581,7 @@ app.get('/api/players/records/:name', async (req, res) => {
     `).all(...p);
     if (rows.some(r => r.name === name)) {
       const myRow = rows.find(r => r.name === name);
-      if (myRow.value === 0) return;
+      if (myRow.value === 0 || myRow.value === null) return;
       const co_holders = rows.filter(r => r.name !== name).map(r => r.name);
       holdings.push({ category, label, value: myRow.value, game_id: myRow.game_id, home_team: myRow.home_team, away_team: myRow.away_team, date: myRow.date, league_type: leagueType || 'all', season_type: seasonType, scope: 'league', co_holders });
     }

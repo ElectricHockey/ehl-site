@@ -388,7 +388,7 @@ function renderPlayerRecords(holdings) {
       return `<tr>
         <td style="color:#8b949e;padding:0.4rem 0.5rem;">${r.label}</td>
         <td style="padding:0.4rem 0.5rem;font-weight:700;color:#e3b341;">${fmtVal(r.label, r.value)}</td>
-        <td style="padding:0.4rem 0.5rem;font-size:0.8rem;color:#58a6ff;">${scope}${lt ? ' · ' + lt : ''}${r.season_type === 'playoffs' ? ' · <span style="color:#e3b341;">Playoffs</span>' : ' · Regular'}</td>
+        <td style="padding:0.4rem 0.5rem;font-size:0.8rem;color:#58a6ff;">${scope}${lt ? ' · ' + lt : ''}${r.season_type === 'playoffs' ? ' · <span style="color:#e3b341;">Playoffs</span>' : r.season_type === 'regular' ? ' · Regular' : ''}</td>
         <td style="padding:0.4rem 0.5rem;">${extra}${tiedWith}</td>
       </tr>`;
     }).join('');
