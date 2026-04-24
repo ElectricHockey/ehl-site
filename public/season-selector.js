@@ -36,15 +36,17 @@ const SeasonSelector = (() => {
   function onSeasonChange(cb) { _onChange = cb; }
 
   // Sort seasons so each regular season is immediately followed by its playoff season.
-  // Playoff seasons are auto-named "${regularSeason.name} Playoffs" by the server when
-  // a bracket is created; the `is_playoff` flag and name suffix are the link between them.
+  // Matches by parent_season_id (reliable) then falls back to name suffix.
   function _sortWithPlayoffs(seasons) {
     const regular = seasons.filter(s => !s.is_playoff);
     const playoff  = seasons.filter(s =>  s.is_playoff);
     const result = [];
     for (const s of regular) {
       result.push(s);
-      const pl = playoff.find(p => p.name === `${s.name} Playoffs`);
+      const pl = playoff.find(p =>
+        (p.parent_season_id != null && p.parent_season_id === s.id) ||
+        p.name === `${s.name} Playoffs`
+      );
       if (pl) result.push(pl);
     }
     // Any unmatched playoff seasons (edge case)
@@ -54,12 +56,12 @@ const SeasonSelector = (() => {
     return result;
   }
 
-  // Seasons come from the API already sorted by sort_order ASC, id ASC
-  // (matching the admin panel order). Just use them as-is.
+  // Seasons come from the API sorted by sort_order ASC, id ASC.
+  // Apply _sortWithPlayoffs so each playoff season appears directly after its parent.
   function _populateSeasonSelect(type) {
     const el = document.getElementById('season-select');
     if (!el) return;
-    const seasons = _seasonsCache[type] || [];
+    const seasons = _sortWithPlayoffs(_seasonsCache[type] || []);
     const key     = STORAGE_SEASON[type];
     if (seasons.length === 0) {
       el.innerHTML = '<option value="">No seasons</option>';

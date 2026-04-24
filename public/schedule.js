@@ -500,7 +500,7 @@ function renderPickerMatches(data, gameId) {
   currentPickerMatches = matches;
 
   if (matches.length === 0) {
-    body.innerHTML = `<p class="picker-empty">No recent EA private matches found for <strong>${game.home_team.name}</strong>. Make sure the EA Club ID is correct.</p>`;
+    body.innerHTML = `<p class="picker-empty">No recent EA private matches found for <strong>${game.home_team.name}</strong>. EA's private match API is currently non-functional for NHL 25 — this is a known issue on EA's end with no fix available yet. Stats must be entered manually.</p>`;
     return;
   }
 

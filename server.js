@@ -2758,7 +2758,7 @@ app.get('/api/games/:id/ea-matches', async (req, res) => {
       matches,
     });
   } catch (err) {
-    res.status(502).json({ error: 'Failed to fetch EA data', details: err.message });
+    res.status(502).json({ error: 'EA private match API unavailable. EA\'s club_private match history endpoint is currently non-functional for NHL 25 — this is a known issue on EA\'s end. Stats must be entered manually.', details: err.message });
   }
 });
 
