@@ -35,23 +35,25 @@ const SeasonSelector = (() => {
 
   function onSeasonChange(cb) { _onChange = cb; }
 
-  // Sort seasons so each regular season is immediately followed by its playoff season.
-  // Matches by parent_season_id (reliable) then falls back to name suffix.
+  // Sort seasons to match admin panel order: each playoff season appears BEFORE
+  // (above) its parent regular season.  Matches by parent_season_id first, then
+  // falls back to the name-suffix convention used by the bracket creator.
   function _sortWithPlayoffs(seasons) {
     const regular = seasons.filter(s => !s.is_playoff);
     const playoff  = seasons.filter(s =>  s.is_playoff);
+    const used = new Set();
     const result = [];
     for (const s of regular) {
-      result.push(s);
       const pl = playoff.find(p =>
         (p.parent_season_id != null && p.parent_season_id === s.id) ||
         p.name === `${s.name} Playoffs`
       );
-      if (pl) result.push(pl);
+      if (pl) { result.push(pl); used.add(pl); }  // playoff BEFORE regular (matches admin panel)
+      result.push(s);
     }
     // Any unmatched playoff seasons (edge case)
     for (const p of playoff) {
-      if (!result.includes(p)) result.push(p);
+      if (!used.has(p)) result.push(p);
     }
     return result;
   }
