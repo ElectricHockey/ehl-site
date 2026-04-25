@@ -1071,16 +1071,17 @@ function renderAdminSeriesRow(s, pl) {
 }
 
 async function updateSeriesSeeds(seriesId) {
-  const hn = document.getElementById(`high-seed-num-${seriesId}`)?.value;
-  const ln = document.getElementById(`low-seed-num-${seriesId}`)?.value;
-  if (hn === '' && ln === '') return;
+  const hnEl = document.getElementById(`high-seed-num-${seriesId}`);
+  const lnEl = document.getElementById(`low-seed-num-${seriesId}`);
+  if (!hnEl && !lnEl) return;
+  const body = {};
+  if (hnEl && hnEl.value !== '') body.high_seed_num = Number(hnEl.value);
+  if (lnEl && lnEl.value !== '') body.low_seed_num  = Number(lnEl.value);
+  if (Object.keys(body).length === 0) return;
   await fetch(`${API}/playoff-series/${seriesId}`, {
     method: 'PATCH',
     headers: adminJsonHeaders(),
-    body: JSON.stringify({
-      ...(hn !== '' && { high_seed_num: Number(hn) }),
-      ...(ln !== '' && { low_seed_num:  Number(ln) }),
-    }),
+    body: JSON.stringify(body),
   });
   await loadAdminPlayoffs();
 }
