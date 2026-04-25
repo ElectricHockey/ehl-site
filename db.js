@@ -367,7 +367,11 @@ async function initSchema() {
       penalty_shot_attempts INTEGER DEFAULT 0,
       penalty_shot_ga       INTEGER DEFAULT 0,
       breakaway_shots       INTEGER DEFAULT 0,
-      breakaway_saves       INTEGER DEFAULT 0
+      breakaway_saves       INTEGER DEFAULT 0,
+      saucer_passes         INTEGER DEFAULT 0,
+      pk_clears             INTEGER DEFAULT 0,
+      desperation_saves     INTEGER DEFAULT 0,
+      poke_check_saves      INTEGER DEFAULT 0
     )`,
     `CREATE TABLE IF NOT EXISTS season_player_stats (
       id              SERIAL PRIMARY KEY,
@@ -508,6 +512,42 @@ async function initSchema() {
   } catch (err) {
     if (!err.message || !err.message.includes('already exists')) {
       console.warn('[db] Migration warning (teams abbreviation):', err.message);
+    }
+  }
+
+  // Add saucer_passes to game_player_stats
+  try {
+    await pool.query('ALTER TABLE game_player_stats ADD COLUMN saucer_passes INTEGER DEFAULT 0');
+  } catch (err) {
+    if (!err.message || !err.message.includes('already exists')) {
+      console.warn('[db] Migration warning (game_player_stats saucer_passes):', err.message);
+    }
+  }
+
+  // Add pk_clears to game_player_stats
+  try {
+    await pool.query('ALTER TABLE game_player_stats ADD COLUMN pk_clears INTEGER DEFAULT 0');
+  } catch (err) {
+    if (!err.message || !err.message.includes('already exists')) {
+      console.warn('[db] Migration warning (game_player_stats pk_clears):', err.message);
+    }
+  }
+
+  // Add desperation_saves to game_player_stats
+  try {
+    await pool.query('ALTER TABLE game_player_stats ADD COLUMN desperation_saves INTEGER DEFAULT 0');
+  } catch (err) {
+    if (!err.message || !err.message.includes('already exists')) {
+      console.warn('[db] Migration warning (game_player_stats desperation_saves):', err.message);
+    }
+  }
+
+  // Add poke_check_saves to game_player_stats
+  try {
+    await pool.query('ALTER TABLE game_player_stats ADD COLUMN poke_check_saves INTEGER DEFAULT 0');
+  } catch (err) {
+    if (!err.message || !err.message.includes('already exists')) {
+      console.warn('[db] Migration warning (game_player_stats poke_check_saves):', err.message);
     }
   }
 
