@@ -197,11 +197,37 @@ function renderCareerTable(seasonTeamStats, isGoalie) {
     const ip = r.is_playoff ? 1 : 0;
     const key = `${r.season_id ?? 'none'}_${ip}`;
     if (!blockMap[key]) {
-      blockMap[key] = { season_id: r.season_id, season_name: r.season_name, is_playoff: ip, rows: [] };
+      blockMap[key] = {
+        season_id: r.season_id, season_name: r.season_name, is_playoff: ip,
+        _sort_order: r._sort_order ?? r.season_id ?? 0, rows: [],
+      };
       blocks.push(blockMap[key]);
     }
     blockMap[key].rows.push(r);
   }
+
+  // Reorder blocks to match admin panel order:
+  // regular seasons sorted oldest-first, each playoff block directly before its regular season.
+  function sortBlocksWithPlayoffs(blks) {
+    const regular = blks.filter(b => !b.is_playoff);
+    const playoff  = blks.filter(b =>  b.is_playoff);
+    regular.sort((a, b) => (a._sort_order || 0) - (b._sort_order || 0));
+    const used = new Set();
+    const result = [];
+    for (const s of regular) {
+      const pl = playoff.find(p =>
+        !used.has(p) && (
+          p.season_id === s.season_id ||
+          p.season_name === `${s.season_name} Playoffs`
+        )
+      );
+      if (pl) { result.push(pl); used.add(pl); }
+      result.push(s);
+    }
+    for (const p of playoff) { if (!used.has(p)) result.push(p); }
+    return result;
+  }
+  const orderedBlocks = sortBlocksWithPlayoffs(blocks);
 
   const regularRows = seasonTeamStats.filter(r => !r.is_playoff);
   const playoffRows = seasonTeamStats.filter(r => r.is_playoff);
@@ -213,7 +239,7 @@ function renderCareerTable(seasonTeamStats, isGoalie) {
   let html = `<div style="overflow-x:auto;max-width:100%;"><table class="season-stats-table">
     ${thead}<tbody>`;
 
-  for (const block of blocks) {
+  for (const block of orderedBlocks) {
     const { season_name, is_playoff, rows } = block;
 
     if (is_playoff) {
