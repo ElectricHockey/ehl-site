@@ -43,12 +43,18 @@
       const svp = sa > 0 ? sv / sa : 0;
       return Math.round(svp * 60 + sv * 0.5 + (Number(p.shutouts) || 0) * 10);
     }
-    return Math.round(
-      (Number(p.points) || 0) * 5 +
-      (Number(p.goals)  || 0) * 3 +
-      (Number(p.plus_minus) || 0) * 2 +
-      (Number(p.hits)   || 0) * 0.5
-    );
+    return Math.round(Math.max(0, Math.min(99,
+      60 +
+      Math.min((Number(p.goals)         || 0) * 7,   21) +
+      Math.min((Number(p.assists)        || 0) * 4,   14) +
+      Math.max(Math.min((Number(p.plus_minus) || 0) * 3, 12), -12) +
+      Math.min((Number(p.shots)          || 0) * 0.5,  5) +
+      Math.min((Number(p.hits)           || 0) * 0.5,  5) +
+      Math.min((Number(p.blocked_shots)  || 0) * 1.5,  6) +
+      Math.min((Number(p.takeaways)      || 0) * 1.5,  6) -
+      Math.min((Number(p.giveaways)      || 0) * 2,    8) -
+      Math.min((Number(p.pim)            || 0) * 0.5,  5)
+    )));
   }
 
   function ratingStyle(v) {
