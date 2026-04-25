@@ -695,10 +695,11 @@ app.post('/api/teams', requireOwner, logoUpload.single('logo'), async (req, res)
   const color1 = (body.color1 || '').trim();
   const color2 = (body.color2 || '').trim();
   const league_type = (body.league_type || '').trim();
+  const abbreviation = (body.abbreviation || '').trim().slice(0, 5);
   const result = await db.prepare(
-    'INSERT INTO teams (name, conference, division, ea_club_id, logo_url, color1, color2, league_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(name, conference, division, ea_club_id, logo_url, color1, color2, league_type);
-  res.status(201).json({ id: result.lastInsertRowid, name, conference, division, ea_club_id, logo_url, color1, color2, league_type });
+    'INSERT INTO teams (name, conference, division, ea_club_id, logo_url, color1, color2, league_type, abbreviation) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(name, conference, division, ea_club_id, logo_url, color1, color2, league_type, abbreviation);
+  res.status(201).json({ id: result.lastInsertRowid, name, conference, division, ea_club_id, logo_url, color1, color2, league_type, abbreviation });
 });
 
 app.patch('/api/teams/:id', requireOwner, logoUpload.single('logo'), async (req, res) => {
@@ -712,6 +713,7 @@ app.patch('/api/teams/:id', requireOwner, logoUpload.single('logo'), async (req,
   const color1 = body.color1 !== undefined ? (body.color1 || '').trim() : (team.color1 || '');
   const color2 = body.color2 !== undefined ? (body.color2 || '').trim() : (team.color2 || '');
   const league_type = body.league_type !== undefined ? (body.league_type || '').trim() : (team.league_type || '');
+  const abbreviation = body.abbreviation !== undefined ? (body.abbreviation || '').trim().slice(0, 5) : (team.abbreviation || '');
   let logo_url = team.logo_url;
   if (req.file) {
     const ext = path.extname(req.file.originalname).toLowerCase();
@@ -722,8 +724,8 @@ app.patch('/api/teams/:id', requireOwner, logoUpload.single('logo'), async (req,
   } else if (body.logo_url !== undefined) {
     logo_url = body.logo_url || null;
   }
-  await db.prepare('UPDATE teams SET name=?, conference=?, division=?, ea_club_id=?, logo_url=?, color1=?, color2=?, league_type=? WHERE id=?')
-    .run(name, conference, division, ea_club_id, logo_url, color1, color2, league_type, req.params.id);
+  await db.prepare('UPDATE teams SET name=?, conference=?, division=?, ea_club_id=?, logo_url=?, color1=?, color2=?, league_type=?, abbreviation=? WHERE id=?')
+    .run(name, conference, division, ea_club_id, logo_url, color1, color2, league_type, abbreviation, req.params.id);
   res.json({ updated: true });
 });
 
@@ -2435,15 +2437,15 @@ async function getPlayoffBracket(playoffId) {
   const playoff = await db.prepare('SELECT * FROM playoffs WHERE id = ?').get(playoffId);
   if (!playoff) return null;
   const teams = await db.prepare(`
-    SELECT pt.seed, t.id AS team_id, t.name, t.logo_url, t.color1, t.color2
+    SELECT pt.seed, t.id AS team_id, t.name, t.abbreviation, t.logo_url, t.color1, t.color2
     FROM playoff_teams pt JOIN teams t ON pt.team_id = t.id
     WHERE pt.playoff_id = ? ORDER BY pt.seed
   `).all(playoffId);
   const allSeries = await db.prepare(`
     SELECT ps.*,
-      ht.name AS high_seed_name, ht.logo_url AS high_seed_logo,
+      ht.name AS high_seed_name, ht.abbreviation AS high_seed_abbrev, ht.logo_url AS high_seed_logo,
       ht.color1 AS high_seed_color1, ht.color2 AS high_seed_color2,
-      lt.name AS low_seed_name, lt.logo_url AS low_seed_logo,
+      lt.name AS low_seed_name, lt.abbreviation AS low_seed_abbrev, lt.logo_url AS low_seed_logo,
       lt.color1 AS low_seed_color1, lt.color2 AS low_seed_color2,
       wt.name AS winner_name
     FROM playoff_series ps
@@ -2710,6 +2712,21 @@ app.get('/api/playoff-series/:id/games', async (req, res) => {
     ORDER BY g.date, g.id
   `).all(req.params.id);
   res.json(games);
+});
+
+// PATCH /api/playoffs/:playoffId/teams/:teamId – update a playoff team's seed
+app.patch('/api/playoffs/:playoffId/teams/:teamId', requireOwner, async (req, res) => {
+  const { seed } = req.body;
+  if (seed === undefined || seed === null || isNaN(Number(seed))) {
+    return res.status(400).json({ error: 'seed must be a number' });
+  }
+  const row = await db.prepare(
+    'SELECT id FROM playoff_teams WHERE playoff_id = ? AND team_id = ?'
+  ).get(req.params.playoffId, req.params.teamId);
+  if (!row) return res.status(404).json({ error: 'Team not in this playoff' });
+  await db.prepare('UPDATE playoff_teams SET seed = ? WHERE playoff_id = ? AND team_id = ?')
+    .run(Number(seed), req.params.playoffId, req.params.teamId);
+  res.json({ ok: true });
 });
 
 // DELETE /api/playoffs/:id

@@ -494,6 +494,15 @@ async function initSchema() {
     }
   }
 
+  // Add abbreviation to teams
+  try {
+    await pool.query("ALTER TABLE teams ADD COLUMN abbreviation TEXT DEFAULT ''");
+  } catch (err) {
+    if (!err.message || !err.message.includes('already exists')) {
+      console.warn('[db] Migration warning (teams abbreviation):', err.message);
+    }
+  }
+
   console.log('[db] Schema initialised.');
 }
 

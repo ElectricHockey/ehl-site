@@ -23,7 +23,7 @@ async function loadGame() {
   const params = new URLSearchParams(window.location.search);
   const id = params.get('id');
   if (!id) {
-    root.innerHTML = '<p class="error">No game ID. <a href="recent-scores.html">Back to Recent Scores</a></p>';
+    root.innerHTML = '<p class="error">No game ID. <a href="javascript:history.back()">Back</a></p>';
     return;
   }
 

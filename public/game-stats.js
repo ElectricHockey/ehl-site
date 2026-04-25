@@ -216,9 +216,19 @@
 
   // ── Possession pie chart (CSS conic-gradient, by position) ──────────────
 
-  function renderPossessionPie(normalized, title) {
-    const posColors = { LW: '#56d364', C: '#58a6ff', RW: '#e3b341', LD: '#52cadb', RD: '#f0883e' };
+  function renderPossessionPie(normalized, title, teamColor) {
+    // Shade each position segment relative to the team's primary color so
+    // the pie clearly belongs to that team while still distinguishing positions.
+    const baseColor = teamColor || '#58a6ff';
     const posOrder  = ['LW', 'C', 'RW', 'LD', 'RD'];
+    // Generate shades: lightest for first position, darkest for last
+    const shades = posOrder.map((_, i) => {
+      const ratio = posOrder.length <= 1 ? 0.5 : i / (posOrder.length - 1);
+      return blendColor(baseColor, ratio);
+    });
+    const posColors = {};
+    posOrder.forEach((pos, i) => { posColors[pos] = shades[i]; });
+
     const totals = {};
     let total = 0;
     normalized.forEach(p => {
@@ -257,6 +267,22 @@
       <div class="gs-pie-title">${title}</div>
       <div class="gs-pie-legend">${legend}</div>
     </div>`;
+  }
+
+  // Blend a hex color towards white (ratio=0) or black (ratio=1)
+  function blendColor(hex, ratio) {
+    hex = hex.replace('#', '');
+    if (hex.length === 3) hex = hex.split('').map(c => c + c).join('');
+    const r = parseInt(hex.slice(0, 2), 16);
+    const g = parseInt(hex.slice(2, 4), 16);
+    const b = parseInt(hex.slice(4, 6), 16);
+    // Blend between a lightened version (ratio=0) and a darkened version (ratio=1)
+    const light = 0.55, dark = 0.35;
+    const t = light + (dark - light) * ratio;
+    const mix = (c, bg) => Math.round(c * t + bg * (1 - t));
+    const bg = ratio < 0.5 ? 255 : 0;
+    const nr = mix(r, bg); const ng = mix(g, bg); const nb = mix(b, bg);
+    return `#${nr.toString(16).padStart(2,'0')}${ng.toString(16).padStart(2,'0')}${nb.toString(16).padStart(2,'0')}`;
   }
 
   // ── Team comparison panel (left column) ─────────────────────────────────
@@ -322,8 +348,8 @@
     </table>`;
 
     const pies = `<div class="gs-pies-row">
-      ${renderPossessionPie(homeNorm, 'Puck Possession')}
-      ${renderPossessionPie(awayNorm, 'Puck Possession')}
+      ${renderPossessionPie(homeNorm, 'Puck Possession', hc)}
+      ${renderPossessionPie(awayNorm, 'Puck Possession', ac)}
     </div>`;
 
     return `<div class="gs-comparison-panel">
