@@ -248,6 +248,7 @@ button:hover, .btn:hover { opacity: 0.85; }
 .conference-block { margin-bottom: 2.5rem; }
 .division-block { margin-bottom: 1.5rem; }
 .clinch-badge { font-size: 0.72rem; font-weight: 700; margin-left: 0.3rem; vertical-align: middle; }
+.playoff-cutoff-row td { padding: 0 !important; height: 0; position: relative; }
 
 /* ── Hero (index page) ────────────────────────────────────── */
 .hero {

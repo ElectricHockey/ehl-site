@@ -24,13 +24,13 @@ const streakStyle = s => s && s.startsWith('W')
   ? 'font-weight:600;color:#3fb950;'
   : s && s.startsWith('L') ? 'font-weight:600;color:#f85149;' : '';
 
-// ── Clinch indicators (NHL-style) ─────────────────────────────────────────
+// ── Clinch indicators (NHL-style, capital letters) ────────────────────────
 const CLINCH_INFO = {
-  p: { label: '– p', title: 'Clinched Presidents\' Trophy (best record)', legend: 'p – Presidents\' Trophy (best record)',         color: '#e3b341' },
-  z: { label: '– z', title: 'Clinched conference',                        legend: 'z – Clinched conference',                       color: '#58a6ff' },
-  y: { label: '– y', title: 'Clinched division',                          legend: 'y – Clinched division',                         color: '#3fb950' },
-  x: { label: '– x', title: 'Clinched playoff spot',                      legend: 'x – Clinched playoff spot',                     color: '#3fb950' },
-  e: { label: '– e', title: 'Eliminated from playoff contention',         legend: 'e – Eliminated from playoff contention',        color: '#f85149' },
+  P: { label: '– P', title: 'Clinched Presidents\' Trophy (best record)', legend: 'P – Presidents\' Trophy (best record)',         color: '#e3b341' },
+  Z: { label: '– Z', title: 'Clinched conference',                        legend: 'Z – Clinched conference',                       color: '#58a6ff' },
+  Y: { label: '– Y', title: 'Clinched division',                          legend: 'Y – Clinched division',                         color: '#3fb950' },
+  X: { label: '– X', title: 'Clinched playoff spot',                      legend: 'X – Clinched playoff spot',                     color: '#3fb950' },
+  E: { label: '– E', title: 'Eliminated from playoff contention',         legend: 'E – Eliminated from playoff contention',        color: '#f85149' },
 };
 
 function clinchBadge(t) {
@@ -39,12 +39,29 @@ function clinchBadge(t) {
   return ` <span class="clinch-badge" style="color:${c.color};" title="${c.title}">${c.label}</span>`;
 }
 
+// ── Sort helpers ──────────────────────────────────────────────────────────
+
+// Convert streak string "W5" / "L3" / "—" to a sortable number
+function streakValue(s) {
+  if (!s || s === '—') return 0;
+  const m = s.match(/^([WL])(\d+)$/);
+  if (!m) return 0;
+  return m[1] === 'W' ? parseInt(m[2], 10) : -parseInt(m[2], 10);
+}
+
+// Convert record string "W-L-OTL" to pts (W×2 + OTL×1)
+function recordPts(r) {
+  if (!r) return 0;
+  const p = (r + '').split('-').map(Number);
+  return (p[0] || 0) * 2 + (p[2] || 0);
+}
+
 // ── Sort state ────────────────────────────────────────────────────────────
-let _standingsData = null;
+let _standingsData = null;   // { teams, playoff_cutoff }
 let _sortCol = 'pts';
 let _sortDir = 'desc';
 
-const SORT_DEFAULTS = { name: 'asc', streak: 'asc', home_record: 'asc', away_record: 'asc' };
+const SORT_DEFAULTS = { name: 'asc' };
 
 function sortTeams(teams, col, dir) {
   return [...teams].sort((a, b) => {
@@ -54,6 +71,12 @@ function sortTeams(teams, col, dir) {
     } else if (col === 'name') {
       va = (a.name || '').toLowerCase(); vb = (b.name || '').toLowerCase();
       return dir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
+    } else if (col === 'streak') {
+      va = streakValue(a.streak); vb = streakValue(b.streak);
+    } else if (col === 'home_record') {
+      va = recordPts(a.home_record); vb = recordPts(b.home_record);
+    } else if (col === 'away_record') {
+      va = recordPts(a.away_record); vb = recordPts(b.away_record);
     } else {
       va = a[col] ?? 0; vb = b[col] ?? 0;
     }
@@ -68,15 +91,16 @@ function thSortable(col, label, title) {
   return `<th style="cursor:pointer;user-select:none;white-space:nowrap;${active ? 'color:#58a6ff;' : ''}"${titleAttr} onclick="handleSortClick('${col}')">${label}${arrow}</th>`;
 }
 
+// Column order: #, Team, GP, W, L, OTL, OTW, PTS, GF, GA, DIFF, STK, HOME, AWAY
 function buildThead() {
   return `<thead><tr>
     ${thSortable('rank', '#', 'Rank')}
     ${thSortable('name', 'Team')}
     ${thSortable('gp', 'GP', 'Games Played')}
     ${thSortable('w', 'W', 'Wins')}
-    ${thSortable('otw', 'OTW', 'Overtime wins (included in W)')}
     ${thSortable('l', 'L', 'Losses')}
     ${thSortable('otl', 'OTL', 'Overtime Losses')}
+    ${thSortable('otw', 'OTW', 'Overtime wins (included in W)')}
     ${thSortable('pts', 'PTS', 'Points')}
     ${thSortable('gf', 'GF', 'Goals For')}
     ${thSortable('ga', 'GA', 'Goals Against')}
@@ -94,9 +118,9 @@ function makeRow(t, rank) {
     <td>${logoHtml(t)}<a href="team.html?id=${t.id}">${t.name}</a>${clinchBadge(t)}</td>
     <td>${t.gp}</td>
     <td>${t.w}</td>
-    <td style="color:#8b949e;">${t.otw || 0}</td>
     <td>${t.l}</td>
     <td style="color:#8b949e;">${t.otl || 0}</td>
+    <td style="color:#8b949e;">${t.otw || 0}</td>
     <td><strong>${t.pts}</strong></td>
     <td>${t.gf}</td><td>${t.ga}</td>
     <td>${diff >= 0 ? '+' : ''}${diff}</td>
@@ -106,10 +130,15 @@ function makeRow(t, rank) {
   </tr>`;
 }
 
+// A horizontal "playoff line" separator row spanning all columns
+const PLAYOFF_LINE_ROW = `<tr class="playoff-cutoff-row"><td colspan="14" style="padding:0;height:0;border-top:2px solid #58a6ff;position:relative;">
+  <span style="position:absolute;left:6px;top:-9px;font-size:0.68rem;color:#58a6ff;background:#0d1117;padding:0 4px;white-space:nowrap;">── Playoff Line ──</span>
+</td></tr>`;
+
 function clinchLegend(teams) {
   const present = new Set(teams.map(t => t.clinch).filter(Boolean));
   if (present.size === 0) return '';
-  const items = ['p', 'z', 'y', 'x', 'e']
+  const items = ['P', 'Z', 'Y', 'X', 'E']
     .filter(k => present.has(k))
     .map(k => {
       const c = CLINCH_INFO[k];
@@ -120,22 +149,35 @@ function clinchLegend(teams) {
   </div>`;
 }
 
-function buildStandingsHtml(teams) {
-  if (!teams) return '<p style="color:#8b949e">Select a season above to view standings.</p>';
-  if (teams.length === 0) return '<p style="color:#8b949e">No standings data for this season yet.</p>';
+function buildStandingsHtml(data) {
+  if (!data) return '<p style="color:#8b949e">Select a season above to view standings.</p>';
+  const teams = data.teams || data;   // handle both {teams,playoff_cutoff} and bare array
+  const cutoff = data.playoff_cutoff ?? null;
+
+  if (!teams || teams.length === 0) return '<p style="color:#8b949e">No standings data for this season yet.</p>';
 
   const hasGroups = teams.some(t => t.conference || t.division);
   const thead = buildThead();
 
   if (!hasGroups) {
     const sorted = _sortCol === 'rank'
-      ? sortTeams(teams, 'pts', 'desc')         // rank col = default pts sort
+      ? sortTeams(teams, 'pts', 'desc')
       : sortTeams(teams, _sortCol, _sortDir);
-    const rows = sorted.map((t, i) => makeRow(t, i + 1)).join('');
+    let rows = '';
+    sorted.forEach((t, i) => {
+      // Insert playoff line AFTER the last in-playoff team (between rank N and N+1)
+      if (cutoff && i === cutoff) rows += PLAYOFF_LINE_ROW;
+      rows += makeRow(t, i + 1);
+    });
     return `<div style="overflow-x:auto;"><table>${thead}<tbody>${rows}</tbody></table></div>${clinchLegend(teams)}`;
   }
 
   // Grouped by conference → division
+  // Build a global pts-sort order to know which teams are in the top-N overall
+  const globalOrder = sortTeams(teams, 'pts', 'desc');
+  const globalRank = {};
+  globalOrder.forEach((t, i) => { globalRank[t.id] = i + 1; });
+
   const conferences = {};
   for (const t of teams) {
     const conf = t.conference || 'Unassigned';
@@ -153,7 +195,20 @@ function buildStandingsHtml(teams) {
         ? sortTeams(conferences[conf][div], 'pts', 'desc')
         : sortTeams(conferences[conf][div], _sortCol, _sortDir);
       html += `<div style="overflow-x:auto;"><table>${thead}<tbody>`;
-      group.forEach((t, i) => { html += makeRow(t, i + 1); });
+      let cutoffInserted = false;
+      group.forEach((t, i) => {
+        // Insert playoff line between the last in-playoff team and the first out-of-playoff team
+        // Use overall global rank to determine the cutoff position within this group
+        if (cutoff && !cutoffInserted) {
+          const prevIn = i > 0 && globalRank[group[i - 1].id] <= cutoff;
+          const currOut = globalRank[t.id] > cutoff;
+          if ((i === 0 && currOut) || (prevIn && currOut)) {
+            html += PLAYOFF_LINE_ROW;
+            cutoffInserted = true;
+          }
+        }
+        html += makeRow(t, i + 1);
+      });
       html += '</tbody></table></div>';
       if (div) html += '</div>';
     }
@@ -180,7 +235,7 @@ async function fetchStandings(seasonId) {
   try {
     const res = await fetch(`${API}/standings?season_id=${seasonId}`);
     if (!res.ok) return null;
-    return await res.json();
+    return await res.json();   // { teams: [...], playoff_cutoff: N|null }
   } catch { return null; }
 }
 

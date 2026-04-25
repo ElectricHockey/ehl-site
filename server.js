@@ -2442,39 +2442,43 @@ async function calcStandings(seasonId) {
         t.clinch = null;
 
         if (rank <= N) {
-          // p – clinched Presidents' Trophy (best record, no one can catch)
+          // P – clinched Presidents' Trophy (best record in league, no one can surpass)
+          // "surpass" = reach more pts, OR tie pts with same-or-more wins (tiebreaker)
           if (rank === 1) {
-            const canPass = sorted.slice(1).some(o => o.pts + 2 * o.remaining >= t.pts);
-            if (!canPass) { t.clinch = 'p'; continue; }
+            const canPass = sorted.slice(1).some(o =>
+              o.pts + 2 * o.remaining > t.pts ||
+              (o.pts + 2 * o.remaining === t.pts && o.w + o.remaining >= t.w)
+            );
+            if (!canPass) { t.clinch = 'P'; continue; }
           }
 
-          // z – clinched conference title (first in conf, no conf peer can catch)
+          // Z – clinched conference title (first in conf, no conf peer can catch)
           if (t.conference) {
             const confPeers = sorted.filter(o => o.id !== t.id && o.conference === t.conference);
             const isConfLeader = confPeers.length > 0 && confPeers.every(o => o.pts < t.pts || (o.pts === t.pts && o.w < t.w));
             if (isConfLeader && !confPeers.some(o => o.pts + 2 * o.remaining >= t.pts)) {
-              t.clinch = 'z'; continue;
+              t.clinch = 'Z'; continue;
             }
           }
 
-          // y – clinched division title (first in div, no div peer can catch)
+          // Y – clinched division title (first in div, no div peer can catch)
           if (t.division && t.conference) {
             const divPeers = sorted.filter(o => o.id !== t.id && o.division === t.division && o.conference === t.conference);
             const isDivLeader = divPeers.length > 0 && divPeers.every(o => o.pts < t.pts || (o.pts === t.pts && o.w < t.w));
             if (isDivLeader && !divPeers.some(o => o.pts + 2 * o.remaining >= t.pts)) {
-              t.clinch = 'y'; continue;
+              t.clinch = 'Y'; continue;
             }
           }
 
-          // x – clinched a playoff spot (no team outside top N can reach this team)
+          // X – clinched a playoff spot (no team outside top N can reach this team)
           const outside = sorted.slice(N);
           if (!outside.some(o => o.pts + 2 * o.remaining >= t.pts)) {
-            t.clinch = 'x';
+            t.clinch = 'X';
           }
         } else {
-          // e – mathematically eliminated (max possible pts < current pts of last playoff team)
+          // E – mathematically eliminated (max possible pts < current pts of last playoff team)
           if (t.pts + 2 * t.remaining < sorted[N - 1].pts) {
-            t.clinch = 'e';
+            t.clinch = 'E';
           }
         }
       }
@@ -2488,7 +2492,13 @@ async function calcStandings(seasonId) {
 
 app.get('/api/standings', async (req, res) => {
   const seasonId = req.query.season_id ? Number(req.query.season_id) : null;
-  res.json(await calcStandings(seasonId));
+  const teams = await calcStandings(seasonId);
+  let playoff_cutoff = null;
+  if (seasonId) {
+    const pc = await db.prepare('SELECT teams_qualify FROM playoffs WHERE season_id = ?').get(seasonId);
+    if (pc) playoff_cutoff = Math.min(pc.teams_qualify, teams.length);
+  }
+  res.json({ teams, playoff_cutoff });
 });
 
 // GET /api/seasons/:id/team-conf – return all teams for this season's league type

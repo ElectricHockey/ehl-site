@@ -55,7 +55,8 @@ async function loadMiniStandings(seasonId, rootId) {
   try {
     const res = await fetch(`${API}/standings?season_id=${seasonId}`);
     if (!res.ok) { root.innerHTML = '<p style="color:#8b949e;font-size:0.88rem;">No standings yet.</p>'; return; }
-    const teams = await res.json();
+    const data = await res.json();
+    const teams = data.teams || data;   // handle both {teams,...} and bare array
     if (!teams || !teams.length) { root.innerHTML = '<p style="color:#8b949e;font-size:0.88rem;">No standings data yet.</p>'; return; }
     const sorted = [...teams].sort((a, b) => b.pts - a.pts || b.w - a.w).slice(0, 8);
     root.innerHTML = `<div style="overflow-x:auto;"><table class="home-standings-table">
