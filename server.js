@@ -1148,6 +1148,17 @@ const SKATER_SELECT = `
   MAX(t.color1) AS team_color1, MAX(t.color2) AS team_color2, MAX(gps.position) AS position,
   COUNT(DISTINCT gps.game_id) AS gp,
   ROUND(AVG(CASE WHEN gps.overall_rating > 0 THEN CAST(gps.overall_rating AS NUMERIC)
+               WHEN gps.offensive_rating > 0 AND gps.defensive_rating > 0 AND gps.team_play_rating > 0
+                 THEN GREATEST(0.0, LEAST(99.0,
+                   CASE WHEN gps.position ILIKE '%defense%'
+                     THEN (CAST(gps.offensive_rating AS NUMERIC)
+                           + CAST(gps.defensive_rating AS NUMERIC) * 2.0
+                           + CAST(gps.team_play_rating AS NUMERIC) * 1.5) / 4.5
+                     ELSE (CAST(gps.offensive_rating AS NUMERIC) * 2.0
+                           + CAST(gps.defensive_rating AS NUMERIC)
+                           + CAST(gps.team_play_rating AS NUMERIC) * 1.5) / 4.5
+                   END
+                 ))
                ELSE GREATEST(0.0, LEAST(99.0,
                  60.0
                  + LEAST(CAST(gps.goals AS NUMERIC) * 7.0, 21.0)
@@ -1235,6 +1246,12 @@ const GOALIE_SELECT = `
     THEN ROUND(CAST(SUM(gps.shots_against) AS NUMERIC)/COUNT(DISTINCT gps.game_id),1)
     ELSE NULL END AS shots_per_game,
   ROUND(AVG(CASE WHEN gps.overall_rating > 0 THEN CAST(gps.overall_rating AS NUMERIC)
+               WHEN gps.defensive_rating > 0 AND gps.offensive_rating > 0 AND gps.team_play_rating > 0
+                 THEN GREATEST(0.0, LEAST(99.0,
+                   (CAST(gps.defensive_rating AS NUMERIC) * 2.0
+                    + CAST(gps.offensive_rating AS NUMERIC)
+                    + CAST(gps.team_play_rating AS NUMERIC) * 1.5) / 4.5
+                 ))
                WHEN gps.shots_against > 0 THEN GREATEST(0.0, LEAST(99.0,
                  60.0
                  + (CAST(gps.shots_against - gps.goals_against AS NUMERIC) / CAST(gps.shots_against AS NUMERIC) * 100.0 - 88.0) * 3.0
@@ -2263,6 +2280,17 @@ app.get('/api/stats/leaders', async (req, res) => {
       COALESCE(MAX(u.position), MAX(gps.position)) AS position,
       COUNT(DISTINCT gps.game_id) AS gp,
       ROUND(AVG(CASE WHEN gps.overall_rating > 0 THEN CAST(gps.overall_rating AS NUMERIC)
+                     WHEN gps.offensive_rating > 0 AND gps.defensive_rating > 0 AND gps.team_play_rating > 0
+                       THEN GREATEST(0.0, LEAST(99.0,
+                         CASE WHEN gps.position ILIKE '%defense%'
+                           THEN (CAST(gps.offensive_rating AS NUMERIC)
+                                 + CAST(gps.defensive_rating AS NUMERIC) * 2.0
+                                 + CAST(gps.team_play_rating AS NUMERIC) * 1.5) / 4.5
+                           ELSE (CAST(gps.offensive_rating AS NUMERIC) * 2.0
+                                 + CAST(gps.defensive_rating AS NUMERIC)
+                                 + CAST(gps.team_play_rating AS NUMERIC) * 1.5) / 4.5
+                         END
+                       ))
                      ELSE GREATEST(0.0, LEAST(99.0,
                        60.0
                        + LEAST(CAST(gps.goals AS NUMERIC) * 7.0, 21.0)
@@ -2360,6 +2388,12 @@ app.get('/api/stats/leaders', async (req, res) => {
       SUM(gps.goalie_otw) AS goalie_otw,
       SUM(gps.goalie_otl) AS goalie_otl,
       ROUND(AVG(CASE WHEN gps.overall_rating > 0 THEN CAST(gps.overall_rating AS NUMERIC)
+                     WHEN gps.defensive_rating > 0 AND gps.offensive_rating > 0 AND gps.team_play_rating > 0
+                       THEN GREATEST(0.0, LEAST(99.0,
+                         (CAST(gps.defensive_rating AS NUMERIC) * 2.0
+                          + CAST(gps.offensive_rating AS NUMERIC)
+                          + CAST(gps.team_play_rating AS NUMERIC) * 1.5) / 4.5
+                       ))
                      WHEN gps.shots_against > 0 THEN GREATEST(0.0, LEAST(99.0,
                        60.0
                        + (CAST(gps.shots_against - gps.goals_against AS NUMERIC) / CAST(gps.shots_against AS NUMERIC) * 100.0 - 88.0) * 3.0

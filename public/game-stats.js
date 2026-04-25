@@ -28,13 +28,19 @@
   // ── Rating colour helpers ───────────────────────────────────────────────
 
   // Returns the overall rating for a player.  Uses the EA-stored overall_rating when
-  // available (most accurate), falling back to an average of the component ratings,
-  // then falling back to a stat-based score when no ratings are present.
+  // available (most accurate), then falls back to position-weighted sub-ratings,
+  // then to a stat-based score when no ratings are present.
   function computeOvr(p) {
     if (p.overall_rating && p.overall_rating > 0) return p.overall_rating;
-    const vals = [p.offensive_rating, p.defensive_rating, p.team_play_rating]
-      .map(Number).filter(v => v > 0);
-    if (vals.length) return Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
+    const off = Number(p.offensive_rating) || 0;
+    const def = Number(p.defensive_rating) || 0;
+    const tpl = Number(p.team_play_rating) || 0;
+    if (off > 0 && def > 0 && tpl > 0) {
+      const isD = /defense/i.test(p.position || '') || /^[lr]d$/i.test(p.position || '');
+      const isG = /goalie/i.test(p.position || '') || (p.position || '').toUpperCase() === 'G';
+      if (isG || isD) return Math.round((def * 2 + off + tpl * 1.5) / 4.5);
+      return Math.round((off * 2 + def + tpl * 1.5) / 4.5);
+    }
     // Stat-based fallback so top-3 stars can still be selected
     const isG = (p.position || '').toUpperCase() === 'G';
     if (isG) {
