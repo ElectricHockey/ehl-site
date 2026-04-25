@@ -152,24 +152,7 @@ const db = {
 
 // ── Seed teams ──────────────────────────────────────────────────────────────
 
-const SEED_TEAMS = [
-  { name: '1K Knights',                league_type: 'threes', ea_club_id: 40577,  color1: '#ff1740', color2: '#aeaeb0' },
-  { name: 'Hope Skate Park',           league_type: 'threes', ea_club_id: 18810,  color1: '#6e2d71', color2: '#3a6e8c' },
-  { name: 'Montrescotia Buffalos',     league_type: 'threes', ea_club_id: 6021,   color1: '#db0228', color2: '#ffffff' },
-  { name: 'Cape Cod Rangers',          league_type: 'threes', ea_club_id: 5364,   color1: '#264d20', color2: '#ebd6a9' },
-  { name: 'Canadian Frostbytes',       league_type: 'threes', ea_club_id: 7176,   color1: '#032974', color2: '#31eff5' },
-  { name: 'Blood Sweat & Beers',       league_type: 'threes', ea_club_id: 18206,  color1: '#d5520b', color2: '#072a48' },
-  { name: 'Number 5 Orange',           league_type: 'threes', ea_club_id: 6021,   color1: '#fe8e01', color2: '#050404' },
-  { name: 'Cooper Gang HC',            league_type: 'threes', ea_club_id: 40779,  color1: '#023c7f', color2: '#ffffff' },
-  { name: 'Arizona Beauts',            league_type: 'threes', ea_club_id: 1055,   color1: '#7772a8', color2: '#1a1a1a' },
-  { name: 'Why So Sweaty',             league_type: 'threes', ea_club_id: 4793,   color1: '#d60c1f', color2: '#010103' },
-  { name: 'Reading Rizzzzzzzz',        league_type: 'threes', ea_club_id: 7126,   color1: '#274194', color2: '#c0be7d' },
-  { name: 'The Fresh Bake',            league_type: 'threes', ea_club_id: 19600,  color1: '#420c62', color2: '#efd310' },
-  { name: 'F around and Find Out',     league_type: 'threes', ea_club_id: 1273,   color1: '#d15701', color2: '#091c33' },
-  { name: 'NCHL PITTSBURGH PENGUINS',  league_type: 'threes', ea_club_id: 144152, color1: '#ffb81c', color2: '#000000' },
-  { name: 'Reverse HC',                league_type: 'threes', ea_club_id: 133450, color1: '#ceb164', color2: '#0d0d0c' },
-  { name: 'Blackout Bandits',          league_type: 'threes', ea_club_id: 14261,  color1: '#ff8121', color2: '#202020' },
-];
+const SEED_TEAMS = [];
 
 /** Run seed upserts — called once at startup from server.js. */
 async function seedTeams() {

@@ -60,10 +60,33 @@
       <button class="tab-btn"        data-tab="goalies" onclick="switchStatsTab('goalies')">Goalies</button>
     </div>
 
-    <div style="margin-bottom:1rem;">
+    <div style="display:flex;gap:0.6rem;flex-wrap:wrap;align-items:center;margin-bottom:1rem;">
       <input type="text" id="stats-search" placeholder="🔍 Filter by player name…"
-        style="background:#161b22;border:1px solid #30363d;border-radius:6px;color:#e6edf3;padding:0.45rem 0.75rem;font-size:0.9rem;width:260px;max-width:100%;"
+        style="background:#161b22;border:1px solid #30363d;border-radius:6px;color:#e6edf3;padding:0.45rem 0.75rem;font-size:0.9rem;width:220px;max-width:100%;"
         oninput="onStatsSearch(this.value)" />
+      <select id="stats-team-filter"
+        style="background:#161b22;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.45rem 0.65rem;font-size:0.88rem;"
+        onchange="onStatsTeamFilter(this.value)">
+        <option value="">All Teams</option>
+      </select>
+      <select id="stats-pos-filter"
+        style="background:#161b22;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.45rem 0.65rem;font-size:0.88rem;"
+        onchange="onStatsPosFilter(this.value)">
+        <option value="">All Positions</option>
+        <option value="C">C</option>
+        <option value="LW">LW</option>
+        <option value="RW">RW</option>
+        <option value="D">D</option>
+        <option value="LD">LD</option>
+        <option value="RD">RD</option>
+        <option value="F">F</option>
+      </select>
+      <label style="color:#8b949e;font-size:0.88rem;display:flex;align-items:center;gap:0.35rem;">
+        Min&nbsp;GP:
+        <input type="number" id="stats-min-gp" min="0" value="0"
+          style="background:#161b22;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.4rem 0.5rem;font-size:0.88rem;width:62px;"
+          oninput="onStatsMinGP(this.value)" />
+      </label>
     </div>
 
     <div id="tab-skaters" class="tab-section active">

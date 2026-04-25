@@ -596,6 +596,13 @@ app.post('/api/seasons/:id/reorder', requireOwner, async (req, res) => {
   const season = await db.prepare('SELECT * FROM seasons WHERE id = ?').get(req.params.id);
   if (!season) return res.status(404).json({ error: 'Season not found' });
 
+  // Playoff seasons are display-only children of their parent regular season;
+  // they always appear directly above their parent in the list and cannot be
+  // reordered independently (doing so corrupts the regular-season sort_order).
+  if (season.is_playoff) {
+    return res.status(400).json({ error: 'Playoff seasons cannot be reordered directly. Move the parent regular season instead.' });
+  }
+
   // Get only seasons of the same league_type so arrows move within the filtered view
   const lt = season.league_type || '';
   const all = lt
@@ -2627,21 +2634,23 @@ app.post('/api/playoffs/:id/advance-round', requireOwner, async (req, res) => {
   res.json(await getPlayoffBracket(req.params.id));
 });
 
-// PATCH /api/playoff-series/:id – update series wins (auto-sets winner)
+// PATCH /api/playoff-series/:id – update series wins and/or seed numbers (auto-sets winner)
 app.patch('/api/playoff-series/:id', requireAdmin, async (req, res) => {
   const s = await db.prepare('SELECT * FROM playoff_series WHERE id = ?').get(req.params.id);
   if (!s) return res.status(404).json({ error: 'Series not found' });
   const pl = await db.prepare('SELECT series_length FROM playoffs WHERE id = ?').get(s.playoff_id);
   const winsToWin = Math.ceil((pl ? pl.series_length : 7) / 2);
 
-  const hw = req.body.high_seed_wins !== undefined ? Number(req.body.high_seed_wins) : s.high_seed_wins;
-  const lw = req.body.low_seed_wins  !== undefined ? Number(req.body.low_seed_wins)  : s.low_seed_wins;
+  const hw  = req.body.high_seed_wins !== undefined ? Number(req.body.high_seed_wins) : s.high_seed_wins;
+  const lw  = req.body.low_seed_wins  !== undefined ? Number(req.body.low_seed_wins)  : s.low_seed_wins;
+  const hsn = req.body.high_seed_num  !== undefined ? Number(req.body.high_seed_num)  : s.high_seed_num;
+  const lsn = req.body.low_seed_num   !== undefined ? Number(req.body.low_seed_num)   : s.low_seed_num;
   let winner_id = null;
   if (hw >= winsToWin) winner_id = s.high_seed_id;
   else if (lw >= winsToWin) winner_id = s.low_seed_id;
 
-  await db.prepare('UPDATE playoff_series SET high_seed_wins = ?, low_seed_wins = ?, winner_id = ? WHERE id = ?')
-    .run(hw, lw, winner_id, req.params.id);
+  await db.prepare('UPDATE playoff_series SET high_seed_wins = ?, low_seed_wins = ?, winner_id = ?, high_seed_num = ?, low_seed_num = ? WHERE id = ?')
+    .run(hw, lw, winner_id, hsn, lsn, req.params.id);
   res.json({ ok: true, winner_id });
 });
 
@@ -2758,7 +2767,7 @@ app.get('/api/games/:id/ea-matches', async (req, res) => {
       matches,
     });
   } catch (err) {
-    res.status(502).json({ error: 'Failed to fetch EA data', details: err.message });
+    res.status(502).json({ error: 'EA private match API unavailable. EA\'s club_private match history endpoint is currently non-functional for NHL 25 — this is a known issue on EA\'s end. Stats must be entered manually.', details: err.message });
   }
 });
 

@@ -13,6 +13,56 @@ let activeGameId = null;       // game detail
 let activePickerGameId = null; // picker
 let allGames = [];
 let currentPickerMatches = [];
+let scheduleTeamFilter = '';   // team id (as string) or '' for all
+let scheduleTimeFilter = 'all'; // 'all' | 'upcoming' | '15days'
+
+// ── Schedule filter helpers ────────────────────────────────────────────────
+
+function applyScheduleFilters(games) {
+  let out = games;
+  if (scheduleTeamFilter) {
+    const tid = Number(scheduleTeamFilter);
+    out = out.filter(g => g.home_team_id === tid || g.away_team_id === tid);
+  }
+  if (scheduleTimeFilter === 'upcoming') {
+    out = out.filter(g => g.status === 'scheduled');
+  } else if (scheduleTimeFilter === '15days') {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const lo = new Date(today); lo.setDate(lo.getDate() - 15);
+    const hi = new Date(today); hi.setDate(hi.getDate() + 15);
+    const loStr = lo.toISOString().split('T')[0];
+    const hiStr = hi.toISOString().split('T')[0];
+    out = out.filter(g => g.date >= loStr && g.date <= hiStr);
+  }
+  return out;
+}
+
+function populateTeamFilter(games) {
+  const sel = document.getElementById('schedule-team-filter');
+  if (!sel) return;
+  const seen = new Set();
+  const teams = [];
+  for (const g of games) {
+    if (!seen.has(g.home_team_id)) { seen.add(g.home_team_id); teams.push({ id: g.home_team_id, name: g.home_team_name }); }
+    if (!seen.has(g.away_team_id)) { seen.add(g.away_team_id); teams.push({ id: g.away_team_id, name: g.away_team_name }); }
+  }
+  teams.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  sel.innerHTML = '<option value="">All Teams</option>' +
+    teams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+  sel.value = scheduleTeamFilter;
+  if (sel.value !== scheduleTeamFilter) { sel.value = ''; scheduleTeamFilter = ''; }
+}
+
+function renderSchedule() {
+  // Compute total playoff rounds from the FULL (unfiltered) game list so that
+  // round labels (Quarterfinals / Semifinals / Final) remain correct even when
+  // the view is filtered down to a single team's games.
+  const allPlayoffNums = allGames
+    .filter(g => g.playoff_round_number != null && g.playoff_round_number > 0)
+    .map(g => g.playoff_round_number);
+  const totalRoundsHint = allPlayoffNums.length ? Math.max(...allPlayoffNums) : undefined;
+  renderScheduleSection('schedule-root', applyScheduleFilters(allGames), totalRoundsHint);
+}
 
 // ── Admin helpers ──────────────────────────────────────────────────────────
 
@@ -111,6 +161,8 @@ async function loadSchedule() {
   if (!sid) {
     root.innerHTML = '<p style="color:#8b949e">Select a league and season above to view the schedule.</p>';
     allGames = [];
+    scheduleTeamFilter = '';
+    populateTeamFilter([]);
     return;
   }
 
@@ -119,7 +171,13 @@ async function loadSchedule() {
     allGames = res.ok ? await res.json() : [];
   } catch { allGames = []; }
 
-  renderScheduleSection('schedule-root', allGames);
+  // Reset team filter when season changes (new season may have different teams)
+  scheduleTeamFilter = '';
+  const teamSel = document.getElementById('schedule-team-filter');
+  if (teamSel) teamSel.value = '';
+
+  populateTeamFilter(allGames);
+  renderSchedule();
 
   // Check for ?g= URL param to auto-open a game
   const params = new URLSearchParams(window.location.search);
@@ -200,7 +258,7 @@ function buildGameTable(games) {
   return html;
 }
 
-function renderScheduleSection(containerId, games) {
+function renderScheduleSection(containerId, games, totalRoundsHint) {
   const root = document.getElementById(containerId);
   if (!root) return;
   if (!games || games.length === 0) {
@@ -226,7 +284,9 @@ function renderScheduleSection(containerId, games) {
   }
   const roundNumbers = Object.keys(byRound).map(Number).sort((a, b) => a - b);
   const playoffRounds = roundNumbers.filter(r => r > 0);
-  const totalRounds = playoffRounds.length > 0 ? Math.max(...playoffRounds) : 1;
+  // Use the hint (derived from the full season game list) so round labels remain
+  // correct even when the view is filtered down to a single team's games.
+  const totalRounds = totalRoundsHint || (playoffRounds.length > 0 ? Math.max(...playoffRounds) : 1);
 
   let html = '';
   for (const r of roundNumbers) {
@@ -482,8 +542,16 @@ async function openPicker(gameId) {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      body.innerHTML = `<p class="picker-error">⚠️ ${err.error || 'Failed to load EA matches.'}</p>
-        ${err.error && err.error.includes('EA club ID') ? `<p class="picker-empty">Set the home team's EA Club ID in the <a href="admin.html">Admin Panel</a>.</p>` : ''}`;
+      // Show a short, actionable message for EA API failures rather than
+      // the full server-side error string.
+      let msg;
+      if (err.error && err.error.toLowerCase().includes('ea club id')) {
+        msg = `⚠️ ${err.error}`;
+        body.innerHTML = `<p class="picker-error">${msg}</p>
+          <p class="picker-empty">Set the home team's EA Club ID in the <a href="admin.html">Admin Panel</a>.</p>`;
+      } else {
+        body.innerHTML = `<p class="picker-error">⚠️ Failed to fetch EA data. EA's private match API is currently unavailable — please enter stats manually.</p>`;
+      }
       return;
     }
     const data = await res.json();
@@ -500,7 +568,7 @@ function renderPickerMatches(data, gameId) {
   currentPickerMatches = matches;
 
   if (matches.length === 0) {
-    body.innerHTML = `<p class="picker-empty">No recent EA private matches found for <strong>${game.home_team.name}</strong>. Make sure the EA Club ID is correct.</p>`;
+    body.innerHTML = `<p class="picker-empty">No recent EA private matches found for <strong>${game.home_team.name}</strong>. EA's private match API is currently non-functional for NHL 25 — this is a known issue on EA's end with no fix available yet. Stats must be entered manually.</p>`;
     return;
   }
 
@@ -648,6 +716,16 @@ async function refreshGame(gameId) {
 
 (async () => {
   await checkAdmin();
+
+  // Wire up schedule filters
+  document.getElementById('schedule-team-filter')?.addEventListener('change', e => {
+    scheduleTeamFilter = e.target.value;
+    renderSchedule();
+  });
+  document.getElementById('schedule-time-filter')?.addEventListener('change', e => {
+    scheduleTimeFilter = e.target.value;
+    renderSchedule();
+  });
 
   // Wire up the shared game-stats-editor so that after saving it refreshes
   // the inline game detail panel on this page instead of navigating away.

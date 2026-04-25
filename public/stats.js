@@ -80,12 +80,64 @@ const leagueSort = {
 };
 
 let statsSearchFilter = '';
+let statsTeamFilter   = '';  // team_id as string or ''
+let statsPositionFilter = ''; // position string or ''
+let statsMinGP = 0;
 
 function onStatsSearch(val) {
   statsSearchFilter = val.toLowerCase().trim();
   const league = (typeof SeasonSelector !== 'undefined' ? SeasonSelector.getSelectedLeagueType() : null) || 'threes';
   renderSkaters(league);
   renderGoalies(league);
+}
+
+function onStatsTeamFilter(val) {
+  statsTeamFilter = val;
+  const league = (typeof SeasonSelector !== 'undefined' ? SeasonSelector.getSelectedLeagueType() : null) || 'threes';
+  renderSkaters(league);
+  renderGoalies(league);
+}
+
+function onStatsPosFilter(val) {
+  statsPositionFilter = val;
+  const league = (typeof SeasonSelector !== 'undefined' ? SeasonSelector.getSelectedLeagueType() : null) || 'threes';
+  renderSkaters(league);
+}
+
+function onStatsMinGP(val) {
+  statsMinGP = Math.max(0, parseInt(val, 10) || 0);
+  const league = (typeof SeasonSelector !== 'undefined' ? SeasonSelector.getSelectedLeagueType() : null) || 'threes';
+  renderSkaters(league);
+  renderGoalies(league);
+}
+
+function _applyStatsFilters(data, isGoalie) {
+  let out = data;
+  if (statsSearchFilter) out = out.filter(p => (p.name || '').toLowerCase().includes(statsSearchFilter));
+  if (statsTeamFilter)   out = out.filter(p => String(p.team_id) === statsTeamFilter);
+  if (!isGoalie && statsPositionFilter) out = out.filter(p => (p.position || '') === statsPositionFilter);
+  if (statsMinGP > 0)    out = out.filter(p => (p.gp || 0) >= statsMinGP);
+  return out;
+}
+
+function _populateStatsTeamFilter(league) {
+  const sel = document.getElementById('stats-team-filter');
+  if (!sel) return;
+  const allRows = [...(leagueData[league].skaters || []), ...(leagueData[league].goalies || [])];
+  const seen = new Set();
+  const teams = [];
+  for (const p of allRows) {
+    if (p.team_id != null && !seen.has(p.team_id)) {
+      seen.add(p.team_id);
+      teams.push({ id: p.team_id, name: p.team_name || '' });
+    }
+  }
+  teams.sort((a, b) => a.name.localeCompare(b.name));
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">All Teams</option>' +
+    teams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+  if (cur && teams.find(t => String(t.id) === cur)) sel.value = cur;
+  else { sel.value = ''; statsTeamFilter = ''; }
 }
 
 function switchStatsTab(tab) {
@@ -116,9 +168,7 @@ function renderSkaters(league) {
   const data = leagueData[league].skaters;
   if (data.length === 0) { root.innerHTML = '<p style="color:#8b949e">No skater stats yet for this season.</p>'; return; }
   data.forEach(p => { p._ovr = computeOvr(p); });
-  const filtered = statsSearchFilter
-    ? data.filter(p => (p.name || '').toLowerCase().includes(statsSearchFilter))
-    : data;
+  const filtered = _applyStatsFilters(data, false);
   const sorted = sortData(filtered, leagueSort[league].skater.key, leagueSort[league].skater.dir);
   const s = k => thClass(k, leagueSort[league].skater);
   const prevScroll = root.firstElementChild?.scrollLeft || 0;
@@ -143,9 +193,7 @@ function renderGoalies(league) {
   const data = leagueData[league].goalies;
   if (data.length === 0) { root.innerHTML = '<p style="color:#8b949e">No goalie stats yet for this season.</p>'; return; }
   data.forEach(p => { p._ovr = computeOvr(p); });
-  const filtered = statsSearchFilter
-    ? data.filter(p => (p.name || '').toLowerCase().includes(statsSearchFilter))
-    : data;
+  const filtered = _applyStatsFilters(data, true);
   const sorted = sortData(filtered, leagueSort[league].goalie.key, leagueSort[league].goalie.dir);
   const s = k => thClass(k, leagueSort[league].goalie);
   const prevScroll = root.firstElementChild?.scrollLeft || 0;
@@ -188,6 +236,12 @@ async function loadStats() {
   leagueData[league].goalies = data.goalies || [];
   if (data.goalieStatsMinGP !== undefined) goalieStatsMinGP = data.goalieStatsMinGP;
 
+  // Reset team filter on season change; keep name search and position filter
+  statsTeamFilter = '';
+  const teamSel = document.getElementById('stats-team-filter');
+  if (teamSel) teamSel.value = '';
+
+  _populateStatsTeamFilter(league);
   renderSkaters(league);
   renderGoalies(league);
 }

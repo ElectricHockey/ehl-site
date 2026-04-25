@@ -299,17 +299,27 @@ async function loadSeasons() {
   if (filteredSeasons.length === 0) {
     list.innerHTML = `<p style="color:#8b949e;font-size:0.85rem;">No ${adminLeagueFilter === 'threes' ? "3's" : "6's"} seasons yet. Create one above.</p>`;
   } else {
-    list.innerHTML = filteredSeasons.map((s, idx) => `
+    // Pre-compute the positions of non-playoff seasons so we can correctly
+    // disable ▲ / ▼ at the boundaries without counting playoff-only rows.
+    const regularIdxs = filteredSeasons.reduce((acc, s, i) => { if (!s.is_playoff) acc.push(i); return acc; }, []);
+    list.innerHTML = filteredSeasons.map((s, idx) => {
+      const riPos      = regularIdxs.indexOf(idx);
+      const upDisabled = (!s.is_playoff && riPos <= 0) ? ' disabled' : '';
+      const downDisabled = (!s.is_playoff && riPos >= regularIdxs.length - 1) ? ' disabled' : '';
+      return `
       <div class="season-item">
         ${s.is_active ? '<span class="season-active-badge">★ Active</span>' : ''}
         ${s.is_playoff ? '<span style="background:#2d1b00;color:#e3b341;border:1px solid #9e6a03;border-radius:10px;padding:0.1rem 0.45rem;font-size:0.72rem;margin-right:0.25rem;">🏆 Playoffs</span>' : ''}
         <strong style="flex:1;">${s.name}</strong>
         <span style="color:#8b949e;font-size:0.8rem;">${typeLabel(s.league_type)}</span>
-        <button style="font-size:0.75rem;padding:0.15rem 0.4rem;background:#21262d;border:1px solid #30363d;color:#8b949e;border-radius:4px;cursor:pointer;" onclick="moveSeasonUp(${s.id})" ${idx === 0 ? 'disabled' : ''} title="Move up">▲</button>
-        <button style="font-size:0.75rem;padding:0.15rem 0.4rem;background:#21262d;border:1px solid #30363d;color:#8b949e;border-radius:4px;cursor:pointer;" onclick="moveSeasonDown(${s.id})" ${idx === filteredSeasons.length - 1 ? 'disabled' : ''} title="Move down">▼</button>
+        ${!s.is_playoff ? `
+        <button style="font-size:0.75rem;padding:0.15rem 0.4rem;background:#21262d;border:1px solid #30363d;color:#8b949e;border-radius:4px;cursor:pointer;" onclick="moveSeasonUp(${s.id})"${upDisabled} title="Move up">▲</button>
+        <button style="font-size:0.75rem;padding:0.15rem 0.4rem;background:#21262d;border:1px solid #30363d;color:#8b949e;border-radius:4px;cursor:pointer;" onclick="moveSeasonDown(${s.id})"${downDisabled} title="Move down">▼</button>
+        ` : ''}
         ${!s.is_active && !s.is_playoff ? `<button class="btn-secondary" style="font-size:0.8rem;padding:0.25rem 0.6rem;" onclick="setActiveSeason(${s.id})">Set Active</button>` : ''}
         <button class="btn-danger" style="font-size:0.8rem;padding:0.25rem 0.6rem;" onclick="deleteSeason(${s.id}, ${s.is_playoff ? 'true' : 'false'})">Delete</button>
-      </div>`).join('');
+      </div>`;
+    }).join('');
   }
 
   // Populate season dropdowns in game form – filtered by current league, exclude auto-created playoff seasons
@@ -1049,7 +1059,10 @@ function renderAdminSeriesRow(s, pl) {
   const lo   = s.low_seed_name  || 'TBD';
 
   return `<div style="display:flex;align-items:center;gap:0.5rem;background:#0d1117;border-radius:6px;padding:0.35rem 0.65rem;">
-    <span style="font-size:0.78rem;color:#8b949e;min-width:22px;">${s.high_seed_num || '?'}</span>
+    <input type="number" min="1" value="${s.high_seed_num || ''}" id="high-seed-num-${s.id}"
+      title="Edit high-seed number"
+      style="width:34px;text-align:center;background:#161b22;border:1px solid #30363d;color:#8b949e;border-radius:4px;padding:0.1rem;font-size:0.78rem;"
+      onblur="updateSeriesSeeds(${s.id})" onkeydown="if(event.key==='Enter')this.blur()" />
     <span style="font-size:0.82rem;font-weight:600;flex:1;${s.winner_id === s.high_seed_id ? 'color:#3fb950;' : ''}">${abbrevAdmin(hi)}</span>
     <input type="number" min="0" max="${winsToWin}" value="${s.high_seed_wins}" id="high-wins-${s.id}"
       style="width:38px;text-align:center;background:#161b22;border:1px solid #30363d;color:#e6edf3;border-radius:4px;padding:0.1rem;"
@@ -1059,9 +1072,28 @@ function renderAdminSeriesRow(s, pl) {
       style="width:38px;text-align:center;background:#161b22;border:1px solid #30363d;color:#e6edf3;border-radius:4px;padding:0.1rem;"
       onchange="updateSeriesWins(${s.id}, document.getElementById('high-wins-${s.id}').value, this.value)" />
     <span style="font-size:0.82rem;font-weight:600;flex:1;text-align:right;${s.winner_id === s.low_seed_id ? 'color:#3fb950;' : ''}">${abbrevAdmin(lo)}</span>
-    <span style="font-size:0.78rem;color:#8b949e;min-width:22px;text-align:right;">${s.low_seed_num || '?'}</span>
+    <input type="number" min="1" value="${s.low_seed_num || ''}" id="low-seed-num-${s.id}"
+      title="Edit low-seed number"
+      style="width:34px;text-align:center;background:#161b22;border:1px solid #30363d;color:#8b949e;border-radius:4px;padding:0.1rem;font-size:0.78rem;"
+      onblur="updateSeriesSeeds(${s.id})" onkeydown="if(event.key==='Enter')this.blur()" />
     ${done ? `<span style="font-size:0.75rem;color:#3fb950;margin-left:0.2rem;" title="Series complete">✓</span>` : ''}
   </div>`;
+}
+
+async function updateSeriesSeeds(seriesId) {
+  const hnEl = document.getElementById(`high-seed-num-${seriesId}`);
+  const lnEl = document.getElementById(`low-seed-num-${seriesId}`);
+  if (!hnEl && !lnEl) return;
+  const body = {};
+  if (hnEl && hnEl.value !== '') body.high_seed_num = Number(hnEl.value);
+  if (lnEl && lnEl.value !== '') body.low_seed_num  = Number(lnEl.value);
+  if (Object.keys(body).length === 0) return;
+  await fetch(`${API}/playoff-series/${seriesId}`, {
+    method: 'PATCH',
+    headers: adminJsonHeaders(),
+    body: JSON.stringify(body),
+  });
+  await loadAdminPlayoffs();
 }
 
 async function updateSeriesWins(seriesId, highWins, lowWins) {
