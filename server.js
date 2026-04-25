@@ -1148,7 +1148,7 @@ const SKATER_SELECT = `
   MAX(t.color1) AS team_color1, MAX(t.color2) AS team_color2, MAX(gps.position) AS position,
   COUNT(DISTINCT gps.game_id) AS gp,
   ROUND(AVG(CASE WHEN gps.overall_rating > 0 THEN CAST(gps.overall_rating AS NUMERIC)
-               WHEN gps.offensive_rating > 0 AND gps.defensive_rating > 0 AND gps.team_play_rating > 0
+               WHEN GREATEST(gps.offensive_rating, gps.defensive_rating, gps.team_play_rating) > 0
                  THEN GREATEST(0.0, LEAST(99.0,
                    CASE WHEN gps.position ILIKE '%defense%'
                      THEN (CAST(gps.offensive_rating AS NUMERIC)
@@ -1246,7 +1246,7 @@ const GOALIE_SELECT = `
     THEN ROUND(CAST(SUM(gps.shots_against) AS NUMERIC)/COUNT(DISTINCT gps.game_id),1)
     ELSE NULL END AS shots_per_game,
   ROUND(AVG(CASE WHEN gps.overall_rating > 0 THEN CAST(gps.overall_rating AS NUMERIC)
-               WHEN gps.defensive_rating > 0 AND gps.offensive_rating > 0 AND gps.team_play_rating > 0
+               WHEN GREATEST(gps.defensive_rating, gps.offensive_rating, gps.team_play_rating) > 0
                  THEN GREATEST(0.0, LEAST(99.0,
                    (CAST(gps.defensive_rating AS NUMERIC) * 2.0
                     + CAST(gps.offensive_rating AS NUMERIC)
@@ -2280,7 +2280,7 @@ app.get('/api/stats/leaders', async (req, res) => {
       COALESCE(MAX(u.position), MAX(gps.position)) AS position,
       COUNT(DISTINCT gps.game_id) AS gp,
       ROUND(AVG(CASE WHEN gps.overall_rating > 0 THEN CAST(gps.overall_rating AS NUMERIC)
-                     WHEN gps.offensive_rating > 0 AND gps.defensive_rating > 0 AND gps.team_play_rating > 0
+                     WHEN GREATEST(gps.offensive_rating, gps.defensive_rating, gps.team_play_rating) > 0
                        THEN GREATEST(0.0, LEAST(99.0,
                          CASE WHEN gps.position ILIKE '%defense%'
                            THEN (CAST(gps.offensive_rating AS NUMERIC)
@@ -2388,7 +2388,7 @@ app.get('/api/stats/leaders', async (req, res) => {
       SUM(gps.goalie_otw) AS goalie_otw,
       SUM(gps.goalie_otl) AS goalie_otl,
       ROUND(AVG(CASE WHEN gps.overall_rating > 0 THEN CAST(gps.overall_rating AS NUMERIC)
-                     WHEN gps.defensive_rating > 0 AND gps.offensive_rating > 0 AND gps.team_play_rating > 0
+                     WHEN GREATEST(gps.defensive_rating, gps.offensive_rating, gps.team_play_rating) > 0
                        THEN GREATEST(0.0, LEAST(99.0,
                          (CAST(gps.defensive_rating AS NUMERIC) * 2.0
                           + CAST(gps.offensive_rating AS NUMERIC)

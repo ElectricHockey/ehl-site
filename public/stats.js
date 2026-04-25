@@ -19,7 +19,7 @@ function computeOvr(p) {
   const off = Number(p.offensive_rating) || 0;
   const def = Number(p.defensive_rating) || 0;
   const tpl = Number(p.team_play_rating) || 0;
-  if (off > 0 && def > 0 && tpl > 0) {
+  if (off > 0 || def > 0 || tpl > 0) {
     const isD = /defense/i.test(p.position || '') || /^[lr]d$/i.test(p.position || '');
     const isG = /goalie/i.test(p.position || '') || (p.position || '').toUpperCase() === 'G';
     if (isG || isD) return Math.round((def * 2 + off + tpl * 1.5) / 4.5);
