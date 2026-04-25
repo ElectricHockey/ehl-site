@@ -428,7 +428,7 @@
 
   function renderCombinedTables(game, homeNorm, awayNorm) {
     const SKATER_COLS = 20;
-    const GOALIE_COLS = 12;
+    const GOALIE_COLS = 11;
 
     const hLogo = game.home_team.logo_url
       ? `<img src="${game.home_team.logo_url}" class="gs-row-logo" alt="" />`
