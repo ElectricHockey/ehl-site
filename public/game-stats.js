@@ -28,12 +28,27 @@
   // ── Rating colour helpers ───────────────────────────────────────────────
 
   // Returns the overall rating for a player.  Uses the EA-stored overall_rating when
-  // available (most accurate), falling back to an average of the component ratings.
+  // available (most accurate), falling back to an average of the component ratings,
+  // then falling back to a stat-based score when no ratings are present.
   function computeOvr(p) {
     if (p.overall_rating && p.overall_rating > 0) return p.overall_rating;
     const vals = [p.offensive_rating, p.defensive_rating, p.team_play_rating]
       .map(Number).filter(v => v > 0);
-    return vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null;
+    if (vals.length) return Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
+    // Stat-based fallback so top-3 stars can still be selected
+    const isG = (p.position || '').toUpperCase() === 'G';
+    if (isG) {
+      const sv = Number(p.saves) || 0;
+      const sa = Number(p.shots_against) || 0;
+      const svp = sa > 0 ? sv / sa : 0;
+      return Math.round(svp * 60 + sv * 0.5 + (Number(p.shutouts) || 0) * 10);
+    }
+    return Math.round(
+      (Number(p.points) || 0) * 5 +
+      (Number(p.goals)  || 0) * 3 +
+      (Number(p.plus_minus) || 0) * 2 +
+      (Number(p.hits)   || 0) * 0.5
+    );
   }
 
   function ratingStyle(v) {
@@ -136,6 +151,8 @@
       pass_pct_calc:    passPct,
       hat_tricks:       v('hat_tricks',      'hatTricks'),
       possession_secs:  v('possession_secs', 'possessionSecs'),
+      saucer_passes:    v('saucer_passes',   'saucerPasses'),
+      pk_clears:        v('pk_clears',       'pkClears'),
       toi,
       // goalie
       shots_against:         shotsAgainstVal,
@@ -150,6 +167,8 @@
       breakaway_shots:       bksa,
       breakaway_saves:       bksv,
       breakaway_pct:         bkPct,
+      desperation_saves:     v('desperation_saves',  'desperationSaves'),
+      poke_check_saves:      v('poke_check_saves',   'pokeCheckSaves'),
       goalie_wins:           v('goalie_wins',   'goalieWins'),
       goalie_losses:         v('goalie_losses', 'goalieLosses'),
       goalie_otw:            v('goalie_otw',    'goalieOtw'),
@@ -408,8 +427,8 @@
   // ── Combined skater + goalie tables (both teams in one table each) ───────
 
   function renderCombinedTables(game, homeNorm, awayNorm) {
-    const SKATER_COLS = 19;
-    const GOALIE_COLS = 13;
+    const SKATER_COLS = 20;
+    const GOALIE_COLS = 11;
 
     const hLogo = game.home_team.logo_url
       ? `<img src="${game.home_team.logo_url}" class="gs-row-logo" alt="" />`
@@ -433,6 +452,7 @@
 
     function skaterRow(p, logoHtml) {
       const pm = p.plus_minus;
+      const shotsDisplay = `${p.shots}/${p.shot_attempts}`;
       return `<tr class="gs-table-row">
         <td class="gs-col-player">${playerCell(p, logoHtml)}</td>
         <td class="gs-num">${p.goals}</td>
@@ -441,10 +461,10 @@
         <td class="gs-num">${pm >= 0 ? '+' : ''}${pm}</td>
         <td class="gs-num">${formatToi(p.toi)}</td>
         <td class="gs-num">${formatToi(p.possession_secs)}</td>
-        <td class="gs-num">${p.shots}</td>
+        <td class="gs-num">${shotsDisplay}</td>
         <td class="gs-num">${p.deflections}</td>
         <td class="gs-num">${p.pass_pct_calc !== null && p.pass_pct_calc !== undefined ? fmt1(p.pass_pct_calc) + '%' : '–'}</td>
-        <td class="gs-num">${p.shot_pct !== null ? fmt1(p.shot_pct) + '%' : '–'}</td>
+        <td class="gs-num">${p.saucer_passes}</td>
         <td class="gs-num">${p.hits}</td>
         <td class="gs-num">${p.takeaways}</td>
         <td class="gs-num">${p.giveaways}</td>
@@ -452,7 +472,7 @@
         <td class="gs-num">${p.interceptions}</td>
         <td class="gs-num">${p.pim}</td>
         <td class="gs-num">${p.penalties_drawn}</td>
-        <td class="gs-num">${p.pass_completions}</td>
+        <td class="gs-num">${p.pk_clears}</td>
       </tr>`;
     }
 
@@ -464,12 +484,11 @@
         <td class="gs-num">${p.goals_against}</td>
         <td class="gs-num">${p.saves || 0}</td>
         <td class="gs-num">${p.gaa !== null ? Number(p.gaa).toFixed(2) : '–'}</td>
-        <td class="gs-num">${p.penalty_shot_attempts}</td>
+        <td class="gs-num">${p.poke_check_saves}</td>
+        <td class="gs-num">${p.desperation_saves}</td>
         <td class="gs-num">${p.breakaway_saves}</td>
-        <td class="gs-num">${p.breakaway_shots}</td>
         <td class="gs-num">${p.breakaway_pct !== null ? fmt1(p.breakaway_pct) + '%' : '–'}</td>
         <td class="gs-num">${p.penalty_shot_pct !== null ? fmt1(p.penalty_shot_pct) + '%' : '–'}</td>
-        <td class="gs-num">${p.penalty_shot_ga}</td>
       </tr>`;
     }
 
@@ -490,13 +509,7 @@
         <thead>
           <tr class="gs-group-header-row">
             <th class="gs-col-player-head"></th>
-            <th colspan="4" class="gs-group-head">Offense</th>
-            <th data-tip="Time on Ice">TOI</th>
-            <th data-tip="Time with Puck">TwP</th>
-            <th data-tip="Shots on Goal">SOG</th>
-            <th data-tip="Deflections">D</th>
-            <th data-tip="Pass Completion %">PAS%</th>
-            <th data-tip="Shooting %">SP</th>
+            <th colspan="10" class="gs-group-head">Offense</th>
             <th colspan="5" class="gs-group-head">Defense</th>
             <th colspan="3" class="gs-group-head">Penalties</th>
           </tr>
@@ -506,12 +519,12 @@
             <th data-tip="Assists">A</th>
             <th data-tip="Points">P</th>
             <th data-tip="Plus / Minus">+/-</th>
-            <th></th>
-            <th></th>
-            <th></th>
-            <th></th>
-            <th></th>
-            <th></th>
+            <th data-tip="Time on Ice">TOI</th>
+            <th data-tip="Time with Puck">TwP</th>
+            <th data-tip="Shots on Goal / Shot Attempts">SOG</th>
+            <th data-tip="Deflections">D</th>
+            <th data-tip="Pass Completion %">PAS%</th>
+            <th data-tip="Saucer Passes">SP</th>
             <th data-tip="Hits">H</th>
             <th data-tip="Takeaways">TA</th>
             <th data-tip="Giveaways">GVA</th>
@@ -519,7 +532,7 @@
             <th data-tip="Interceptions">INT</th>
             <th data-tip="Penalty Minutes">PIM</th>
             <th data-tip="Penalties Drawn">PD</th>
-            <th data-tip="Pass Completions">PC</th>
+            <th data-tip="PK Clears">PKC</th>
           </tr>
         </thead>
         <tbody>
@@ -541,12 +554,11 @@
             <th data-tip="Goals Against">GA</th>
             <th data-tip="Saves">Sv</th>
             <th data-tip="Goals Against Average">GAA</th>
-            <th data-tip="Penalty Shot Attempts">PCHK</th>
-            <th data-tip="Breakaway Saves">DSV</th>
-            <th data-tip="Breakaway Shots Against">brks</th>
+            <th data-tip="Poke Check Saves">PCHK</th>
+            <th data-tip="Desperation Saves">DSV</th>
+            <th data-tip="Breakaway Saves">BRKS</th>
             <th data-tip="Breakaway Save %">BA%</th>
             <th data-tip="Penalty Shot Save %">PS%</th>
-            <th data-tip="Penalty Shot Goals Against">gSOp</th>
           </tr>
         </thead>
         <tbody>

@@ -130,10 +130,8 @@ function makeRow(t, rank) {
   </tr>`;
 }
 
-// A horizontal "playoff line" separator row spanning all columns
-const PLAYOFF_LINE_ROW = `<tr class="playoff-cutoff-row"><td colspan="14" style="padding:0;height:0;border-top:2px solid #58a6ff;position:relative;">
-  <span style="position:absolute;left:6px;top:-9px;font-size:0.68rem;color:#58a6ff;background:#0d1117;padding:0 4px;white-space:nowrap;">── Playoff Line ──</span>
-</td></tr>`;
+// A horizontal separator row spanning all columns (playoff cutoff line, no label)
+const PLAYOFF_LINE_ROW = `<tr class="playoff-cutoff-row"><td colspan="14" style="padding:0;height:2px;border-top:2px solid #58a6ff;"></td></tr>`;
 
 function clinchLegend(teams) {
   const present = new Set(teams.map(t => t.clinch).filter(Boolean));
@@ -159,24 +157,25 @@ function buildStandingsHtml(data) {
   const hasGroups = teams.some(t => t.conference || t.division);
   const thead = buildThead();
 
+  // Build a global pts-sort order to know each team's true league rank
+  const globalOrder = sortTeams(teams, 'pts', 'desc');
+  const globalRank = {};
+  globalOrder.forEach((t, i) => { globalRank[t.id] = i + 1; });
+
   if (!hasGroups) {
     const sorted = _sortCol === 'rank'
-      ? sortTeams(teams, 'pts', 'desc')
+      ? [...globalOrder]
       : sortTeams(teams, _sortCol, _sortDir);
     let rows = '';
     sorted.forEach((t, i) => {
       // Insert playoff line AFTER the last in-playoff team (between rank N and N+1)
       if (cutoff && i === cutoff) rows += PLAYOFF_LINE_ROW;
-      rows += makeRow(t, i + 1);
+      rows += makeRow(t, globalRank[t.id]);
     });
     return `<div style="overflow-x:auto;"><table>${thead}<tbody>${rows}</tbody></table></div>${clinchLegend(teams)}`;
   }
 
   // Grouped by conference → division
-  // Build a global pts-sort order to know which teams are in the top-N overall
-  const globalOrder = sortTeams(teams, 'pts', 'desc');
-  const globalRank = {};
-  globalOrder.forEach((t, i) => { globalRank[t.id] = i + 1; });
 
   const conferences = {};
   for (const t of teams) {
@@ -207,7 +206,7 @@ function buildStandingsHtml(data) {
             cutoffInserted = true;
           }
         }
-        html += makeRow(t, i + 1);
+        html += makeRow(t, globalRank[t.id]);
       });
       html += '</tbody></table></div>';
       if (div) html += '</div>';

@@ -46,7 +46,7 @@ async function loadGame() {
       : '';
     const homeWin = game.home_score > game.away_score;
     const awayWin = game.away_score > game.home_score;
-    const otBadge = game.is_overtime ? '<span class="ot-badge">OT</span>' : '';
+    const finalLabel = `<div style="text-align:center;font-size:0.78rem;font-weight:700;letter-spacing:0.1em;color:#8b949e;text-transform:uppercase;margin-bottom:0.25rem;">FINAL${game.is_overtime ? ' – OT' : ''}</div>`;
 
     const logoImg = (team) => team.logo_url
       ? `<img src="${team.logo_url}" class="game-team-logo" alt="${team.name}" />`
@@ -67,6 +67,7 @@ async function loadGame() {
           <a href="team.html?id=${game.home_team.id}" class="game-team-name">${game.home_team.name}</a>
         </div>
         <div class="game-score-block">
+          ${finalLabel}
           <span class="game-score${homeWin ? ' winner' : ''}">${game.home_score}</span>
           <span class="game-score-sep">–</span>
           <span class="game-score${awayWin ? ' winner' : ''}">${game.away_score}</span>
@@ -76,7 +77,7 @@ async function loadGame() {
           <a href="team.html?id=${game.away_team.id}" class="game-team-name">${game.away_team.name}</a>
         </div>
       </div>
-      <p class="game-meta">${date}${otBadge}</p>
+      <p class="game-meta">${date}</p>
       ${adminBtn}`;
 
     if (!has_stats) {

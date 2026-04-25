@@ -551,7 +551,8 @@ async function openPicker(gameId) {
         body.innerHTML = `<p class="picker-error">${msg}</p>
           <p class="picker-empty">Set the home team's EA Club ID in the <a href="admin.html">Admin Panel</a>.</p>`;
       } else {
-        body.innerHTML = `<p class="picker-error">⚠️ Failed to fetch EA data. EA's private match API is currently unavailable — please enter stats manually.</p>`;
+        const detail = err.details ? ` (${err.details})` : '';
+        body.innerHTML = `<p class="picker-error">⚠️ Failed to fetch EA data${detail} — please enter stats manually.</p>`;
       }
       return;
     }

@@ -53,6 +53,7 @@ function sumSkaterRows(rows) {
     pp_goals: 0, sh_goals: 0, gwg: 0, pim: 0, penalties_drawn: 0,
     faceoff_wins: 0, faceoff_total: 0, deflections: 0, interceptions: 0,
     pass_attempts: 0, pass_completions: 0, hat_tricks: 0, toi: 0,
+    saucer_passes: 0, pk_clears: 0, player_wins: 0, player_losses: 0, player_otl: 0,
     _apt_sum: 0, _apt_gp: 0,
     _or_sum: 0, _offr_sum: 0, _dr_sum: 0, _tpr_sum: 0, _r_count: 0,
   };
@@ -80,6 +81,11 @@ function sumSkaterRows(rows) {
     tot.pass_attempts += Number(r.pass_attempts) || 0;
     tot.pass_completions += Number(r.pass_completions) || 0;
     tot.hat_tricks += Number(r.hat_tricks) || 0;
+    tot.saucer_passes += Number(r.saucer_passes) || 0;
+    tot.pk_clears += Number(r.pk_clears) || 0;
+    tot.player_wins += Number(r.player_wins) || 0;
+    tot.player_losses += Number(r.player_losses) || 0;
+    tot.player_otl += Number(r.player_otl) || 0;
     if (r.apt) { tot._apt_sum += Number(r.apt) * (Number(r.gp) || 1); tot._apt_gp += Number(r.gp) || 1; }
     tot.toi += Number(r.toi) || 0;
     if (Number(r.overall_rating) > 0)    { tot._or_sum   += Number(r.overall_rating);   tot._r_count++; }
@@ -106,6 +112,7 @@ function sumGoalieRows(rows) {
     saves: 0, goals_against: 0, shots_against: 0, toi: 0,
     shutouts: 0, penalty_shot_attempts: 0, penalty_shot_ga: 0,
     breakaway_shots: 0, breakaway_saves: 0,
+    desperation_saves: 0, poke_check_saves: 0,
     goalie_wins: 0, goalie_losses: 0, goalie_otw: 0, goalie_otl: 0,
     _or_sum: 0, _offr_sum: 0, _dr_sum: 0, _tpr_sum: 0, _r_count: 0,
   };
@@ -122,6 +129,8 @@ function sumGoalieRows(rows) {
     tot.penalty_shot_ga += Number(r.penalty_shot_ga) || 0;
     tot.breakaway_shots += Number(r.breakaway_shots) || 0;
     tot.breakaway_saves += Number(r.breakaway_saves) || 0;
+    tot.desperation_saves += Number(r.desperation_saves) || 0;
+    tot.poke_check_saves += Number(r.poke_check_saves) || 0;
     tot.goalie_wins += Number(r.goalie_wins) || 0;
     tot.goalie_losses += Number(r.goalie_losses) || 0;
     tot.goalie_otw += Number(r.goalie_otw) || 0;
@@ -138,6 +147,7 @@ function sumGoalieRows(rows) {
   tot.team_play_rating  = tot._r_count ? Math.round(tot._tpr_sum  / n) : 0;
   tot.save_pct = tot.shots_against > 0 ? tot.saves / tot.shots_against : null;
   tot.gaa = tot.toi > 0 ? Math.round(tot.goals_against * 3600 / tot.toi * 100) / 100 : null;
+  tot.shots_per_game = tot.gp > 0 ? Math.round((tot.shots_against / tot.gp) * 10) / 10 : null;
   return tot;
 }
 
@@ -197,11 +207,37 @@ function renderCareerTable(seasonTeamStats, isGoalie) {
     const ip = r.is_playoff ? 1 : 0;
     const key = `${r.season_id ?? 'none'}_${ip}`;
     if (!blockMap[key]) {
-      blockMap[key] = { season_id: r.season_id, season_name: r.season_name, is_playoff: ip, rows: [] };
+      blockMap[key] = {
+        season_id: r.season_id, season_name: r.season_name, is_playoff: ip,
+        _sort_order: r._sort_order ?? r.season_id ?? 0, rows: [],
+      };
       blocks.push(blockMap[key]);
     }
     blockMap[key].rows.push(r);
   }
+
+  // Reorder blocks to match admin panel order:
+  // regular seasons sorted oldest-first, each playoff block directly before its regular season.
+  function sortBlocksWithPlayoffs(blks) {
+    const regular = blks.filter(b => !b.is_playoff);
+    const playoff  = blks.filter(b =>  b.is_playoff);
+    regular.sort((a, b) => (a._sort_order || 0) - (b._sort_order || 0));
+    const used = new Set();
+    const result = [];
+    for (const s of regular) {
+      const pl = playoff.find(p =>
+        !used.has(p) && (
+          p.season_id === s.season_id ||
+          p.season_name === `${s.season_name} Playoffs`
+        )
+      );
+      if (pl) { result.push(pl); used.add(pl); }
+      result.push(s);
+    }
+    for (const p of playoff) { if (!used.has(p)) result.push(p); }
+    return result;
+  }
+  const orderedBlocks = sortBlocksWithPlayoffs(blocks);
 
   const regularRows = seasonTeamStats.filter(r => !r.is_playoff);
   const playoffRows = seasonTeamStats.filter(r => r.is_playoff);
@@ -213,7 +249,7 @@ function renderCareerTable(seasonTeamStats, isGoalie) {
   let html = `<div style="overflow-x:auto;max-width:100%;"><table class="season-stats-table">
     ${thead}<tbody>`;
 
-  for (const block of blocks) {
+  for (const block of orderedBlocks) {
     const { season_name, is_playoff, rows } = block;
 
     if (is_playoff) {

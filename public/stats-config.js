@@ -73,14 +73,15 @@ const SKATER_COLS = [
   { key: '_ovr',             label: 'OVR',  tip: 'Overall Rating', fmt: p => p._ovr ?? '–',                                                            style: p => 'text-align:center;' + ovrStyle(p._ovr) },
   // ── Games ────────────────────────────────────────────────────────────────
   { key: 'gp',              label: 'GP',   tip: 'Games Played',                            fmt: p => p.gp },
+  { key: 'player_wins',     label: 'REC',  tip: 'Record (W-L-OTL)',
+    fmt: p => `${p.player_wins || 0}-${p.player_losses || 0}-${p.player_otl || 0}` },
   // ── Scoring ──────────────────────────────────────────────────────────────
   { key: 'goals',           label: 'G',    tip: 'Goals',                                   fmt: p => p.goals || 0 },
   { key: 'assists',         label: 'A',    tip: 'Assists',                                 fmt: p => p.assists || 0 },
   { key: 'points',          label: 'PTS',  tip: 'Points',                                  fmt: p => `<strong>${p.points || 0}</strong>` },
   { key: 'plus_minus',      label: '+/-',  tip: 'Plus / Minus',                            fmt: p => `${(p.plus_minus || 0) >= 0 ? '+' : ''}${p.plus_minus || 0}` },
   // ── Skating / Physical ───────────────────────────────────────────────────
-  { key: 'shots',           label: 'SOG',  tip: 'Shots on Goal',                           fmt: p => p.shots || 0 },
-  { key: 'shot_attempts',   label: 'SA',   tip: 'Shot Attempts',                           fmt: p => p.shot_attempts || 0 },
+  { key: 'shots',           label: 'SOG',  tip: 'Shots on Goal / Shot Attempts',           fmt: p => `${p.shots || 0}/${p.shot_attempts || 0}` },
   { key: 'hits',            label: 'HITS', tip: 'Hits',                                   fmt: p => p.hits || 0 },
   { key: 'blocked_shots',   label: 'BS',   tip: 'Blocked Shots',                           fmt: p => p.blocked_shots || 0 },
   { key: 'takeaways',       label: 'TKA',  tip: 'Takeaways',                               fmt: p => p.takeaways || 0 },
@@ -92,6 +93,7 @@ const SKATER_COLS = [
   // ── Discipline ───────────────────────────────────────────────────────────
   { key: 'pim',             label: 'PIM',  tip: 'Penalty Minutes',                         fmt: p => p.pim || 0 },
   { key: 'penalties_drawn', label: 'PD',   tip: 'Penalties Drawn',                         fmt: p => p.penalties_drawn || 0 },
+  { key: 'pk_clears',       label: 'PKC',  tip: 'PK Clears',                               fmt: p => p.pk_clears || 0 },
   // ── Faceoffs ─────────────────────────────────────────────────────────────
   { key: 'faceoff_wins',    label: 'FOW',  tip: 'Faceoff Wins',                            fmt: p => p.faceoff_wins || 0 },
   { key: 'faceoff_total',   label: 'FOT',  tip: 'Faceoff Total',                           fmt: p => p.faceoff_total || 0 },
@@ -99,6 +101,7 @@ const SKATER_COLS = [
   // ── Shooting ─────────────────────────────────────────────────────────────
   { key: 'shot_pct',        label: 'S%',   tip: 'Shooting %',                              fmt: p => fmtPct(p.shot_pct) },
   // ── Advanced ─────────────────────────────────────────────────────────────
+  { key: 'saucer_passes',   label: 'SP',   tip: 'Saucer Passes',                           fmt: p => p.saucer_passes || 0 },
   { key: 'deflections',     label: 'DLF',  tip: 'Deflections',                             fmt: p => p.deflections || 0 },
   { key: 'interceptions',   label: 'INT',  tip: 'Interceptions',                           fmt: p => p.interceptions || 0 },
   { key: 'pass_attempts',   label: 'PA',   tip: 'Pass Attempts',                           fmt: p => p.pass_attempts || 0 },
@@ -116,6 +119,8 @@ const GOALIE_COLS = [
   { key: '_ovr',                 label: 'OVR',  tip: 'Overall Rating', fmt: p => p._ovr ?? '–',                                       style: p => 'text-align:center;' + ovrStyle(p._ovr) },
   // ── Games ────────────────────────────────────────────────────────────────
   { key: 'gp',                   label: 'GP',   tip: 'Games Played',                            fmt: p => p.gp },
+  { key: 'goalie_wins',          label: 'REC',  tip: 'Record (W-L-OTL)',
+    fmt: p => `${(p.goalie_wins || 0) + (p.goalie_otw || 0)}-${p.goalie_losses || 0}-${p.goalie_otl || 0}` },
   // ── Scoring ──────────────────────────────────────────────────────────────
   { key: 'goals',                label: 'G',    tip: 'Goals',                                   fmt: p => p.goals || 0 },
   { key: 'assists',              label: 'A',    tip: 'Assists',                                 fmt: p => p.assists || 0 },
@@ -124,6 +129,7 @@ const GOALIE_COLS = [
   { key: 'goals_against',        label: 'GA',   tip: 'Goals Against',                           fmt: p => p.goals_against || 0 },
   { key: 'save_pct',             label: 'SV%',  tip: 'Save Percentage',                         fmt: p => `<strong>${pct3(p.save_pct)}</strong>` },
   { key: 'gaa',                  label: 'GAA',  tip: 'Goals Against Average',                   fmt: p => p.gaa != null ? Number(p.gaa).toFixed(2) : '–' },
+  { key: 'shots_per_game',       label: 'S/G',  tip: 'Shots Faced Per Game',                    fmt: p => p.shots_per_game != null ? fmt1(p.shots_per_game) : '–' },
   { key: 'toi',                  label: 'TOI',  tip: 'Time on Ice',                             fmt: p => formatToi(p.toi) },
   { key: 'shutouts',             label: 'SO',   tip: 'Shutouts',                                fmt: p => p.shutouts || 0 },
   // ── Penalty Shots ────────────────────────────────────────────────────────
@@ -131,10 +137,8 @@ const GOALIE_COLS = [
   { key: 'penalty_shot_ga',      label: 'PSGA', tip: 'Penalty Shot Goals Against',              fmt: p => p.penalty_shot_ga || 0 },
   // ── Breakaways ───────────────────────────────────────────────────────────
   { key: 'breakaway_shots',      label: 'BKSA', tip: 'Breakaway Shots Against',                 fmt: p => p.breakaway_shots || 0 },
-  { key: 'breakaway_saves',      label: 'BKSV', tip: 'Breakaway Saves',                         fmt: p => p.breakaway_saves || 0 },
-  // ── Win/Loss ─────────────────────────────────────────────────────────────
-  { key: 'goalie_wins',          label: 'W',    tip: 'Wins',                                  fmt: p => p.goalie_wins || 0 },
-  { key: 'goalie_losses',        label: 'L',    tip: 'Losses',                                  fmt: p => p.goalie_losses || 0 },
-  { key: 'goalie_otw',           label: 'OTW',  tip: 'Overtime Wins',                           fmt: p => p.goalie_otw || 0 },
-  { key: 'goalie_otl',           label: 'OTL',  tip: 'Overtime Losses',                         fmt: p => p.goalie_otl || 0 },
+  { key: 'breakaway_saves',      label: 'BRKS', tip: 'Breakaway Saves',                         fmt: p => p.breakaway_saves || 0 },
+  // ── Special Saves ────────────────────────────────────────────────────────
+  { key: 'desperation_saves',    label: 'DSV',  tip: 'Desperation Saves',                       fmt: p => p.desperation_saves || 0 },
+  { key: 'poke_check_saves',     label: 'PCHK', tip: 'Poke Check Saves',                        fmt: p => p.poke_check_saves || 0 },
 ];

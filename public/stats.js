@@ -73,16 +73,16 @@ const leagueData = {
   threes: { skaters: [], goalies: [] },
   sixes:  { skaters: [], goalies: [] },
 };
-let goalieStatsMinGP = 5;
 const leagueSort = {
   threes: { skater: { key: 'points', dir: 'desc' }, goalie: { key: 'save_pct', dir: 'desc' } },
   sixes:  { skater: { key: 'points', dir: 'desc' }, goalie: { key: 'save_pct', dir: 'desc' } },
 };
 
 let statsSearchFilter = '';
-let statsTeamFilter   = '';  // team_id as string or ''
-let statsPositionFilter = ''; // position string or ''
+let statsTeamFilter   = '';
+let statsPositionFilter = '';
 let statsMinGP = 0;
+let statsPlayerLimit = 0; // 0 = show all
 
 function onStatsSearch(val) {
   statsSearchFilter = val.toLowerCase().trim();
@@ -106,6 +106,13 @@ function onStatsPosFilter(val) {
 
 function onStatsMinGP(val) {
   statsMinGP = Math.max(0, parseInt(val, 10) || 0);
+  const league = (typeof SeasonSelector !== 'undefined' ? SeasonSelector.getSelectedLeagueType() : null) || 'threes';
+  renderSkaters(league);
+  renderGoalies(league);
+}
+
+function onStatsPlayerLimit(val) {
+  statsPlayerLimit = Math.max(0, parseInt(val, 10) || 0);
   const league = (typeof SeasonSelector !== 'undefined' ? SeasonSelector.getSelectedLeagueType() : null) || 'threes';
   renderSkaters(league);
   renderGoalies(league);
@@ -179,16 +186,18 @@ function renderSkaters(league) {
   data.forEach(p => { p._ovr = computeOvr(p); });
   const filtered = _applyStatsFilters(data, false);
   const sorted = sortData(filtered, leagueSort[league].skater.key, leagueSort[league].skater.dir);
+  const limited = statsPlayerLimit > 0 ? sorted.slice(0, statsPlayerLimit) : sorted;
   const s = k => thClass(k, leagueSort[league].skater);
   const prevScroll = root.firstElementChild?.scrollLeft || 0;
   root.innerHTML = `<div style="overflow-x:auto;"><table id="skaters-table">
     <thead><tr>
-      <th>Player</th><th>Team</th><th>Pos</th>
+      <th style="text-align:center;width:2rem;">#</th>
+      <th>Player</th><th>Pos</th>
       ${SKATER_COLS.map(c => `<th data-tip="${c.tip}" class="${s(c.key)}" onclick="sortSkaters('${c.key}','${league}')">${c.label}</th>`).join('')}
     </tr></thead>
-    <tbody>${sorted.map(p => `<tr${playerRowAttrs(p)}>
-      <td><a href="player.html?name=${encodeURIComponent(p.name)}" class="player-link">${p.name}</a></td>
-      <td style="text-align:center;">${p.team_logo ? `<a href="team.html?id=${p.team_id}" title="${p.team_name}"><img src="${p.team_logo}" style="width:20px;height:20px;object-fit:contain;vertical-align:middle;border-radius:2px;" /></a>` : '–'}</td>
+    <tbody>${limited.map((p, i) => `<tr${playerRowAttrs(p)}>
+      <td style="text-align:center;color:#8b949e;font-size:0.8rem;">${i + 1}</td>
+      <td><a href="player.html?name=${encodeURIComponent(p.name)}" class="player-link">${p.name}</a>${p.team_logo ? ` <a href="team.html?id=${p.team_id}" title="${p.team_name}"><img src="${p.team_logo}" style="width:16px;height:16px;object-fit:contain;vertical-align:middle;border-radius:2px;margin-left:4px;" /></a>` : ''}</td>
       <td>${p.position || '–'}</td>
       ${SKATER_COLS.map(c => `<td style="${c.style ? c.style(p) : ''}">${c.fmt(p)}</td>`).join('')}
     </tr>`).join('')}</tbody>
@@ -204,20 +213,21 @@ function renderGoalies(league) {
   data.forEach(p => { p._ovr = computeOvr(p); });
   const filtered = _applyStatsFilters(data, true);
   const sorted = sortData(filtered, leagueSort[league].goalie.key, leagueSort[league].goalie.dir);
+  const limited = statsPlayerLimit > 0 ? sorted.slice(0, statsPlayerLimit) : sorted;
   const s = k => thClass(k, leagueSort[league].goalie);
   const prevScroll = root.firstElementChild?.scrollLeft || 0;
-  const minGPNote = goalieStatsMinGP ? `<p style="color:#8b949e;font-size:0.8rem;margin:0.35rem 0 0;">SV% and GAA require a minimum of ${goalieStatsMinGP} games played.</p>` : '';
   root.innerHTML = `<div style="overflow-x:auto;"><table id="goalies-table">
     <thead><tr>
-      <th>Player</th><th>Team</th>
+      <th style="text-align:center;width:2rem;">#</th>
+      <th>Player</th>
       ${GOALIE_COLS.map(c => `<th data-tip="${c.tip}" class="${s(c.key)}" onclick="sortGoalies('${c.key}','${league}')">${c.label}</th>`).join('')}
     </tr></thead>
-    <tbody>${sorted.map(p => `<tr${playerRowAttrs(p)}>
-      <td><a href="player.html?name=${encodeURIComponent(p.name)}" class="player-link">${p.name}</a></td>
-      <td style="text-align:center;">${p.team_logo ? `<a href="team.html?id=${p.team_id}" title="${p.team_name}"><img src="${p.team_logo}" style="width:20px;height:20px;object-fit:contain;vertical-align:middle;border-radius:2px;" /></a>` : '–'}</td>
+    <tbody>${limited.map((p, i) => `<tr${playerRowAttrs(p)}>
+      <td style="text-align:center;color:#8b949e;font-size:0.8rem;">${i + 1}</td>
+      <td><a href="player.html?name=${encodeURIComponent(p.name)}" class="player-link">${p.name}</a>${p.team_logo ? ` <a href="team.html?id=${p.team_id}" title="${p.team_name}"><img src="${p.team_logo}" style="width:16px;height:16px;object-fit:contain;vertical-align:middle;border-radius:2px;margin-left:4px;" /></a>` : ''}</td>
       ${GOALIE_COLS.map(c => `<td style="${c.style ? c.style(p) : ''}">${c.fmt(p)}</td>`).join('')}
     </tr>`).join('')}</tbody>
-  </table></div>${minGPNote}`;
+  </table></div>`;
   if (root.firstElementChild && prevScroll) root.firstElementChild.scrollLeft = prevScroll;
 }
 
@@ -243,7 +253,6 @@ async function loadStats() {
   const data = await fetchLeagueStats(sid);
   leagueData[league].skaters = data.skaters || [];
   leagueData[league].goalies = data.goalies || [];
-  if (data.goalieStatsMinGP !== undefined) goalieStatsMinGP = data.goalieStatsMinGP;
 
   // Reset team filter on season change; keep name search and position filter
   statsTeamFilter = '';

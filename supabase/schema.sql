@@ -173,8 +173,26 @@ CREATE TABLE IF NOT EXISTS game_player_stats (
   penalty_shot_attempts INTEGER DEFAULT 0,
   penalty_shot_ga       INTEGER DEFAULT 0,
   breakaway_shots       INTEGER DEFAULT 0,
-  breakaway_saves       INTEGER DEFAULT 0
+  breakaway_saves       INTEGER DEFAULT 0,
+  saucer_passes         INTEGER DEFAULT 0,
+  pk_clears             INTEGER DEFAULT 0,
+  desperation_saves     INTEGER DEFAULT 0,
+  poke_check_saves      INTEGER DEFAULT 0
 );
+
+-- Migrations: add new columns if they don't exist yet (idempotent)
+DO $$ BEGIN
+  ALTER TABLE game_player_stats ADD COLUMN saucer_passes     INTEGER DEFAULT 0; EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+DO $$ BEGIN
+  ALTER TABLE game_player_stats ADD COLUMN pk_clears         INTEGER DEFAULT 0; EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+DO $$ BEGIN
+  ALTER TABLE game_player_stats ADD COLUMN desperation_saves INTEGER DEFAULT 0; EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+DO $$ BEGIN
+  ALTER TABLE game_player_stats ADD COLUMN poke_check_saves  INTEGER DEFAULT 0; EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
 
 -- ── Historical import table ──────────────────────────────────────────────
 

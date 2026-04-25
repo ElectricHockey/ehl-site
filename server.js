@@ -1090,6 +1090,8 @@ function mapEAPlayer(p) {
     deflections:      Number(eaField(p, 'deflections'))    || 0,
     interceptions:    Number(eaField(p, 'interceptions'))  || 0,
     hatTricks:        Number(eaField(p, 'hatTricks'))      || 0,
+    saucerPasses:     Number(eaField(p, 'saucerPasses'))   || 0,
+    pkClears:         Number(eaField(p, 'pkClears'))        || 0,
     toi:              Number(eaField(p, 'toi'))            || 0,
     // Goalie — W/L/OTW/OTL/SO are calculated from game outcome in saveList, not from EA
     saves:               Number(eaField(p, 'saves'))               || 0,
@@ -1100,6 +1102,8 @@ function mapEAPlayer(p) {
     penaltyShotGa:       Number(eaField(p, 'penaltyShotGa'))       || 0,
     breakawayShots:      Number(eaField(p, 'breakawayShots'))      || 0,
     breakawaySaves:      Number(eaField(p, 'breakawaySaves'))      || 0,
+    desperationSaves:    Number(eaField(p, 'desperationSaves'))    || 0,
+    pokeCheckSaves:      Number(eaField(p, 'pokeCheckSaves'))      || 0,
   };
 }
 
@@ -1153,7 +1157,17 @@ const SKATER_SELECT = `
   CASE WHEN SUM(gps.pass_attempts) > 0
     THEN ROUND(SUM(gps.pass_completions)*100.0/SUM(gps.pass_attempts),1)
     ELSE NULL END AS pass_pct_calc,
-  SUM(gps.hat_tricks) AS hat_tricks`;
+  SUM(gps.hat_tricks) AS hat_tricks,
+  SUM(gps.saucer_passes) AS saucer_passes,
+  SUM(gps.pk_clears) AS pk_clears,
+  SUM(CASE WHEN (gps.team_id = g.home_team_id AND g.home_score > g.away_score)
+             OR (gps.team_id = g.away_team_id AND g.away_score > g.home_score) THEN 1 ELSE 0 END) AS player_wins,
+  SUM(CASE WHEN ((gps.team_id = g.home_team_id AND g.home_score < g.away_score)
+              OR (gps.team_id = g.away_team_id AND g.away_score < g.home_score))
+           AND (g.is_overtime IS NULL OR g.is_overtime = 0) THEN 1 ELSE 0 END) AS player_losses,
+  SUM(CASE WHEN ((gps.team_id = g.home_team_id AND g.home_score < g.away_score)
+              OR (gps.team_id = g.away_team_id AND g.away_score < g.home_score))
+           AND g.is_overtime = 1 THEN 1 ELSE 0 END) AS player_otl`;
 
 const GOALIE_SELECT = `
   MAX(gps.player_name) AS name, MAX(gps.team_id) AS team_id, MAX(t.name) AS team_name, MAX(t.logo_url) AS team_logo,
@@ -1175,10 +1189,15 @@ const GOALIE_SELECT = `
   SUM(gps.penalty_shot_ga) AS penalty_shot_ga,
   SUM(gps.breakaway_shots) AS breakaway_shots,
   SUM(gps.breakaway_saves) AS breakaway_saves,
+  SUM(gps.desperation_saves) AS desperation_saves,
+  SUM(gps.poke_check_saves) AS poke_check_saves,
   SUM(gps.goalie_wins) AS goalie_wins,
   SUM(gps.goalie_losses) AS goalie_losses,
   SUM(gps.goalie_otw) AS goalie_otw,
   SUM(gps.goalie_otl) AS goalie_otl,
+  CASE WHEN COUNT(DISTINCT gps.game_id) > 0
+    THEN ROUND(CAST(SUM(gps.shots_against) AS NUMERIC)/COUNT(DISTINCT gps.game_id),1)
+    ELSE NULL END AS shots_per_game,
   ROUND(AVG(NULLIF(gps.overall_rating,0)),0)    AS overall_rating,
   ROUND(AVG(NULLIF(gps.offensive_rating,0)),0)  AS offensive_rating,
   ROUND(AVG(NULLIF(gps.defensive_rating,0)),0)  AS defensive_rating,
@@ -2103,8 +2122,9 @@ app.patch('/api/games/:id', requireAdmin, async (req, res) => {
        deflections,interceptions,hat_tricks,toi,
        saves,save_pct,goals_against,shots_against,
        goalie_wins,goalie_losses,goalie_otw,goalie_otl,
-       shutouts,penalty_shot_attempts,penalty_shot_ga,breakaway_shots,breakaway_saves)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+       shutouts,penalty_shot_attempts,penalty_shot_ga,breakaway_shots,breakaway_saves,
+       saucer_passes,pk_clears,desperation_saves,poke_check_saves)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `);
     // Goalie W/L/OTW/OTL/SO are derived from the game outcome, not the EA API
     const homeWon = home_score > away_score;
@@ -2133,7 +2153,8 @@ app.patch('/api/games/:id', requireAdmin, async (req, res) => {
           p.saves||0, p.savesPct||null, p.goalsAgainst||0, p.shotsAgainst||0,
           goalieWins, goalieLosses, goalieOtw, goalieOtl,
           shutouts, p.penaltyShotAttempts||0, p.penaltyShotGa||0,
-          p.breakawayShots||0, p.breakawaySaves||0
+          p.breakawayShots||0, p.breakawaySaves||0,
+          p.saucerPasses||0, p.pkClears||0, p.desperationSaves||0, p.pokeCheckSaves||0
         );
       }
     };
@@ -2233,7 +2254,17 @@ app.get('/api/stats/leaders', async (req, res) => {
       CASE WHEN SUM(gps.pass_attempts) > 0
         THEN ROUND(SUM(gps.pass_completions)*100.0/SUM(gps.pass_attempts),1)
         ELSE NULL END AS pass_pct_calc,
-      SUM(gps.hat_tricks) AS hat_tricks
+      SUM(gps.hat_tricks) AS hat_tricks,
+      SUM(gps.saucer_passes) AS saucer_passes,
+      SUM(gps.pk_clears) AS pk_clears,
+      SUM(CASE WHEN (gps.team_id = g.home_team_id AND g.home_score > g.away_score)
+                 OR (gps.team_id = g.away_team_id AND g.away_score > g.home_score) THEN 1 ELSE 0 END) AS player_wins,
+      SUM(CASE WHEN ((gps.team_id = g.home_team_id AND g.home_score < g.away_score)
+                  OR (gps.team_id = g.away_team_id AND g.away_score < g.home_score))
+               AND (g.is_overtime IS NULL OR g.is_overtime = 0) THEN 1 ELSE 0 END) AS player_losses,
+      SUM(CASE WHEN ((gps.team_id = g.home_team_id AND g.home_score < g.away_score)
+                  OR (gps.team_id = g.away_team_id AND g.away_score < g.home_score))
+               AND g.is_overtime = 1 THEN 1 ELSE 0 END) AS player_otl
     FROM game_player_stats gps
     JOIN games g ON gps.game_id = g.id
     LEFT JOIN ${rosterSub} ON rp.name = gps.player_name
@@ -2268,6 +2299,8 @@ app.get('/api/stats/leaders', async (req, res) => {
       SUM(gps.penalty_shot_ga) AS penalty_shot_ga,
       SUM(gps.breakaway_shots) AS breakaway_shots,
       SUM(gps.breakaway_saves) AS breakaway_saves,
+      SUM(gps.desperation_saves) AS desperation_saves,
+      SUM(gps.poke_check_saves) AS poke_check_saves,
       SUM(gps.goalie_wins) AS goalie_wins,
       SUM(gps.goalie_losses) AS goalie_losses,
       SUM(gps.goalie_otw) AS goalie_otw,
@@ -2284,12 +2317,9 @@ app.get('/api/stats/leaders', async (req, res) => {
     GROUP BY gps.player_name ORDER BY save_pct DESC
   `).all(...p);
 
-  // Null out save_pct and gaa for goalies below min GP threshold
+  // Compute S/G (shots against per game) for goalies
   for (const g of goalies) {
-    if (g.gp < goalieStatsMinGP) {
-      g.save_pct = null;
-      g.gaa = null;
-    }
+    g.shots_per_game = g.gp > 0 ? Math.round((g.shots_against / g.gp) * 10) / 10 : null;
   }
 
   // If a specific season was requested and it has no game_player_stats,
@@ -2308,7 +2338,8 @@ app.get('/api/stats/leaders', async (req, res) => {
         0 AS deflections, 0 AS interceptions, 0 AS giveaways, 0 AS takeaways,
         0 AS pass_attempts, 0 AS pass_completions, 0 AS hat_tricks,
         0 AS overall_rating, 0 AS offensive_rating, 0 AS defensive_rating, 0 AS team_play_rating,
-        0 AS shot_attempts
+        0 AS shot_attempts, 0 AS saucer_passes, 0 AS pk_clears,
+        0 AS player_wins, 0 AS player_losses, 0 AS player_otl
       FROM season_player_stats sps
       LEFT JOIN teams t ON t.id = sps.team_id
       WHERE sps.season_id = ? AND (sps.position IS NULL OR sps.position != 'G')
@@ -2324,16 +2355,18 @@ app.get('/api/stats/leaders', async (req, res) => {
         sps.goalie_wins, sps.goalie_losses, 0 AS goalie_otw, 0 AS goalie_otl,
         0 AS penalty_shot_attempts, 0 AS penalty_shot_ga,
         0 AS breakaway_shots, 0 AS breakaway_saves,
-        0 AS overall_rating, 0 AS offensive_rating, 0 AS defensive_rating, 0 AS team_play_rating
+        0 AS desperation_saves, 0 AS poke_check_saves,
+        0 AS overall_rating, 0 AS offensive_rating, 0 AS defensive_rating, 0 AS team_play_rating,
+        NULL AS shots_per_game
       FROM season_player_stats sps
       LEFT JOIN teams t ON t.id = sps.team_id
       WHERE sps.season_id = ? AND sps.position = 'G'
       ORDER BY sps.save_pct DESC
     `).all(seasonId);
-    return res.json({ skaters: histSkaters, goalies: histGoalies, goalieStatsMinGP });
+    return res.json({ skaters: histSkaters, goalies: histGoalies });
   }
 
-  res.json({ skaters, goalies, goalieStatsMinGP });
+  res.json({ skaters, goalies });
 });
 
 app.get('/api/admin/unrostered-stats', requireOwner, async (req, res) => {
@@ -3315,7 +3348,8 @@ app.get('/api/stats/historical', async (req, res) => {
       0 AS faceoff_wins, 0 AS faceoff_total,
       0 AS deflections, 0 AS interceptions, 0 AS giveaways, 0 AS takeaways,
       0 AS pass_attempts, 0 AS pass_completions, 0 AS hat_tricks, 0 AS penalties_drawn,
-      0 AS shot_attempts
+      0 AS shot_attempts, 0 AS saucer_passes, 0 AS pk_clears,
+      0 AS player_wins, 0 AS player_losses, 0 AS player_otl
     FROM season_player_stats sps
     LEFT JOIN teams t ON t.id = sps.team_id
     LEFT JOIN seasons s ON s.id = sps.season_id
@@ -3334,7 +3368,8 @@ app.get('/api/stats/historical', async (req, res) => {
       0 AS overall_rating, 0 AS shots_against, 0 AS toi,
       0 AS penalty_shot_attempts, 0 AS penalty_shot_ga,
       0 AS breakaway_shots, 0 AS breakaway_saves,
-      0 AS goalie_otw, 0 AS goalie_otl
+      0 AS desperation_saves, 0 AS poke_check_saves,
+      0 AS goalie_otw, 0 AS goalie_otl, NULL AS shots_per_game
     FROM season_player_stats sps
     LEFT JOIN teams t ON t.id = sps.team_id
     LEFT JOIN seasons s ON s.id = sps.season_id
