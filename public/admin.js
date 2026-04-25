@@ -1049,7 +1049,10 @@ function renderAdminSeriesRow(s, pl) {
   const lo   = s.low_seed_name  || 'TBD';
 
   return `<div style="display:flex;align-items:center;gap:0.5rem;background:#0d1117;border-radius:6px;padding:0.35rem 0.65rem;">
-    <span style="font-size:0.78rem;color:#8b949e;min-width:22px;">${s.high_seed_num || '?'}</span>
+    <input type="number" min="1" value="${s.high_seed_num || ''}" id="high-seed-num-${s.id}"
+      title="Edit high-seed number"
+      style="width:34px;text-align:center;background:#161b22;border:1px solid #30363d;color:#8b949e;border-radius:4px;padding:0.1rem;font-size:0.78rem;"
+      onblur="updateSeriesSeeds(${s.id})" onkeydown="if(event.key==='Enter')this.blur()" />
     <span style="font-size:0.82rem;font-weight:600;flex:1;${s.winner_id === s.high_seed_id ? 'color:#3fb950;' : ''}">${abbrevAdmin(hi)}</span>
     <input type="number" min="0" max="${winsToWin}" value="${s.high_seed_wins}" id="high-wins-${s.id}"
       style="width:38px;text-align:center;background:#161b22;border:1px solid #30363d;color:#e6edf3;border-radius:4px;padding:0.1rem;"
@@ -1059,9 +1062,27 @@ function renderAdminSeriesRow(s, pl) {
       style="width:38px;text-align:center;background:#161b22;border:1px solid #30363d;color:#e6edf3;border-radius:4px;padding:0.1rem;"
       onchange="updateSeriesWins(${s.id}, document.getElementById('high-wins-${s.id}').value, this.value)" />
     <span style="font-size:0.82rem;font-weight:600;flex:1;text-align:right;${s.winner_id === s.low_seed_id ? 'color:#3fb950;' : ''}">${abbrevAdmin(lo)}</span>
-    <span style="font-size:0.78rem;color:#8b949e;min-width:22px;text-align:right;">${s.low_seed_num || '?'}</span>
+    <input type="number" min="1" value="${s.low_seed_num || ''}" id="low-seed-num-${s.id}"
+      title="Edit low-seed number"
+      style="width:34px;text-align:center;background:#161b22;border:1px solid #30363d;color:#8b949e;border-radius:4px;padding:0.1rem;font-size:0.78rem;"
+      onblur="updateSeriesSeeds(${s.id})" onkeydown="if(event.key==='Enter')this.blur()" />
     ${done ? `<span style="font-size:0.75rem;color:#3fb950;margin-left:0.2rem;" title="Series complete">✓</span>` : ''}
   </div>`;
+}
+
+async function updateSeriesSeeds(seriesId) {
+  const hn = document.getElementById(`high-seed-num-${seriesId}`)?.value;
+  const ln = document.getElementById(`low-seed-num-${seriesId}`)?.value;
+  if (hn === '' && ln === '') return;
+  await fetch(`${API}/playoff-series/${seriesId}`, {
+    method: 'PATCH',
+    headers: adminJsonHeaders(),
+    body: JSON.stringify({
+      ...(hn !== '' && { high_seed_num: Number(hn) }),
+      ...(ln !== '' && { low_seed_num:  Number(ln) }),
+    }),
+  });
+  await loadAdminPlayoffs();
 }
 
 async function updateSeriesWins(seriesId, highWins, lowWins) {

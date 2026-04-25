@@ -54,7 +54,14 @@ function populateTeamFilter(games) {
 }
 
 function renderSchedule() {
-  renderScheduleSection('schedule-root', applyScheduleFilters(allGames));
+  // Compute total playoff rounds from the FULL (unfiltered) game list so that
+  // round labels (Quarterfinals / Semifinals / Final) remain correct even when
+  // the view is filtered down to a single team's games.
+  const allPlayoffNums = allGames
+    .filter(g => g.playoff_round_number != null && g.playoff_round_number > 0)
+    .map(g => g.playoff_round_number);
+  const totalRoundsHint = allPlayoffNums.length ? Math.max(...allPlayoffNums) : undefined;
+  renderScheduleSection('schedule-root', applyScheduleFilters(allGames), totalRoundsHint);
 }
 
 // ── Admin helpers ──────────────────────────────────────────────────────────
@@ -251,7 +258,7 @@ function buildGameTable(games) {
   return html;
 }
 
-function renderScheduleSection(containerId, games) {
+function renderScheduleSection(containerId, games, totalRoundsHint) {
   const root = document.getElementById(containerId);
   if (!root) return;
   if (!games || games.length === 0) {
@@ -277,7 +284,9 @@ function renderScheduleSection(containerId, games) {
   }
   const roundNumbers = Object.keys(byRound).map(Number).sort((a, b) => a - b);
   const playoffRounds = roundNumbers.filter(r => r > 0);
-  const totalRounds = playoffRounds.length > 0 ? Math.max(...playoffRounds) : 1;
+  // Use the hint (derived from the full season game list) so round labels remain
+  // correct even when the view is filtered down to a single team's games.
+  const totalRounds = totalRoundsHint || (playoffRounds.length > 0 ? Math.max(...playoffRounds) : 1);
 
   let html = '';
   for (const r of roundNumbers) {
