@@ -1131,8 +1131,10 @@ function mapEAPlayer(p) {
 async function fetchEA(url) {
   const res = await fetch(url, {
     headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36',
-      Accept: 'application/json', Referer: 'https://www.ea.com/', Origin: 'https://www.ea.com',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      Accept: 'application/json, text/plain, */*',
+      Referer: 'https://proclubs.ea.com/',
+      'Accept-Language': 'en-US,en;q=0.9',
     },
   });
   if (!res.ok) throw new Error(`EA API responded with ${res.status}`);
@@ -1146,16 +1148,27 @@ const SKATER_SELECT = `
   MAX(t.color1) AS team_color1, MAX(t.color2) AS team_color2, MAX(gps.position) AS position,
   COUNT(DISTINCT gps.game_id) AS gp,
   ROUND(AVG(CASE WHEN gps.overall_rating > 0 THEN CAST(gps.overall_rating AS NUMERIC)
+               WHEN GREATEST(gps.offensive_rating, gps.defensive_rating, gps.team_play_rating) > 0
+                 THEN GREATEST(0.0, LEAST(99.0,
+                   CASE WHEN gps.position ILIKE '%defense%'
+                     THEN (CAST(gps.offensive_rating AS NUMERIC)
+                           + CAST(gps.defensive_rating AS NUMERIC) * 2.0
+                           + CAST(gps.team_play_rating AS NUMERIC) * 1.5) / 4.5
+                     ELSE (CAST(gps.offensive_rating AS NUMERIC) * 2.0
+                           + CAST(gps.defensive_rating AS NUMERIC)
+                           + CAST(gps.team_play_rating AS NUMERIC) * 1.5) / 4.5
+                   END
+                 ))
                ELSE GREATEST(0.0, LEAST(99.0,
-                 50.0
-                 + LEAST(CAST(gps.goals AS NUMERIC) * 6.0, 20.0)
-                 + LEAST(CAST(gps.assists AS NUMERIC) * 3.0, 10.0)
-                 + GREATEST(LEAST(CAST(gps.plus_minus AS NUMERIC) * 3.0, 15.0), -15.0)
+                 60.0
+                 + LEAST(CAST(gps.goals AS NUMERIC) * 7.0, 21.0)
+                 + LEAST(CAST(gps.assists AS NUMERIC) * 4.0, 14.0)
+                 + GREATEST(LEAST(CAST(gps.plus_minus AS NUMERIC) * 3.0, 12.0), -12.0)
                  + LEAST(CAST(gps.shots AS NUMERIC) * 0.5, 5.0)
-                 + LEAST(CAST(gps.hits AS NUMERIC) * 0.4, 4.0)
-                 + LEAST(CAST(gps.blocked_shots AS NUMERIC) * 1.0, 4.0)
-                 + LEAST(CAST(gps.takeaways AS NUMERIC) * 1.0, 4.0)
-                 - LEAST(CAST(gps.giveaways AS NUMERIC) * 1.5, 8.0)
+                 + LEAST(CAST(gps.hits AS NUMERIC) * 0.5, 5.0)
+                 + LEAST(CAST(gps.blocked_shots AS NUMERIC) * 1.5, 6.0)
+                 + LEAST(CAST(gps.takeaways AS NUMERIC) * 1.5, 6.0)
+                 - LEAST(CAST(gps.giveaways AS NUMERIC) * 2.0, 8.0)
                  - LEAST(CAST(gps.pim AS NUMERIC) * 0.5, 5.0)
                ))
           END), 0) AS overall_rating,
@@ -1233,6 +1246,12 @@ const GOALIE_SELECT = `
     THEN ROUND(CAST(SUM(gps.shots_against) AS NUMERIC)/COUNT(DISTINCT gps.game_id),1)
     ELSE NULL END AS shots_per_game,
   ROUND(AVG(CASE WHEN gps.overall_rating > 0 THEN CAST(gps.overall_rating AS NUMERIC)
+               WHEN GREATEST(gps.defensive_rating, gps.offensive_rating, gps.team_play_rating) > 0
+                 THEN GREATEST(0.0, LEAST(99.0,
+                   (CAST(gps.defensive_rating AS NUMERIC) * 2.0
+                    + CAST(gps.offensive_rating AS NUMERIC)
+                    + CAST(gps.team_play_rating AS NUMERIC) * 1.5) / 4.5
+                 ))
                WHEN gps.shots_against > 0 THEN GREATEST(0.0, LEAST(99.0,
                  60.0
                  + (CAST(gps.shots_against - gps.goals_against AS NUMERIC) / CAST(gps.shots_against AS NUMERIC) * 100.0 - 88.0) * 3.0
@@ -2261,16 +2280,27 @@ app.get('/api/stats/leaders', async (req, res) => {
       COALESCE(MAX(u.position), MAX(gps.position)) AS position,
       COUNT(DISTINCT gps.game_id) AS gp,
       ROUND(AVG(CASE WHEN gps.overall_rating > 0 THEN CAST(gps.overall_rating AS NUMERIC)
+                     WHEN GREATEST(gps.offensive_rating, gps.defensive_rating, gps.team_play_rating) > 0
+                       THEN GREATEST(0.0, LEAST(99.0,
+                         CASE WHEN gps.position ILIKE '%defense%'
+                           THEN (CAST(gps.offensive_rating AS NUMERIC)
+                                 + CAST(gps.defensive_rating AS NUMERIC) * 2.0
+                                 + CAST(gps.team_play_rating AS NUMERIC) * 1.5) / 4.5
+                           ELSE (CAST(gps.offensive_rating AS NUMERIC) * 2.0
+                                 + CAST(gps.defensive_rating AS NUMERIC)
+                                 + CAST(gps.team_play_rating AS NUMERIC) * 1.5) / 4.5
+                         END
+                       ))
                      ELSE GREATEST(0.0, LEAST(99.0,
-                       50.0
-                       + LEAST(CAST(gps.goals AS NUMERIC) * 6.0, 20.0)
-                       + LEAST(CAST(gps.assists AS NUMERIC) * 3.0, 10.0)
-                       + GREATEST(LEAST(CAST(gps.plus_minus AS NUMERIC) * 3.0, 15.0), -15.0)
+                       60.0
+                       + LEAST(CAST(gps.goals AS NUMERIC) * 7.0, 21.0)
+                       + LEAST(CAST(gps.assists AS NUMERIC) * 4.0, 14.0)
+                       + GREATEST(LEAST(CAST(gps.plus_minus AS NUMERIC) * 3.0, 12.0), -12.0)
                        + LEAST(CAST(gps.shots AS NUMERIC) * 0.5, 5.0)
-                       + LEAST(CAST(gps.hits AS NUMERIC) * 0.4, 4.0)
-                       + LEAST(CAST(gps.blocked_shots AS NUMERIC) * 1.0, 4.0)
-                       + LEAST(CAST(gps.takeaways AS NUMERIC) * 1.0, 4.0)
-                       - LEAST(CAST(gps.giveaways AS NUMERIC) * 1.5, 8.0)
+                       + LEAST(CAST(gps.hits AS NUMERIC) * 0.5, 5.0)
+                       + LEAST(CAST(gps.blocked_shots AS NUMERIC) * 1.5, 6.0)
+                       + LEAST(CAST(gps.takeaways AS NUMERIC) * 1.5, 6.0)
+                       - LEAST(CAST(gps.giveaways AS NUMERIC) * 2.0, 8.0)
                        - LEAST(CAST(gps.pim AS NUMERIC) * 0.5, 5.0)
                      ))
                 END), 0) AS overall_rating,
@@ -2358,6 +2388,12 @@ app.get('/api/stats/leaders', async (req, res) => {
       SUM(gps.goalie_otw) AS goalie_otw,
       SUM(gps.goalie_otl) AS goalie_otl,
       ROUND(AVG(CASE WHEN gps.overall_rating > 0 THEN CAST(gps.overall_rating AS NUMERIC)
+                     WHEN GREATEST(gps.defensive_rating, gps.offensive_rating, gps.team_play_rating) > 0
+                       THEN GREATEST(0.0, LEAST(99.0,
+                         (CAST(gps.defensive_rating AS NUMERIC) * 2.0
+                          + CAST(gps.offensive_rating AS NUMERIC)
+                          + CAST(gps.team_play_rating AS NUMERIC) * 1.5) / 4.5
+                       ))
                      WHEN gps.shots_against > 0 THEN GREATEST(0.0, LEAST(99.0,
                        60.0
                        + (CAST(gps.shots_against - gps.goals_against AS NUMERIC) / CAST(gps.shots_against AS NUMERIC) * 100.0 - 88.0) * 3.0

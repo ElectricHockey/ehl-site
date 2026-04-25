@@ -28,13 +28,19 @@
   // ── Rating colour helpers ───────────────────────────────────────────────
 
   // Returns the overall rating for a player.  Uses the EA-stored overall_rating when
-  // available (most accurate), falling back to an average of the component ratings,
-  // then falling back to a stat-based score when no ratings are present.
+  // available (most accurate), then falls back to position-weighted sub-ratings,
+  // then to a stat-based score when no ratings are present.
   function computeOvr(p) {
     if (p.overall_rating && p.overall_rating > 0) return p.overall_rating;
-    const vals = [p.offensive_rating, p.defensive_rating, p.team_play_rating]
-      .map(Number).filter(v => v > 0);
-    if (vals.length) return Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
+    const off = Number(p.offensive_rating) || 0;
+    const def = Number(p.defensive_rating) || 0;
+    const tpl = Number(p.team_play_rating) || 0;
+    if (off > 0 || def > 0 || tpl > 0) {
+      const isD = /defense/i.test(p.position || '') || /^[lr]d$/i.test(p.position || '');
+      const isG = /goalie/i.test(p.position || '') || (p.position || '').toUpperCase() === 'G';
+      if (isG || isD) return Math.round((def * 2 + off + tpl * 1.5) / 4.5);
+      return Math.round((off * 2 + def + tpl * 1.5) / 4.5);
+    }
     // Stat-based fallback so top-3 stars can still be selected
     const isG = (p.position || '').toUpperCase() === 'G';
     if (isG) {
@@ -43,12 +49,18 @@
       const svp = sa > 0 ? sv / sa : 0;
       return Math.round(svp * 60 + sv * 0.5 + (Number(p.shutouts) || 0) * 10);
     }
-    return Math.round(
-      (Number(p.points) || 0) * 5 +
-      (Number(p.goals)  || 0) * 3 +
-      (Number(p.plus_minus) || 0) * 2 +
-      (Number(p.hits)   || 0) * 0.5
-    );
+    return Math.round(Math.max(0, Math.min(99,
+      60 +
+      Math.min((Number(p.goals)         || 0) * 7,   21) +
+      Math.min((Number(p.assists)        || 0) * 4,   14) +
+      Math.max(Math.min((Number(p.plus_minus) || 0) * 3, 12), -12) +
+      Math.min((Number(p.shots)          || 0) * 0.5,  5) +
+      Math.min((Number(p.hits)           || 0) * 0.5,  5) +
+      Math.min((Number(p.blocked_shots)  || 0) * 1.5,  6) +
+      Math.min((Number(p.takeaways)      || 0) * 1.5,  6) -
+      Math.min((Number(p.giveaways)      || 0) * 2,    8) -
+      Math.min((Number(p.pim)            || 0) * 0.5,  5)
+    )));
   }
 
   function ratingStyle(v) {
