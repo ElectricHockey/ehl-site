@@ -2393,8 +2393,14 @@ async function calcStandings(seasonId) {
       away_w: 0, away_l: 0, away_otl: 0,
       _results: [],
       remaining: remainingMap[t.id] || 0,
+      pim_for: 0,
     };
   }
+
+  // Head-to-head win map: h2h[teamA][teamB] = regulation/OT wins by A against B
+  const h2h = {};
+  const ensureH2h = id => { if (!h2h[id]) h2h[id] = {}; };
+
   for (const g of games) {
     const home = stats[g.home_team_id], away = stats[g.away_team_id];
     if (!home || !away) continue;
@@ -2402,14 +2408,32 @@ async function calcStandings(seasonId) {
     home.gf += g.home_score; home.ga += g.away_score;
     away.gf += g.away_score; away.ga += g.home_score;
     const ot = !!g.is_overtime;
+    ensureH2h(g.home_team_id); ensureH2h(g.away_team_id);
     if (g.home_score > g.away_score) {
       if (ot) { home.w++; home.otw++; home.pts += 2; home.home_w++; away.otl++; away.pts++; away.away_otl++; home._results.push('W'); away._results.push('OTL'); }
       else    { home.w++; home.pts += 2; home.home_w++; away.l++; away.away_l++; home._results.push('W'); away._results.push('L'); }
+      h2h[g.home_team_id][g.away_team_id] = (h2h[g.home_team_id][g.away_team_id] || 0) + 1;
     } else if (g.away_score > g.home_score) {
       if (ot) { away.w++; away.otw++; away.pts += 2; away.away_w++; home.otl++; home.pts++; home.home_otl++; away._results.push('W'); home._results.push('OTL'); }
       else    { away.w++; away.pts += 2; away.away_w++; home.l++; home.home_l++; away._results.push('W'); home._results.push('L'); }
+      h2h[g.away_team_id][g.home_team_id] = (h2h[g.away_team_id][g.home_team_id] || 0) + 1;
     } else { home.pts++; away.pts++; home._results.push('T'); away._results.push('T'); }
   }
+
+  // Load penalty minutes per team for the season (tiebreaker #7)
+  if (seasonId && teamIds.size > 0) {
+    const pimRows = await db.prepare(
+      `SELECT gps.team_id, SUM(gps.pim) AS pim_total
+       FROM game_player_stats gps
+       JOIN games g ON gps.game_id = g.id
+       WHERE g.season_id = ? AND g.status IN ('complete','forfeit')
+       GROUP BY gps.team_id`
+    ).all(seasonId);
+    for (const row of pimRows) {
+      if (stats[row.team_id]) stats[row.team_id].pim_for = row.pim_total || 0;
+    }
+  }
+
   for (const t of Object.values(stats)) {
     if (t._results.length === 0) { t.streak = '—'; }
     else {
@@ -2428,7 +2452,32 @@ async function calcStandings(seasonId) {
     delete t._results;
   }
 
-  const sorted = Object.values(stats).sort((a, b) => b.pts - a.pts || b.w - a.w);
+  // ── Full tiebreaker comparator ─────────────────────────────────────────
+  // 1. Points  2. Regulation Wins  3. H2H Wins  4. Goal Diff
+  // 5. Total Wins  6. Goals For  7. Least Goals Against  8. Least PIM Against
+  function cmpTeams(a, b) {
+    if (b.pts !== a.pts) return b.pts - a.pts;
+    // 1. Regulation wins (wins not in OT)
+    const rw_a = a.w - a.otw, rw_b = b.w - b.otw;
+    if (rw_b !== rw_a) return rw_b - rw_a;
+    // 2. Head-to-head wins (a's wins vs b vs b's wins vs a)
+    const h2h_a = (h2h[a.id] && h2h[a.id][b.id]) || 0;
+    const h2h_b = (h2h[b.id] && h2h[b.id][a.id]) || 0;
+    if (h2h_a !== h2h_b) return h2h_b - h2h_a;
+    // 3. Goal differential
+    const diff_a = a.gf - a.ga, diff_b = b.gf - b.ga;
+    if (diff_b !== diff_a) return diff_b - diff_a;
+    // 4. Total wins
+    if (b.w !== a.w) return b.w - a.w;
+    // 5. Greater goals for
+    if (b.gf !== a.gf) return b.gf - a.gf;
+    // 6. Least goals against (lower is better)
+    if (a.ga !== b.ga) return a.ga - b.ga;
+    // 7. Least penalty minutes (lower is better)
+    return (a.pim_for || 0) - (b.pim_for || 0);
+  }
+
+  const sorted = Object.values(stats).sort(cmpTeams);
 
   // ── NHL-style clinch indicators ────────────────────────────────────────
   // Only compute if a playoff bracket is configured for this season
@@ -2436,27 +2485,46 @@ async function calcStandings(seasonId) {
     const pc = await db.prepare('SELECT teams_qualify FROM playoffs WHERE season_id = ?').get(seasonId);
     if (pc) {
       const N = Math.min(pc.teams_qualify, sorted.length);
+
+      // Helper: can opponent 'o' surpass team 't' given remaining games?
+      // Uses the full tiebreaker chain. Returns true if there is any possible
+      // outcome where o would rank above t.
+      function canSurpass(o, t) {
+        const maxPts = o.pts + 2 * o.remaining;
+        if (maxPts < t.pts) return false;
+        if (maxPts > t.pts) return true;
+        // Equal pts scenario — worst case: o wins all remaining games in regulation (max reg wins)
+        const rw_t = t.w - t.otw;
+        const maxRegW_o = (o.w - o.otw) + o.remaining;
+        if (maxRegW_o < rw_t) return false;
+        if (maxRegW_o > rw_t) return true;
+        // Reg wins tied — H2H can still change; if o has remaining games assume possible
+        if (o.remaining > 0) return true;
+        // All games done — use actual tiebreakers
+        return cmpTeams(o, t) < 0; // o sorts above t (cmpTeams < 0 means o before t)
+      }
+
+      // Helper: is team t currently ranked first among the given peer list using tiebreakers?
+      function isLeader(t, peers) {
+        return peers.length > 0 && peers.every(o => cmpTeams(t, o) < 0);
+      }
+
       for (let i = 0; i < sorted.length; i++) {
         const t = sorted[i];
         const rank = i + 1;
         t.clinch = null;
 
         if (rank <= N) {
-          // P – clinched Presidents' Trophy (best record in league, no one can surpass)
-          // "surpass" = reach more pts, OR tie pts with same-or-more wins (tiebreaker)
+          // P – clinched Presidents' Trophy (best overall record, tiebreaker-aware)
           if (rank === 1) {
-            const canPass = sorted.slice(1).some(o =>
-              o.pts + 2 * o.remaining > t.pts ||
-              (o.pts + 2 * o.remaining === t.pts && o.w + o.remaining >= t.w)
-            );
-            if (!canPass) { t.clinch = 'P'; continue; }
+            const anyCanPass = sorted.slice(1).some(o => canSurpass(o, t));
+            if (!anyCanPass) { t.clinch = 'P'; continue; }
           }
 
           // Z – clinched conference title (first in conf, no conf peer can catch)
           if (t.conference) {
             const confPeers = sorted.filter(o => o.id !== t.id && o.conference === t.conference);
-            const isConfLeader = confPeers.length > 0 && confPeers.every(o => o.pts < t.pts || (o.pts === t.pts && o.w < t.w));
-            if (isConfLeader && !confPeers.some(o => o.pts + 2 * o.remaining >= t.pts)) {
+            if (isLeader(t, confPeers) && !confPeers.some(o => canSurpass(o, t))) {
               t.clinch = 'Z'; continue;
             }
           }
@@ -2464,8 +2532,7 @@ async function calcStandings(seasonId) {
           // Y – clinched division title (first in div, no div peer can catch)
           if (t.division && t.conference) {
             const divPeers = sorted.filter(o => o.id !== t.id && o.division === t.division && o.conference === t.conference);
-            const isDivLeader = divPeers.length > 0 && divPeers.every(o => o.pts < t.pts || (o.pts === t.pts && o.w < t.w));
-            if (isDivLeader && !divPeers.some(o => o.pts + 2 * o.remaining >= t.pts)) {
+            if (isLeader(t, divPeers) && !divPeers.some(o => canSurpass(o, t))) {
               t.clinch = 'Y'; continue;
             }
           }
@@ -2476,7 +2543,7 @@ async function calcStandings(seasonId) {
             t.clinch = 'X';
           }
         } else {
-          // E – mathematically eliminated (max possible pts < current pts of last playoff team)
+          // E – mathematically eliminated (max possible pts < pts of last playoff team)
           if (t.pts + 2 * t.remaining < sorted[N - 1].pts) {
             t.clinch = 'E';
           }
