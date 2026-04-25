@@ -87,6 +87,17 @@
           style="background:#161b22;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.4rem 0.5rem;font-size:0.88rem;width:62px;"
           oninput="onStatsMinGP(this.value)" />
       </label>
+      <label style="color:#8b949e;font-size:0.88rem;display:flex;align-items:center;gap:0.35rem;">
+        Show:
+        <select id="stats-player-limit"
+          style="background:#161b22;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.4rem 0.65rem;font-size:0.88rem;"
+          onchange="onStatsPlayerLimit(this.value)">
+          <option value="0">All</option>
+          <option value="10">10</option>
+          <option value="25">25</option>
+          <option value="50">50</option>
+        </select>
+      </label>
     </div>
 
     <div id="tab-skaters" class="tab-section active">

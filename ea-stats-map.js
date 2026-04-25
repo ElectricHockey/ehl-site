@@ -109,4 +109,16 @@ module.exports = {
   // ── Goalie: Breakaways ────────────────────────────────────────────────────
   glbrkshots:             'breakawayShots', // breakaway shots against
   glbrksaves:             'breakawaySaves', // breakaway saves
+
+  // ── Skater: Saucer Passes ─────────────────────────────────────────────────
+  sksaucerpasses:         'saucerPasses',   // saucer passes
+
+  // ── Skater: PK Clears ────────────────────────────────────────────────────
+  skpkclearzone:          'pkClears',       // penalty kill clears
+
+  // ── Goalie: Desperation Saves ─────────────────────────────────────────────
+  gldsaves:               'desperationSaves', // desperation saves
+
+  // ── Goalie: Poke Check Saves ──────────────────────────────────────────────
+  glpokechecks:           'pokeCheckSaves',   // poke check saves
 };
