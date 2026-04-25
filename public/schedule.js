@@ -542,8 +542,16 @@ async function openPicker(gameId) {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      body.innerHTML = `<p class="picker-error">⚠️ ${err.error || 'Failed to load EA matches.'}</p>
-        ${err.error && err.error.includes('EA club ID') ? `<p class="picker-empty">Set the home team's EA Club ID in the <a href="admin.html">Admin Panel</a>.</p>` : ''}`;
+      // Show a short, actionable message for EA API failures rather than
+      // the full server-side error string.
+      let msg;
+      if (err.error && err.error.toLowerCase().includes('ea club id')) {
+        msg = `⚠️ ${err.error}`;
+        body.innerHTML = `<p class="picker-error">${msg}</p>
+          <p class="picker-empty">Set the home team's EA Club ID in the <a href="admin.html">Admin Panel</a>.</p>`;
+      } else {
+        body.innerHTML = `<p class="picker-error">⚠️ Failed to fetch EA data. EA's private match API is currently unavailable — please enter stats manually.</p>`;
+      }
       return;
     }
     const data = await res.json();

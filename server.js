@@ -596,6 +596,13 @@ app.post('/api/seasons/:id/reorder', requireOwner, async (req, res) => {
   const season = await db.prepare('SELECT * FROM seasons WHERE id = ?').get(req.params.id);
   if (!season) return res.status(404).json({ error: 'Season not found' });
 
+  // Playoff seasons are display-only children of their parent regular season;
+  // they always appear directly above their parent in the list and cannot be
+  // reordered independently (doing so corrupts the regular-season sort_order).
+  if (season.is_playoff) {
+    return res.status(400).json({ error: 'Playoff seasons cannot be reordered directly. Move the parent regular season instead.' });
+  }
+
   // Get only seasons of the same league_type so arrows move within the filtered view
   const lt = season.league_type || '';
   const all = lt

@@ -299,17 +299,27 @@ async function loadSeasons() {
   if (filteredSeasons.length === 0) {
     list.innerHTML = `<p style="color:#8b949e;font-size:0.85rem;">No ${adminLeagueFilter === 'threes' ? "3's" : "6's"} seasons yet. Create one above.</p>`;
   } else {
-    list.innerHTML = filteredSeasons.map((s, idx) => `
+    // Pre-compute the positions of non-playoff seasons so we can correctly
+    // disable ▲ / ▼ at the boundaries without counting playoff-only rows.
+    const regularIdxs = filteredSeasons.reduce((acc, s, i) => { if (!s.is_playoff) acc.push(i); return acc; }, []);
+    list.innerHTML = filteredSeasons.map((s, idx) => {
+      const riPos      = regularIdxs.indexOf(idx);
+      const upDisabled = (!s.is_playoff && riPos <= 0) ? ' disabled' : '';
+      const downDisabled = (!s.is_playoff && riPos >= regularIdxs.length - 1) ? ' disabled' : '';
+      return `
       <div class="season-item">
         ${s.is_active ? '<span class="season-active-badge">★ Active</span>' : ''}
         ${s.is_playoff ? '<span style="background:#2d1b00;color:#e3b341;border:1px solid #9e6a03;border-radius:10px;padding:0.1rem 0.45rem;font-size:0.72rem;margin-right:0.25rem;">🏆 Playoffs</span>' : ''}
         <strong style="flex:1;">${s.name}</strong>
         <span style="color:#8b949e;font-size:0.8rem;">${typeLabel(s.league_type)}</span>
-        <button style="font-size:0.75rem;padding:0.15rem 0.4rem;background:#21262d;border:1px solid #30363d;color:#8b949e;border-radius:4px;cursor:pointer;" onclick="moveSeasonUp(${s.id})" ${idx === 0 ? 'disabled' : ''} title="Move up">▲</button>
-        <button style="font-size:0.75rem;padding:0.15rem 0.4rem;background:#21262d;border:1px solid #30363d;color:#8b949e;border-radius:4px;cursor:pointer;" onclick="moveSeasonDown(${s.id})" ${idx === filteredSeasons.length - 1 ? 'disabled' : ''} title="Move down">▼</button>
+        ${!s.is_playoff ? `
+        <button style="font-size:0.75rem;padding:0.15rem 0.4rem;background:#21262d;border:1px solid #30363d;color:#8b949e;border-radius:4px;cursor:pointer;" onclick="moveSeasonUp(${s.id})"${upDisabled} title="Move up">▲</button>
+        <button style="font-size:0.75rem;padding:0.15rem 0.4rem;background:#21262d;border:1px solid #30363d;color:#8b949e;border-radius:4px;cursor:pointer;" onclick="moveSeasonDown(${s.id})"${downDisabled} title="Move down">▼</button>
+        ` : ''}
         ${!s.is_active && !s.is_playoff ? `<button class="btn-secondary" style="font-size:0.8rem;padding:0.25rem 0.6rem;" onclick="setActiveSeason(${s.id})">Set Active</button>` : ''}
         <button class="btn-danger" style="font-size:0.8rem;padding:0.25rem 0.6rem;" onclick="deleteSeason(${s.id}, ${s.is_playoff ? 'true' : 'false'})">Delete</button>
-      </div>`).join('');
+      </div>`;
+    }).join('');
   }
 
   // Populate season dropdowns in game form – filtered by current league, exclude auto-created playoff seasons
