@@ -64,12 +64,14 @@ function computeOvr(p) {
 
 function ratingStyle(v) {
   if (!v || v <= 0) return 'color:#484f58;';
-  if (v >= 90) return 'background:rgba(35,134,54,0.35);color:#2ea043;font-weight:700;';
-  if (v >= 80) return 'background:rgba(35,134,54,0.28);color:#3fb950;font-weight:700;';
-  if (v >= 70) return 'background:rgba(46,160,67,0.18);color:#56d364;font-weight:600;';
-  if (v >= 60) return 'background:rgba(158,106,3,0.22);color:#e3b341;font-weight:600;';
-  if (v >= 50) return 'background:rgba(188,76,0,0.22);color:#f0883e;';
-  return 'background:rgba(248,81,73,0.18);color:#f85149;';
+  // Continuous HSL gradient: red (low) → yellow (mid) → green (high)
+  const t = Math.max(0, Math.min(1, (v - 45) / (99 - 45)));
+  const hue = Math.round(t * 120);          // 0° red → 120° green
+  const bgAlpha = (0.12 + t * 0.23).toFixed(2);
+  const bgL = 22 + Math.round(t * 12);      // bg lightness 22–34%
+  const textL = 58 + Math.round(t * 8);     // text lightness 58–66%
+  const fw = v >= 80 ? 'font-weight:700;' : v >= 65 ? 'font-weight:600;' : '';
+  return `background:hsla(${hue},90%,${bgL}%,${bgAlpha});color:hsl(${hue},90%,${textL}%);${fw}`;
 }
 
 function ovrStyle(v) {
