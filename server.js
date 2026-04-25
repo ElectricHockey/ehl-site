@@ -554,61 +554,57 @@ app.delete('/api/seasons/:id', requireOwner, async (req, res) => {
   const season = await db.prepare('SELECT * FROM seasons WHERE id = ?').get(req.params.id);
   if (!season) return res.status(404).json({ error: 'Season not found' });
 
-  // Helper: fully delete one playoff bracket (series games, series, teams, bracket row)
-  async function deletePlayoffBracket(playoffId) {
-    const series = await db.prepare('SELECT id FROM playoff_series WHERE playoff_id = ?').all(playoffId);
-    for (const s of series) {
-      const seriesGames = await db.prepare('SELECT id FROM games WHERE playoff_series_id = ?').all(s.id);
-      for (const sg of seriesGames) {
-        await db.prepare('DELETE FROM game_player_stats WHERE game_id = ?').run(sg.id);
+  await db.transaction(async (tx) => {
+    // Helper: fully delete one playoff bracket (series games, series, teams, bracket row)
+    async function deletePlayoffBracket(playoffId) {
+      const series = await tx.prepare('SELECT id FROM playoff_series WHERE playoff_id = ?').all(playoffId);
+      for (const s of series) {
+        const seriesGames = await tx.prepare('SELECT id FROM games WHERE playoff_series_id = ?').all(s.id);
+        for (const sg of seriesGames) {
+          await tx.prepare('DELETE FROM game_player_stats WHERE game_id = ?').run(sg.id);
+        }
+        await tx.prepare('DELETE FROM games WHERE playoff_series_id = ?').run(s.id);
       }
-      await db.prepare('DELETE FROM games WHERE playoff_series_id = ?').run(s.id);
+      await tx.prepare('DELETE FROM playoff_series WHERE playoff_id = ?').run(playoffId);
+      await tx.prepare('DELETE FROM playoff_teams WHERE playoff_id = ?').run(playoffId);
+      await tx.prepare('DELETE FROM playoffs WHERE id = ?').run(playoffId);
     }
-    await db.prepare('DELETE FROM playoff_series WHERE playoff_id = ?').run(playoffId);
-    await db.prepare('DELETE FROM playoff_teams WHERE playoff_id = ?').run(playoffId);
-    await db.prepare('DELETE FROM playoffs WHERE id = ?').run(playoffId);
-  }
 
-  // Helper: fully delete a season row and its associated games/stats
-  async function deleteSeasonData(seasonId) {
-    await db.prepare('DELETE FROM game_player_stats WHERE game_id IN (SELECT id FROM games WHERE season_id = ?)').run(seasonId);
-    await db.prepare('DELETE FROM games WHERE season_id = ?').run(seasonId);
-    await db.prepare('DELETE FROM season_player_stats WHERE season_id = ?').run(seasonId);
-    await db.prepare('DELETE FROM season_team_conf WHERE season_id = ?').run(seasonId);
-    await db.prepare('DELETE FROM seasons WHERE id = ?').run(seasonId);
-  }
-
-  // If it's a playoff season, clean up associated playoff bracket data first
-  if (season.is_playoff) {
-    // Find playoffs that reference this as their playoff_season_id
-    const playoffs = await db.prepare('SELECT id FROM playoffs WHERE playoff_season_id = ?').all(req.params.id);
-    for (const p of playoffs) {
-      await deletePlayoffBracket(p.id);
+    // Helper: fully delete a season row and its associated games/stats
+    async function deleteSeasonData(seasonId) {
+      await tx.prepare('DELETE FROM game_player_stats WHERE game_id IN (SELECT id FROM games WHERE season_id = ?)').run(seasonId);
+      await tx.prepare('DELETE FROM games WHERE season_id = ?').run(seasonId);
+      await tx.prepare('DELETE FROM season_player_stats WHERE season_id = ?').run(seasonId);
+      await tx.prepare('DELETE FROM season_team_conf WHERE season_id = ?').run(seasonId);
+      await tx.prepare('DELETE FROM seasons WHERE id = ?').run(seasonId);
     }
-  }
 
-  // If it's a regular season, also delete the linked playoff bracket (and its season)
-  if (!season.is_playoff) {
-    const linkedPlayoff = await db.prepare('SELECT * FROM playoffs WHERE season_id = ?').get(req.params.id);
-    if (linkedPlayoff) {
-      await deletePlayoffBracket(linkedPlayoff.id);
-      // Also delete the linked playoff season (the is_playoff=1 season) if present
-      if (linkedPlayoff.playoff_season_id) {
-        await deleteSeasonData(linkedPlayoff.playoff_season_id);
+    // If it's a playoff season, clean up associated playoff bracket data first
+    if (season.is_playoff) {
+      const playoffs = await tx.prepare('SELECT id FROM playoffs WHERE playoff_season_id = ?').all(req.params.id);
+      for (const p of playoffs) {
+        await deletePlayoffBracket(p.id);
       }
     }
-  }
 
-  // Delete all game stats and games from this season
-  await db.prepare('DELETE FROM game_player_stats WHERE game_id IN (SELECT id FROM games WHERE season_id = ?)').run(req.params.id);
-  await db.prepare('DELETE FROM games WHERE season_id = ?').run(req.params.id);
+    // If it's a regular season, also delete the linked playoff bracket (and its season)
+    if (!season.is_playoff) {
+      const linkedPlayoff = await tx.prepare('SELECT * FROM playoffs WHERE season_id = ?').get(req.params.id);
+      if (linkedPlayoff) {
+        await deletePlayoffBracket(linkedPlayoff.id);
+        if (linkedPlayoff.playoff_season_id) {
+          await deleteSeasonData(linkedPlayoff.playoff_season_id);
+        }
+      }
+    }
 
-  // Delete season_player_stats (imported historical data) — CASCADE handles this,
-  // but be explicit for clarity
-  await db.prepare('DELETE FROM season_player_stats WHERE season_id = ?').run(req.params.id);
+    // Delete all game stats and games from this season
+    await tx.prepare('DELETE FROM game_player_stats WHERE game_id IN (SELECT id FROM games WHERE season_id = ?)').run(req.params.id);
+    await tx.prepare('DELETE FROM games WHERE season_id = ?').run(req.params.id);
+    await tx.prepare('DELETE FROM season_player_stats WHERE season_id = ?').run(req.params.id);
+    await tx.prepare('DELETE FROM seasons WHERE id = ?').run(req.params.id);
+  });
 
-  const result = await db.prepare('DELETE FROM seasons WHERE id = ?').run(req.params.id);
-  if (result.changes === 0) return res.status(404).json({ error: 'Season not found' });
   res.json({ deleted: true });
 });
 
