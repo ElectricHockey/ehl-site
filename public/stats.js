@@ -12,8 +12,9 @@ function pct3(v) {
 // Stat percentage (fow%, shot%, pass%) with null guard, e.g. 47.3%
 function fmtPct(v) { return v !== null && v !== undefined ? Number(v).toFixed(1) + '%' : '–'; }
 
-// Compute a single OVR from the three EA sub-ratings (ignores zeros/nulls)
+// Compute a single OVR — prefer server-computed overall_rating, fall back to sub-ratings
 function computeOvr(p) {
+  if (p.overall_rating && Number(p.overall_rating) > 0) return Number(p.overall_rating);
   const vals = [p.offensive_rating, p.defensive_rating, p.team_play_rating]
     .map(Number).filter(v => v > 0);
   return vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null;

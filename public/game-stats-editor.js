@@ -15,6 +15,7 @@
 
   // ── Column definitions ─────────────────────────────────────────────────
   const GS_COLS = [
+    { l:'OVR',  k:'overallRating',        w:42, mn:0 },
     { l:'G',    k:'goals',                w:38 },
     { l:'A',    k:'assists',              w:38 },
     { l:'+/-',  k:'plusMinus',            w:42, mn:-99 },
@@ -55,6 +56,7 @@
     return {
       name:                p.player_name             || '',
       position:            p.position                || '',
+      overallRating:       p.overall_rating          || 0,
       offensiveRating:     p.offensive_rating        || 0,
       defensiveRating:     p.defensive_rating        || 0,
       teamPlayRating:      p.team_play_rating        || 0,

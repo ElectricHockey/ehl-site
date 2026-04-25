@@ -554,23 +554,48 @@ app.delete('/api/seasons/:id', requireOwner, async (req, res) => {
   const season = await db.prepare('SELECT * FROM seasons WHERE id = ?').get(req.params.id);
   if (!season) return res.status(404).json({ error: 'Season not found' });
 
-  // If it's a playoff season, clean up associated playoff data
+  // Helper: fully delete one playoff bracket (series games, series, teams, bracket row)
+  async function deletePlayoffBracket(playoffId) {
+    const series = await db.prepare('SELECT id FROM playoff_series WHERE playoff_id = ?').all(playoffId);
+    for (const s of series) {
+      const seriesGames = await db.prepare('SELECT id FROM games WHERE playoff_series_id = ?').all(s.id);
+      for (const sg of seriesGames) {
+        await db.prepare('DELETE FROM game_player_stats WHERE game_id = ?').run(sg.id);
+      }
+      await db.prepare('DELETE FROM games WHERE playoff_series_id = ?').run(s.id);
+    }
+    await db.prepare('DELETE FROM playoff_series WHERE playoff_id = ?').run(playoffId);
+    await db.prepare('DELETE FROM playoff_teams WHERE playoff_id = ?').run(playoffId);
+    await db.prepare('DELETE FROM playoffs WHERE id = ?').run(playoffId);
+  }
+
+  // Helper: fully delete a season row and its associated games/stats
+  async function deleteSeasonData(seasonId) {
+    await db.prepare('DELETE FROM game_player_stats WHERE game_id IN (SELECT id FROM games WHERE season_id = ?)').run(seasonId);
+    await db.prepare('DELETE FROM games WHERE season_id = ?').run(seasonId);
+    await db.prepare('DELETE FROM season_player_stats WHERE season_id = ?').run(seasonId);
+    await db.prepare('DELETE FROM season_team_conf WHERE season_id = ?').run(seasonId);
+    await db.prepare('DELETE FROM seasons WHERE id = ?').run(seasonId);
+  }
+
+  // If it's a playoff season, clean up associated playoff bracket data first
   if (season.is_playoff) {
     // Find playoffs that reference this as their playoff_season_id
     const playoffs = await db.prepare('SELECT id FROM playoffs WHERE playoff_season_id = ?').all(req.params.id);
     for (const p of playoffs) {
-      // Delete series games' stats, then the games, then series, then the playoff
-      const series = await db.prepare('SELECT id FROM playoff_series WHERE playoff_id = ?').all(p.id);
-      for (const s of series) {
-        const seriesGames = await db.prepare('SELECT id FROM games WHERE playoff_series_id = ?').all(s.id);
-        for (const sg of seriesGames) {
-          await db.prepare('DELETE FROM game_player_stats WHERE game_id = ?').run(sg.id);
-        }
-        await db.prepare('DELETE FROM games WHERE playoff_series_id = ?').run(s.id);
+      await deletePlayoffBracket(p.id);
+    }
+  }
+
+  // If it's a regular season, also delete the linked playoff bracket (and its season)
+  if (!season.is_playoff) {
+    const linkedPlayoff = await db.prepare('SELECT * FROM playoffs WHERE season_id = ?').get(req.params.id);
+    if (linkedPlayoff) {
+      await deletePlayoffBracket(linkedPlayoff.id);
+      // Also delete the linked playoff season (the is_playoff=1 season) if present
+      if (linkedPlayoff.playoff_season_id) {
+        await deleteSeasonData(linkedPlayoff.playoff_season_id);
       }
-      await db.prepare('DELETE FROM playoff_series WHERE playoff_id = ?').run(p.id);
-      await db.prepare('DELETE FROM playoff_teams WHERE playoff_id = ?').run(p.id);
-      await db.prepare('DELETE FROM playoffs WHERE id = ?').run(p.id);
     }
   }
 
@@ -1124,7 +1149,20 @@ const SKATER_SELECT = `
   MAX(gps.player_name) AS name, MAX(gps.team_id) AS team_id, MAX(t.name) AS team_name, MAX(t.logo_url) AS team_logo,
   MAX(t.color1) AS team_color1, MAX(t.color2) AS team_color2, MAX(gps.position) AS position,
   COUNT(DISTINCT gps.game_id) AS gp,
-  ROUND(AVG(NULLIF(gps.overall_rating,0)),0)    AS overall_rating,
+  ROUND(AVG(CASE WHEN gps.overall_rating > 0 THEN CAST(gps.overall_rating AS NUMERIC)
+               ELSE GREATEST(0.0, LEAST(99.0,
+                 50.0
+                 + LEAST(CAST(gps.goals AS NUMERIC) * 6.0, 20.0)
+                 + LEAST(CAST(gps.assists AS NUMERIC) * 3.0, 10.0)
+                 + GREATEST(LEAST(CAST(gps.plus_minus AS NUMERIC) * 3.0, 15.0), -15.0)
+                 + LEAST(CAST(gps.shots AS NUMERIC) * 0.5, 5.0)
+                 + LEAST(CAST(gps.hits AS NUMERIC) * 0.4, 4.0)
+                 + LEAST(CAST(gps.blocked_shots AS NUMERIC) * 1.0, 4.0)
+                 + LEAST(CAST(gps.takeaways AS NUMERIC) * 1.0, 4.0)
+                 - LEAST(CAST(gps.giveaways AS NUMERIC) * 1.5, 8.0)
+                 - LEAST(CAST(gps.pim AS NUMERIC) * 0.5, 5.0)
+               ))
+          END), 0) AS overall_rating,
   ROUND(AVG(NULLIF(gps.offensive_rating,0)),0)  AS offensive_rating,
   ROUND(AVG(NULLIF(gps.defensive_rating,0)),0)  AS defensive_rating,
   ROUND(AVG(NULLIF(gps.team_play_rating,0)),0)  AS team_play_rating,
@@ -1198,12 +1236,17 @@ const GOALIE_SELECT = `
   CASE WHEN COUNT(DISTINCT gps.game_id) > 0
     THEN ROUND(CAST(SUM(gps.shots_against) AS NUMERIC)/COUNT(DISTINCT gps.game_id),1)
     ELSE NULL END AS shots_per_game,
-  ROUND(AVG(NULLIF(gps.overall_rating,0)),0)    AS overall_rating,
+  ROUND(AVG(CASE WHEN gps.overall_rating > 0 THEN CAST(gps.overall_rating AS NUMERIC)
+               WHEN gps.shots_against > 0 THEN GREATEST(0.0, LEAST(99.0,
+                 60.0
+                 + (CAST(gps.shots_against - gps.goals_against AS NUMERIC) / CAST(gps.shots_against AS NUMERIC) * 100.0 - 88.0) * 3.0
+                 + CASE WHEN gps.goals_against = 0 THEN 8.0 ELSE 0.0 END
+               ))
+               ELSE 60.0
+          END), 0) AS overall_rating,
   ROUND(AVG(NULLIF(gps.offensive_rating,0)),0)  AS offensive_rating,
   ROUND(AVG(NULLIF(gps.defensive_rating,0)),0)  AS defensive_rating,
   ROUND(AVG(NULLIF(gps.team_play_rating,0)),0)  AS team_play_rating`;
-
-// ── Team season stats ──────────────────────────────────────────────────────
 
 app.get('/api/teams/:id/stats', async (req, res) => {
   const team = await db.prepare('SELECT * FROM teams WHERE id = ?').get(req.params.id);
@@ -2221,7 +2264,20 @@ app.get('/api/stats/leaders', async (req, res) => {
       MAX(t.color2) AS team_color2,
       COALESCE(MAX(u.position), MAX(gps.position)) AS position,
       COUNT(DISTINCT gps.game_id) AS gp,
-      ROUND(AVG(NULLIF(gps.overall_rating,0)),0)    AS overall_rating,
+      ROUND(AVG(CASE WHEN gps.overall_rating > 0 THEN CAST(gps.overall_rating AS NUMERIC)
+                     ELSE GREATEST(0.0, LEAST(99.0,
+                       50.0
+                       + LEAST(CAST(gps.goals AS NUMERIC) * 6.0, 20.0)
+                       + LEAST(CAST(gps.assists AS NUMERIC) * 3.0, 10.0)
+                       + GREATEST(LEAST(CAST(gps.plus_minus AS NUMERIC) * 3.0, 15.0), -15.0)
+                       + LEAST(CAST(gps.shots AS NUMERIC) * 0.5, 5.0)
+                       + LEAST(CAST(gps.hits AS NUMERIC) * 0.4, 4.0)
+                       + LEAST(CAST(gps.blocked_shots AS NUMERIC) * 1.0, 4.0)
+                       + LEAST(CAST(gps.takeaways AS NUMERIC) * 1.0, 4.0)
+                       - LEAST(CAST(gps.giveaways AS NUMERIC) * 1.5, 8.0)
+                       - LEAST(CAST(gps.pim AS NUMERIC) * 0.5, 5.0)
+                     ))
+                END), 0) AS overall_rating,
       ROUND(AVG(NULLIF(gps.offensive_rating,0)),0)  AS offensive_rating,
       ROUND(AVG(NULLIF(gps.defensive_rating,0)),0)  AS defensive_rating,
       ROUND(AVG(NULLIF(gps.team_play_rating,0)),0)  AS team_play_rating,
@@ -2305,7 +2361,14 @@ app.get('/api/stats/leaders', async (req, res) => {
       SUM(gps.goalie_losses) AS goalie_losses,
       SUM(gps.goalie_otw) AS goalie_otw,
       SUM(gps.goalie_otl) AS goalie_otl,
-      ROUND(AVG(NULLIF(gps.overall_rating,0)),0)    AS overall_rating,
+      ROUND(AVG(CASE WHEN gps.overall_rating > 0 THEN CAST(gps.overall_rating AS NUMERIC)
+                     WHEN gps.shots_against > 0 THEN GREATEST(0.0, LEAST(99.0,
+                       60.0
+                       + (CAST(gps.shots_against - gps.goals_against AS NUMERIC) / CAST(gps.shots_against AS NUMERIC) * 100.0 - 88.0) * 3.0
+                       + CASE WHEN gps.goals_against = 0 THEN 8.0 ELSE 0.0 END
+                     ))
+                     ELSE 60.0
+                END), 0) AS overall_rating,
       ROUND(AVG(NULLIF(gps.offensive_rating,0)),0)  AS offensive_rating,
       ROUND(AVG(NULLIF(gps.defensive_rating,0)),0)  AS defensive_rating,
       ROUND(AVG(NULLIF(gps.team_play_rating,0)),0)  AS team_play_rating
@@ -3005,7 +3068,7 @@ app.get('/api/games/:id/ea-matches', async (req, res) => {
       matches,
     });
   } catch (err) {
-    res.status(502).json({ error: 'EA private match API unavailable. EA\'s club_private match history endpoint is currently non-functional for NHL 25 — this is a known issue on EA\'s end. Stats must be entered manually.', details: err.message });
+    res.status(502).json({ error: 'Failed to fetch EA match data.', details: err.message });
   }
 });
 
