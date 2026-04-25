@@ -215,7 +215,8 @@ function formatGameTime(dateStr, timeStr) {
 function buildGameRow(g) {
   return `
     <tr class="game-row" id="game-row-${g.id}" data-game-id="${g.id}"
-      onclick="toggleGameDetail(${g.id}, event)">
+      onclick="if(!event.target.closest('button')){window.location.href='game.html?id=${g.id}'}"
+      style="cursor:pointer;">
       <td>${g.date}${g.game_time ? `<br><span style="color:#8b949e;font-size:0.78rem;">${formatGameTime(g.date, g.game_time)}</span>` : ''}</td>
       <td>${g.home_logo ? `<img src="${g.home_logo}" style="width:22px;height:22px;object-fit:contain;vertical-align:middle;margin-right:0.3rem;border-radius:3px;" />` : ''}${g.home_team_name}</td>
       <td>${(g.status === 'complete' || g.status === 'forfeit') ? `${g.home_score} – ${g.away_score}` : '–'}</td>

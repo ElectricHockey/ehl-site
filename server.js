@@ -2149,7 +2149,9 @@ app.patch('/api/games/:id', requireAdmin, async (req, res) => {
 app.get('/api/games/:id/stats', async (req, res) => {
   const game = await db.prepare(`
     SELECT g.*, ht.name AS home_team_name, ht.logo_url AS home_logo,
-      at.name AS away_team_name, at.logo_url AS away_logo
+      ht.color1 AS home_color1, ht.color2 AS home_color2,
+      at.name AS away_team_name, at.logo_url AS away_logo,
+      at.color1 AS away_color1, at.color2 AS away_color2
     FROM games g JOIN teams ht ON g.home_team_id = ht.id JOIN teams at ON g.away_team_id = at.id
     WHERE g.id = ?
   `).get(req.params.id);
@@ -2158,8 +2160,8 @@ app.get('/api/games/:id/stats', async (req, res) => {
   res.json({
     game: {
       id: game.id, date: game.date, status: game.status, season_id: game.season_id, is_overtime: game.is_overtime,
-      home_team: { id: game.home_team_id, name: game.home_team_name, logo_url: game.home_logo },
-      away_team: { id: game.away_team_id, name: game.away_team_name, logo_url: game.away_logo },
+      home_team: { id: game.home_team_id, name: game.home_team_name, logo_url: game.home_logo, color1: game.home_color1 || null, color2: game.home_color2 || null },
+      away_team: { id: game.away_team_id, name: game.away_team_name, logo_url: game.away_logo, color1: game.away_color1 || null, color2: game.away_color2 || null },
       home_score: game.home_score, away_score: game.away_score, ea_match_id: game.ea_match_id,
     },
     home_players: stats.filter(s => s.team_id === game.home_team_id),

@@ -115,7 +115,16 @@ function _applyStatsFilters(data, isGoalie) {
   let out = data;
   if (statsSearchFilter) out = out.filter(p => (p.name || '').toLowerCase().includes(statsSearchFilter));
   if (statsTeamFilter)   out = out.filter(p => String(p.team_id) === statsTeamFilter);
-  if (!isGoalie && statsPositionFilter) out = out.filter(p => (p.position || '') === statsPositionFilter);
+  if (!isGoalie && statsPositionFilter) {
+    const pf = statsPositionFilter;
+    if (pf === 'F') {
+      out = out.filter(p => ['C', 'LW', 'RW', 'F', 'W'].includes((p.position || '').toUpperCase()));
+    } else if (pf === 'D') {
+      out = out.filter(p => ['D', 'LD', 'RD'].includes((p.position || '').toUpperCase()));
+    } else {
+      out = out.filter(p => (p.position || '').toUpperCase() === pf.toUpperCase());
+    }
+  }
   if (statsMinGP > 0)    out = out.filter(p => (p.gp || 0) >= statsMinGP);
   return out;
 }
