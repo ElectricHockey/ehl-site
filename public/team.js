@@ -45,7 +45,8 @@ function resultBadge(r) {
   return `<span class="badge badge-tie">${r}</span>`;
 }
 function computeOvr(p) {
-  const vals = [p.overall_rating, p.defensive_rating, p.team_play_rating]
+  if (p.overall_rating && Number(p.overall_rating) > 0) return Number(p.overall_rating);
+  const vals = [p.offensive_rating, p.defensive_rating, p.team_play_rating]
     .map(Number).filter(v => v > 0);
   return vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null;
 }

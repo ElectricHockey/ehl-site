@@ -46,6 +46,10 @@ function formatToi(s) {
 }
 
 function computeOvr(p) {
+  // Prefer the server-computed overall_rating (average of per-game overalls,
+  // auto-calculated from stats when not explicitly entered).
+  if (p.overall_rating && Number(p.overall_rating) > 0) return Number(p.overall_rating);
+  // Fall back to average of EA sub-ratings if present
   const vals = [p.offensive_rating, p.defensive_rating, p.team_play_rating]
     .map(Number).filter(v => v > 0);
   return vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null;
@@ -74,7 +78,8 @@ const SKATER_COLS = [
   // ── Games ────────────────────────────────────────────────────────────────
   { key: 'gp',              label: 'GP',   tip: 'Games Played',                            fmt: p => p.gp },
   { key: 'player_wins',     label: 'REC',  tip: 'Record (W-L-OTL)',
-    fmt: p => `${p.player_wins || 0}-${p.player_losses || 0}-${p.player_otl || 0}` },
+    fmt: p => `${p.player_wins || 0}-${p.player_losses || 0}-${p.player_otl || 0}`,
+    style: () => 'white-space:nowrap;' },
   // ── Scoring ──────────────────────────────────────────────────────────────
   { key: 'goals',           label: 'G',    tip: 'Goals',                                   fmt: p => p.goals || 0 },
   { key: 'assists',         label: 'A',    tip: 'Assists',                                 fmt: p => p.assists || 0 },
@@ -120,7 +125,8 @@ const GOALIE_COLS = [
   // ── Games ────────────────────────────────────────────────────────────────
   { key: 'gp',                   label: 'GP',   tip: 'Games Played',                            fmt: p => p.gp },
   { key: 'goalie_wins',          label: 'REC',  tip: 'Record (W-L-OTL)',
-    fmt: p => `${(p.goalie_wins || 0) + (p.goalie_otw || 0)}-${p.goalie_losses || 0}-${p.goalie_otl || 0}` },
+    fmt: p => `${(p.goalie_wins || 0) + (p.goalie_otw || 0)}-${p.goalie_losses || 0}-${p.goalie_otl || 0}`,
+    style: () => 'white-space:nowrap;' },
   // ── Scoring ──────────────────────────────────────────────────────────────
   { key: 'goals',                label: 'G',    tip: 'Goals',                                   fmt: p => p.goals || 0 },
   { key: 'assists',              label: 'A',    tip: 'Assists',                                 fmt: p => p.assists || 0 },

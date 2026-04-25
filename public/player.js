@@ -25,6 +25,7 @@ function pct3(v) {
   return frac.toFixed(3).replace(/^0(?=\.)/, '');
 }
 function computeOvr(p) {
+  if (p.overall_rating && Number(p.overall_rating) > 0) return Number(p.overall_rating);
   const vals = [p.offensive_rating, p.defensive_rating, p.team_play_rating]
     .map(Number).filter(v => v > 0);
   return vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null;
