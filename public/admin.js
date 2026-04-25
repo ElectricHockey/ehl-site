@@ -317,6 +317,7 @@ async function loadSeasons() {
         <button style="font-size:0.75rem;padding:0.15rem 0.4rem;background:#21262d;border:1px solid #30363d;color:#8b949e;border-radius:4px;cursor:pointer;" onclick="moveSeasonDown(${s.id})"${downDisabled} title="Move down">▼</button>
         ` : ''}
         ${!s.is_active && !s.is_playoff ? `<button class="btn-secondary" style="font-size:0.8rem;padding:0.25rem 0.6rem;" onclick="setActiveSeason(${s.id})">Set Active</button>` : ''}
+        ${!s.is_playoff ? `<button class="btn-secondary" style="font-size:0.8rem;padding:0.25rem 0.6rem;" data-manage-conf="${s.id}">Conf/Div</button>` : ''}
         <button class="btn-danger" style="font-size:0.8rem;padding:0.25rem 0.6rem;" onclick="deleteSeason(${s.id}, ${s.is_playoff ? 'true' : 'false'})">Delete</button>
       </div>`;
     }).join('');
@@ -379,6 +380,82 @@ async function moveSeasonDown(id) {
   await loadSeasons();
 }
 
+async function manageSeasonConf(seasonId, seasonName) {
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:999;display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:2rem 1rem;';
+  overlay.innerHTML = `
+    <div style="background:#161b22;border:1px solid #30363d;border-radius:10px;padding:1.5rem 2rem;min-width:580px;max-width:780px;width:100%;margin:auto;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;">
+        <h3 style="margin:0;color:#e6edf3;">Conf / Division — ${seasonName}</h3>
+        <button id="_sconf-close" style="background:none;border:none;color:#8b949e;font-size:1.2rem;cursor:pointer;">✕</button>
+      </div>
+      <p style="color:#8b949e;font-size:0.82rem;margin-bottom:1rem;">Set per-season conference and division for each team. Leave blank to use the team's default.</p>
+      <div id="_sconf-body"><p style="color:#8b949e;">Loading…</p></div>
+      <div style="display:flex;gap:0.5rem;margin-top:1.25rem;">
+        <button id="_sconf-save" style="flex:1;padding:0.5rem;background:#238636;border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:0.9rem;">Save</button>
+        <button id="_sconf-cancel" style="flex:1;padding:0.5rem;background:#21262d;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;cursor:pointer;font-size:0.9rem;">Cancel</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  const close = () => document.body.removeChild(overlay);
+  document.getElementById('_sconf-close').addEventListener('click', close);
+  document.getElementById('_sconf-cancel').addEventListener('click', close);
+  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+
+  // Load team conf data
+  const res = await fetch(`${API}/seasons/${seasonId}/team-conf`, { headers: adminHeaders() });
+  if (!res.ok) { document.getElementById('_sconf-body').innerHTML = '<p style="color:#f85149;">Failed to load.</p>'; return; }
+  const teamConfs = await res.json();
+
+  if (teamConfs.length === 0) {
+    document.getElementById('_sconf-body').innerHTML = '<p style="color:#8b949e;font-size:0.85rem;">No teams found for this league type.</p>';
+    return;
+  }
+
+  const rows = teamConfs.map(t => `
+    <tr>
+      <td style="padding:0.35rem 0.5rem;white-space:nowrap;">
+        ${t.logo_url ? `<img src="${t.logo_url}" style="width:20px;height:20px;object-fit:contain;vertical-align:middle;margin-right:0.4rem;border-radius:3px;" />` : ''}
+        ${t.name}
+      </td>
+      <td style="padding:0.35rem 0.5rem;">
+        <input type="text" value="${escAttr(t.conference)}" data-team="${t.team_id}" data-field="conference"
+          placeholder="e.g. Eastern" style="width:100%;background:#0d1117;border:1px solid #30363d;color:#e6edf3;border-radius:4px;padding:0.25rem 0.4rem;font-size:0.83rem;" />
+      </td>
+      <td style="padding:0.35rem 0.5rem;">
+        <input type="text" value="${escAttr(t.division)}" data-team="${t.team_id}" data-field="division"
+          placeholder="e.g. Atlantic" style="width:100%;background:#0d1117;border:1px solid #30363d;color:#e6edf3;border-radius:4px;padding:0.25rem 0.4rem;font-size:0.83rem;" />
+      </td>
+    </tr>`).join('');
+
+  document.getElementById('_sconf-body').innerHTML = `
+    <table style="width:100%;border-collapse:collapse;">
+      <thead><tr>
+        <th style="text-align:left;padding:0.3rem 0.5rem;color:#8b949e;font-size:0.8rem;border-bottom:1px solid #30363d;">Team</th>
+        <th style="text-align:left;padding:0.3rem 0.5rem;color:#8b949e;font-size:0.8rem;border-bottom:1px solid #30363d;">Conference</th>
+        <th style="text-align:left;padding:0.3rem 0.5rem;color:#8b949e;font-size:0.8rem;border-bottom:1px solid #30363d;">Division</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+
+  document.getElementById('_sconf-save').addEventListener('click', async () => {
+    const confInputs  = overlay.querySelectorAll('input[data-field="conference"]');
+    const divInputs   = overlay.querySelectorAll('input[data-field="division"]');
+    const assignments = Array.from(confInputs).map((inp, i) => ({
+      team_id:    Number(inp.dataset.team),
+      conference: inp.value.trim(),
+      division:   divInputs[i].value.trim(),
+    }));
+    const r = await fetch(`${API}/seasons/${seasonId}/team-conf`, {
+      method: 'POST', headers: adminJsonHeaders(),
+      body: JSON.stringify(assignments),
+    });
+    if (!r.ok) { alert('Failed to save'); return; }
+    close();
+  });
+}
+
 // ── Teams ─────────────────────────────────────────────────────────────────
 
 function colorSwatch(hex) {
@@ -402,7 +479,11 @@ async function loadTeams() {
           ${colorSwatch(t.color1)} ${colorSwatch(t.color2)}
           <button class="btn-secondary" style="margin-left:0.4rem;padding:0.2rem 0.5rem;font-size:0.8rem;" onclick="editColors(${t.id},'${t.color1||''}','${t.color2||''}')">Colors</button>
         </td>
-        <td>${t.name}</td>
+        <td>
+          ${escAttr(t.name)}
+          ${t.abbreviation ? `<span style="color:#8b949e;font-size:0.78rem;margin-left:0.3rem;">(${escAttr(t.abbreviation)})</span>` : ''}
+          <button class="btn-secondary" style="margin-left:0.4rem;padding:0.15rem 0.4rem;font-size:0.75rem;" onclick="editTeamName(${t.id},'${escAttr(t.name)}','${escAttr(t.abbreviation||'')}')">✏️</button>
+        </td>
         <td>${ltLabel(t.league_type)}</td>
         <td>${t.conference || '—'}</td>
         <td>${t.division || '—'}</td>
@@ -510,6 +591,8 @@ document.getElementById('team-form').addEventListener('submit', async e => {
   e.preventDefault();
   const fd = new FormData();
   fd.append('name', document.getElementById('team-name').value.trim());
+  const abbrevInput = document.getElementById('team-abbrev');
+  if (abbrevInput && abbrevInput.value.trim()) fd.append('abbreviation', abbrevInput.value.trim().toUpperCase());
   fd.append('conference', document.getElementById('team-conference').value.trim());
   fd.append('division', document.getElementById('team-division').value.trim());
   const eaId = document.getElementById('team-ea-id').value;
@@ -612,7 +695,43 @@ function editColors(id, currentColor1, currentColor2) {
   overlay.addEventListener('click', e => { if (e.target === overlay) document.body.removeChild(overlay); });
 }
 
-// ── Players ───────────────────────────────────────────────────────────────
+function editTeamName(id, currentName, currentAbbrev) {
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:999;display:flex;align-items:center;justify-content:center;';
+  overlay.innerHTML = `
+    <div style="background:#161b22;border:1px solid #30363d;border-radius:10px;padding:1.5rem 2rem;min-width:300px;">
+      <h3 style="margin-bottom:1rem;color:#e6edf3;">Edit Team Name</h3>
+      <div style="margin-bottom:1rem;">
+        <label style="display:block;color:#8b949e;font-size:0.85rem;margin-bottom:0.4rem;">Team Name</label>
+        <input type="text" id="_en-name" value="${escAttr(currentName)}"
+          style="width:100%;box-sizing:border-box;background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.4rem 0.6rem;" />
+      </div>
+      <div style="margin-bottom:1.2rem;">
+        <label style="display:block;color:#8b949e;font-size:0.85rem;margin-bottom:0.4rem;">Abbreviation <span style="font-size:0.78rem;">(up to 5 chars)</span></label>
+        <input type="text" id="_en-abbrev" value="${escAttr(currentAbbrev)}" maxlength="5"
+          style="width:120px;text-transform:uppercase;background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.4rem 0.6rem;" />
+      </div>
+      <div style="display:flex;gap:0.5rem;">
+        <button id="_en-save" style="flex:1;padding:0.5rem;background:#238636;border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:0.9rem;">Save</button>
+        <button id="_en-cancel" style="flex:1;padding:0.5rem;background:#21262d;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;cursor:pointer;font-size:0.9rem;">Cancel</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  document.getElementById('_en-save').addEventListener('click', async () => {
+    const name = document.getElementById('_en-name').value.trim();
+    const abbreviation = document.getElementById('_en-abbrev').value.trim().toUpperCase();
+    if (!name) { alert('Name cannot be empty'); return; }
+    document.body.removeChild(overlay);
+    const fd = new FormData();
+    fd.append('name', name);
+    fd.append('abbreviation', abbreviation);
+    const res = await fetch(`${API}/teams/${id}`, { method: 'PATCH', headers: adminHeaders(), body: fd });
+    if (!res.ok) { const e = await res.json().catch(() => ({})); alert(e.error || 'Failed to rename team'); return; }
+    await loadTeams();
+  });
+  document.getElementById('_en-cancel').addEventListener('click', () => document.body.removeChild(overlay));
+  overlay.addEventListener('click', e => { if (e.target === overlay) document.body.removeChild(overlay); });
+}
 
 async function loadPlayers() {
   const res = await fetch(`${API}/players`);
@@ -991,7 +1110,8 @@ async function loadAdminPlayoffs() {
     : '<p style="color:#8b949e;font-size:0.85rem;">No playoff brackets created yet. Use the form above to generate one.</p>';
 }
 
-function abbrevAdmin(name) {
+function abbrevAdmin(name, stored) {
+  if (stored) return stored.toUpperCase();
   if (!name) return '???';
   const words = name.trim().split(/\s+/);
   if (words.length === 1) return name.slice(0, 3).toUpperCase();
@@ -1008,7 +1128,14 @@ function renderAdminPlayoffCard(season, data) {
   const champion   = isComplete ? data.teams.find(t => t.team_id === finalSeries.winner_id) : null;
 
   const teamPills = data.teams.map(t =>
-    `<span style="background:#21262d;border-radius:4px;padding:0.15rem 0.4rem;font-size:0.75rem;white-space:nowrap;">${t.seed}. ${t.name}</span>`
+    `<span style="display:inline-flex;align-items:center;gap:0.25rem;background:#21262d;border-radius:4px;padding:0.15rem 0.4rem;font-size:0.75rem;white-space:nowrap;">
+      <input type="number" min="1" value="${t.seed}"
+        title="Edit seed for ${escAttr(t.name)}"
+        style="width:28px;text-align:center;background:#0d1117;border:1px solid #30363d;color:#8b949e;border-radius:3px;padding:1px 2px;font-size:0.73rem;"
+        onblur="updateTeamSeed(${pl.id},${t.team_id},this)"
+        onkeydown="if(event.key==='Enter')this.blur()" />
+      ${escAttr(t.name)}
+    </span>`
   ).join(' ');
 
   // Build series summary for each round
@@ -1063,7 +1190,7 @@ function renderAdminSeriesRow(s, pl) {
       title="Edit high-seed number"
       style="width:34px;text-align:center;background:#161b22;border:1px solid #30363d;color:#8b949e;border-radius:4px;padding:0.1rem;font-size:0.78rem;"
       onblur="updateSeriesSeeds(${s.id})" onkeydown="if(event.key==='Enter')this.blur()" />
-    <span style="font-size:0.82rem;font-weight:600;flex:1;${s.winner_id === s.high_seed_id ? 'color:#3fb950;' : ''}">${abbrevAdmin(hi)}</span>
+    <span style="font-size:0.82rem;font-weight:600;flex:1;${s.winner_id === s.high_seed_id ? 'color:#3fb950;' : ''}">${abbrevAdmin(hi, s.high_seed_abbrev)}</span>
     <input type="number" min="0" max="${winsToWin}" value="${s.high_seed_wins}" id="high-wins-${s.id}"
       style="width:38px;text-align:center;background:#161b22;border:1px solid #30363d;color:#e6edf3;border-radius:4px;padding:0.1rem;"
       onchange="updateSeriesWins(${s.id}, this.value, document.getElementById('low-wins-${s.id}').value)" />
@@ -1071,7 +1198,7 @@ function renderAdminSeriesRow(s, pl) {
     <input type="number" min="0" max="${winsToWin}" value="${s.low_seed_wins}" id="low-wins-${s.id}"
       style="width:38px;text-align:center;background:#161b22;border:1px solid #30363d;color:#e6edf3;border-radius:4px;padding:0.1rem;"
       onchange="updateSeriesWins(${s.id}, document.getElementById('high-wins-${s.id}').value, this.value)" />
-    <span style="font-size:0.82rem;font-weight:600;flex:1;text-align:right;${s.winner_id === s.low_seed_id ? 'color:#3fb950;' : ''}">${abbrevAdmin(lo)}</span>
+    <span style="font-size:0.82rem;font-weight:600;flex:1;text-align:right;${s.winner_id === s.low_seed_id ? 'color:#3fb950;' : ''}">${abbrevAdmin(lo, s.low_seed_abbrev)}</span>
     <input type="number" min="1" value="${s.low_seed_num || ''}" id="low-seed-num-${s.id}"
       title="Edit low-seed number"
       style="width:34px;text-align:center;background:#161b22;border:1px solid #30363d;color:#8b949e;border-radius:4px;padding:0.1rem;font-size:0.78rem;"
@@ -1093,7 +1220,18 @@ async function updateSeriesSeeds(seriesId) {
     headers: adminJsonHeaders(),
     body: JSON.stringify(body),
   });
-  await loadAdminPlayoffs();
+  // No full reload — seed numbers are display-only labels on the series rows
+}
+
+async function updateTeamSeed(playoffId, teamId, inputEl) {
+  const val = Number(inputEl.value);
+  if (isNaN(val) || val < 1) { inputEl.value = inputEl.dataset.orig || '1'; return; }
+  inputEl.dataset.orig = val;
+  await fetch(`${API}/playoffs/${playoffId}/teams/${teamId}`, {
+    method: 'PATCH',
+    headers: adminJsonHeaders(),
+    body: JSON.stringify({ seed: val }),
+  });
 }
 
 async function updateSeriesWins(seriesId, highWins, lowWins) {
@@ -1384,6 +1522,19 @@ function toggleMsoNewSeasonFields() {
 document.addEventListener('DOMContentLoaded', () => {
   const sel = document.getElementById('mso-season-select');
   if (sel) sel.addEventListener('change', toggleMsoNewSeasonFields);
+
+  // Delegated click handler for the "Conf/Div" buttons in the seasons list
+  const seasonsList = document.getElementById('seasons-list');
+  if (seasonsList) {
+    seasonsList.addEventListener('click', e => {
+      const btn = e.target.closest('button[data-manage-conf]');
+      if (!btn) return;
+      const sid = Number(btn.dataset.manageConf);
+      // Find the season name from allSeasons
+      const s = allSeasons.find(x => x.id === sid);
+      manageSeasonConf(sid, s ? s.name : `Season ${sid}`);
+    });
+  }
 });
 
 function showMsoImportStatus(msg, ok) {

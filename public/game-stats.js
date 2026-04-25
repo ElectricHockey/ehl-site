@@ -189,7 +189,9 @@
 
   // ── Donut chart (CSS conic-gradient) ────────────────────────────────────
 
-  function renderDonutChart(homeVal, awayVal, label) {
+  function renderDonutChart(homeVal, awayVal, label, homeColor, awayColor) {
+    const hc = homeColor || '#c9162b';
+    const ac = awayColor || '#d1d5db';
     const total = homeVal + awayVal;
     if (!total) {
       return `<div class="gs-donut-wrap">
@@ -202,10 +204,10 @@
     const homePct = Math.round(homeVal / total * 100);
     const awayPct = 100 - homePct;
     return `<div class="gs-donut-wrap">
-      <div class="gs-donut" style="background: conic-gradient(#c9162b 0% ${homePct}%, #d1d5db ${homePct}% 100%);">
+      <div class="gs-donut" style="background: conic-gradient(${hc} 0% ${homePct}%, ${ac} ${homePct}% 100%);">
         <div class="gs-donut-inner">
-          <span class="gs-donut-home">${homePct}%</span>
-          <span class="gs-donut-away">${awayPct}%</span>
+          <span class="gs-donut-home" style="color:${hc};">${homePct}%</span>
+          <span class="gs-donut-away" style="color:${ac};">${awayPct}%</span>
         </div>
       </div>
       <div class="gs-donut-label">${label}</div>
@@ -214,9 +216,19 @@
 
   // ── Possession pie chart (CSS conic-gradient, by position) ──────────────
 
-  function renderPossessionPie(normalized, title) {
-    const posColors = { LW: '#56d364', C: '#58a6ff', RW: '#e3b341', LD: '#52cadb', RD: '#f0883e' };
+  function renderPossessionPie(normalized, title, teamColor) {
+    // Shade each position segment relative to the team's primary color so
+    // the pie clearly belongs to that team while still distinguishing positions.
+    const baseColor = teamColor || '#58a6ff';
     const posOrder  = ['LW', 'C', 'RW', 'LD', 'RD'];
+    // Generate shades: lightest for first position, darkest for last
+    const shades = posOrder.map((_, i) => {
+      const ratio = posOrder.length <= 1 ? 0.5 : i / (posOrder.length - 1);
+      return blendColor(baseColor, ratio);
+    });
+    const posColors = {};
+    posOrder.forEach((pos, i) => { posColors[pos] = shades[i]; });
+
     const totals = {};
     let total = 0;
     normalized.forEach(p => {
@@ -257,25 +269,44 @@
     </div>`;
   }
 
+  // Blend a hex color towards white (ratio=0) or black (ratio=1)
+  function blendColor(hex, ratio) {
+    hex = hex.replace('#', '');
+    if (hex.length === 3) hex = hex.split('').map(c => c + c).join('');
+    const r = parseInt(hex.slice(0, 2), 16);
+    const g = parseInt(hex.slice(2, 4), 16);
+    const b = parseInt(hex.slice(4, 6), 16);
+    // Blend between a lightened version (ratio=0) and a darkened version (ratio=1)
+    const light = 0.55, dark = 0.35;
+    const t = light + (dark - light) * ratio;
+    const mix = (c, bg) => Math.round(c * t + bg * (1 - t));
+    const bg = ratio < 0.5 ? 255 : 0;
+    const nr = mix(r, bg); const ng = mix(g, bg); const nb = mix(b, bg);
+    return `#${nr.toString(16).padStart(2,'0')}${ng.toString(16).padStart(2,'0')}${nb.toString(16).padStart(2,'0')}`;
+  }
+
   // ── Team comparison panel (left column) ─────────────────────────────────
 
   function renderTeamComparisonPanel(game, homeNorm, awayNorm) {
     const h = computeTeamTotals(homeNorm);
     const a = computeTeamTotals(awayNorm);
 
+    const hc = (game.home_team && game.home_team.color1) || '#c9162b';
+    const ac = (game.away_team && game.away_team.color1) || '#d1d5db';
+
     const donuts = `<div class="gs-donuts-row">
-      ${renderDonutChart(h.shots,           a.shots,           'Shots')}
-      ${renderDonutChart(h.possession_secs, a.possession_secs, 'TOA')}
-      ${renderDonutChart(h.faceoff_wins,    a.faceoff_wins,    'Faceoffs')}
+      ${renderDonutChart(h.shots,           a.shots,           'Shots',    hc, ac)}
+      ${renderDonutChart(h.possession_secs, a.possession_secs, 'TOA',      hc, ac)}
+      ${renderDonutChart(h.faceoff_wins,    a.faceoff_wins,    'Faceoffs', hc, ac)}
     </div>`;
 
-    function statRow(hVal, label, aVal, highlightHigher) {
-      const hHi = highlightHigher && hVal > aVal ? ' class="gs-pim-hi"' : '';
-      const aHi = highlightHigher && aVal > hVal ? ' class="gs-pim-hi"' : '';
+    function statRow(hVal, label, aVal) {
+      const hBar = hVal > aVal ? `<span class="gs-lead-bar gs-lead-bar-home" style="background:${hc};"></span>` : '';
+      const aBar = aVal > hVal ? `<span class="gs-lead-bar gs-lead-bar-away" style="background:${ac};"></span>` : '';
       return `<tr class="gs-stat-row">
-        <td class="gs-stat-val"${hHi}>${hVal}</td>
+        <td class="gs-stat-val">${hVal}${hBar}</td>
         <td class="gs-stat-name">${label}</td>
-        <td class="gs-stat-val"${aHi}>${aVal}</td>
+        <td class="gs-stat-val">${aBar}${aVal}</td>
       </tr>`;
     }
 
@@ -283,34 +314,42 @@
       return `${Math.floor(Number(pim) || 0)}:00`;
     }
 
+    function fmtStatRow(hVal, label, aVal, hFmt, aFmt) {
+      const hDisplay = hFmt ? hFmt(hVal) : hVal;
+      const aDisplay = aFmt ? aFmt(aVal) : aVal;
+      const hNum = hVal !== null ? hVal : -Infinity;
+      const aNum = aVal !== null ? aVal : -Infinity;
+      const hBar = hNum > aNum ? `<span class="gs-lead-bar gs-lead-bar-home" style="background:${hc};"></span>` : '';
+      const aBar = aNum > hNum ? `<span class="gs-lead-bar gs-lead-bar-away" style="background:${ac};"></span>` : '';
+      return `<tr class="gs-stat-row">
+        <td class="gs-stat-val">${hDisplay}${hBar}</td>
+        <td class="gs-stat-name">${label}</td>
+        <td class="gs-stat-val">${aBar}${aDisplay}</td>
+      </tr>`;
+    }
+
     const stats = `<table class="gs-comparison-table">
-      ${statRow(game.home_score, 'Goals', game.away_score, false)}
-      ${statRow(h.shots,         'Total Shots', a.shots,   false)}
-      ${statRow(h.hits,          'Hits',        a.hits,    false)}
-      <tr class="gs-stat-row">
-        <td class="gs-stat-val">${formatToi(h.possession_secs)}</td>
-        <td class="gs-stat-name">Time on Attack</td>
-        <td class="gs-stat-val">${formatToi(a.possession_secs)}</td>
-      </tr>
-      <tr class="gs-stat-row">
-        <td class="gs-stat-val">${h.pass_pct !== null ? h.pass_pct + '%' : '–'}</td>
-        <td class="gs-stat-name">Passing%</td>
-        <td class="gs-stat-val">${a.pass_pct !== null ? a.pass_pct + '%' : '–'}</td>
-      </tr>
-      ${statRow(h.faceoff_wins,  'Face offs won',      a.faceoff_wins,  false)}
+      ${statRow(game.home_score, 'Goals',         game.away_score)}
+      ${statRow(h.shots,         'Total Shots',   a.shots)}
+      ${statRow(h.hits,          'Hits',          a.hits)}
+      ${fmtStatRow(h.possession_secs, 'Time on Attack', a.possession_secs, formatToi, formatToi)}
+      ${fmtStatRow(h.pass_pct, 'Passing%', a.pass_pct,
+          v => v !== null ? v + '%' : '–', v => v !== null ? v + '%' : '–')}
+      ${statRow(h.faceoff_wins,  'Face offs won',     a.faceoff_wins)}
+      ${/* PIM: higher = more penalties (bad), so highlight in red rather than with a team bar */''}
       <tr class="gs-stat-row">
         <td class="gs-stat-val${h.pim > a.pim ? ' gs-pim-hi' : ''}">${formatPim(h.pim)}</td>
         <td class="gs-stat-name">Penalty Minutes</td>
         <td class="gs-stat-val${a.pim > h.pim ? ' gs-pim-hi' : ''}">${formatPim(a.pim)}</td>
       </tr>
-      ${statRow(h.pp_goals,      'Power Play Goals',   a.pp_goals,      false)}
-      ${statRow(h.blocked_shots, 'Blocks',             a.blocked_shots, false)}
-      ${statRow(h.sh_goals,      'Shorthanded Goals',  a.sh_goals,      false)}
+      ${statRow(h.pp_goals,      'Power Play Goals',  a.pp_goals)}
+      ${statRow(h.blocked_shots, 'Blocks',            a.blocked_shots)}
+      ${statRow(h.sh_goals,      'Shorthanded Goals', a.sh_goals)}
     </table>`;
 
     const pies = `<div class="gs-pies-row">
-      ${renderPossessionPie(homeNorm, 'Puck Possession')}
-      ${renderPossessionPie(awayNorm, 'Puck Possession')}
+      ${renderPossessionPie(homeNorm, 'Puck Possession', hc)}
+      ${renderPossessionPie(awayNorm, 'Puck Possession', ac)}
     </div>`;
 
     return `<div class="gs-comparison-panel">

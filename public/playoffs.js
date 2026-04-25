@@ -4,7 +4,8 @@ const SLOT_H = 90; // px – height of one series card slot
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-function abbrev(name) {
+function abbrev(name, stored) {
+  if (stored) return stored.toUpperCase();
   if (!name) return '???';
   const words = name.trim().split(/\s+/);
   if (words.length === 1) return name.slice(0, 3).toUpperCase();
@@ -45,7 +46,7 @@ function seriesCard(s, seriesLength) {
     html += `<div class="b-team${highCls}">
       <span class="b-seed">${s.high_seed_num}</span>
       ${logoImg(s.high_seed_logo, s.high_seed_name)}
-      <span class="b-team-name">${abbrev(s.high_seed_name)}</span>
+      <span class="b-team-name">${abbrev(s.high_seed_name, s.high_seed_abbrev)}</span>
       <span class="b-wins${highWinsCls}">${s.high_seed_wins}</span>
     </div>`;
   } else {
@@ -56,7 +57,7 @@ function seriesCard(s, seriesLength) {
     html += `<div class="b-team${lowCls}">
       <span class="b-seed">${s.low_seed_num}</span>
       ${logoImg(s.low_seed_logo, s.low_seed_name)}
-      <span class="b-team-name">${abbrev(s.low_seed_name)}</span>
+      <span class="b-team-name">${abbrev(s.low_seed_name, s.low_seed_abbrev)}</span>
       <span class="b-wins${lowWinsCls}">${s.low_seed_wins}</span>
     </div>`;
   } else if (isComplete) {

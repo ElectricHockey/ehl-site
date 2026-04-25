@@ -409,6 +409,14 @@ async function initSchema() {
       status       TEXT NOT NULL DEFAULT 'pending',
       created_at   TIMESTAMPTZ DEFAULT NOW()
     )`,
+    `CREATE TABLE IF NOT EXISTS season_team_conf (
+      id        SERIAL PRIMARY KEY,
+      season_id INTEGER NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+      team_id   INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+      conference TEXT NOT NULL DEFAULT '',
+      division   TEXT NOT NULL DEFAULT '',
+      UNIQUE(season_id, team_id)
+    )`,
   ];
 
   for (const sql of tables) {
@@ -491,6 +499,15 @@ async function initSchema() {
   } catch (err) {
     if (!err.message || !err.message.includes('already exists')) {
       console.warn('[db] Migration warning (players secondary_position):', err.message);
+    }
+  }
+
+  // Add abbreviation to teams
+  try {
+    await pool.query("ALTER TABLE teams ADD COLUMN abbreviation TEXT DEFAULT ''");
+  } catch (err) {
+    if (!err.message || !err.message.includes('already exists')) {
+      console.warn('[db] Migration warning (teams abbreviation):', err.message);
     }
   }
 

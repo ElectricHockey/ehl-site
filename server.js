@@ -695,10 +695,11 @@ app.post('/api/teams', requireOwner, logoUpload.single('logo'), async (req, res)
   const color1 = (body.color1 || '').trim();
   const color2 = (body.color2 || '').trim();
   const league_type = (body.league_type || '').trim();
+  const abbreviation = (body.abbreviation || '').trim().slice(0, 5);
   const result = await db.prepare(
-    'INSERT INTO teams (name, conference, division, ea_club_id, logo_url, color1, color2, league_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(name, conference, division, ea_club_id, logo_url, color1, color2, league_type);
-  res.status(201).json({ id: result.lastInsertRowid, name, conference, division, ea_club_id, logo_url, color1, color2, league_type });
+    'INSERT INTO teams (name, conference, division, ea_club_id, logo_url, color1, color2, league_type, abbreviation) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(name, conference, division, ea_club_id, logo_url, color1, color2, league_type, abbreviation);
+  res.status(201).json({ id: result.lastInsertRowid, name, conference, division, ea_club_id, logo_url, color1, color2, league_type, abbreviation });
 });
 
 app.patch('/api/teams/:id', requireOwner, logoUpload.single('logo'), async (req, res) => {
@@ -712,6 +713,7 @@ app.patch('/api/teams/:id', requireOwner, logoUpload.single('logo'), async (req,
   const color1 = body.color1 !== undefined ? (body.color1 || '').trim() : (team.color1 || '');
   const color2 = body.color2 !== undefined ? (body.color2 || '').trim() : (team.color2 || '');
   const league_type = body.league_type !== undefined ? (body.league_type || '').trim() : (team.league_type || '');
+  const abbreviation = body.abbreviation !== undefined ? (body.abbreviation || '').trim().slice(0, 5) : (team.abbreviation || '');
   let logo_url = team.logo_url;
   if (req.file) {
     const ext = path.extname(req.file.originalname).toLowerCase();
@@ -722,8 +724,8 @@ app.patch('/api/teams/:id', requireOwner, logoUpload.single('logo'), async (req,
   } else if (body.logo_url !== undefined) {
     logo_url = body.logo_url || null;
   }
-  await db.prepare('UPDATE teams SET name=?, conference=?, division=?, ea_club_id=?, logo_url=?, color1=?, color2=?, league_type=? WHERE id=?')
-    .run(name, conference, division, ea_club_id, logo_url, color1, color2, league_type, req.params.id);
+  await db.prepare('UPDATE teams SET name=?, conference=?, division=?, ea_club_id=?, logo_url=?, color1=?, color2=?, league_type=?, abbreviation=? WHERE id=?')
+    .run(name, conference, division, ea_club_id, logo_url, color1, color2, league_type, abbreviation, req.params.id);
   res.json({ updated: true });
 });
 
@@ -2149,7 +2151,9 @@ app.patch('/api/games/:id', requireAdmin, async (req, res) => {
 app.get('/api/games/:id/stats', async (req, res) => {
   const game = await db.prepare(`
     SELECT g.*, ht.name AS home_team_name, ht.logo_url AS home_logo,
-      at.name AS away_team_name, at.logo_url AS away_logo
+      ht.color1 AS home_color1, ht.color2 AS home_color2,
+      at.name AS away_team_name, at.logo_url AS away_logo,
+      at.color1 AS away_color1, at.color2 AS away_color2
     FROM games g JOIN teams ht ON g.home_team_id = ht.id JOIN teams at ON g.away_team_id = at.id
     WHERE g.id = ?
   `).get(req.params.id);
@@ -2158,8 +2162,8 @@ app.get('/api/games/:id/stats', async (req, res) => {
   res.json({
     game: {
       id: game.id, date: game.date, status: game.status, season_id: game.season_id, is_overtime: game.is_overtime,
-      home_team: { id: game.home_team_id, name: game.home_team_name, logo_url: game.home_logo },
-      away_team: { id: game.away_team_id, name: game.away_team_name, logo_url: game.away_logo },
+      home_team: { id: game.home_team_id, name: game.home_team_name, logo_url: game.home_logo, color1: game.home_color1 || null, color2: game.home_color2 || null },
+      away_team: { id: game.away_team_id, name: game.away_team_name, logo_url: game.away_logo, color1: game.away_color1 || null, color2: game.away_color2 || null },
       home_score: game.home_score, away_score: game.away_score, ea_match_id: game.ea_match_id,
     },
     home_players: stats.filter(s => s.team_id === game.home_team_id),
@@ -2354,22 +2358,49 @@ async function calcStandings(seasonId) {
     ? "SELECT * FROM games WHERE status IN ('complete','forfeit') AND season_id = ? ORDER BY date ASC, id ASC"
     : "SELECT * FROM games WHERE status IN ('complete','forfeit') ORDER BY date ASC, id ASC";
   const games = seasonId ? await db.prepare(filter).all(seasonId) : await db.prepare(filter).all();
+
+  // Count remaining (scheduled) games per team — needed for clinch math
+  const scheduledGames = seasonId
+    ? await db.prepare("SELECT home_team_id, away_team_id FROM games WHERE season_id = ? AND status = 'scheduled'").all(seasonId)
+    : [];
+  const remainingMap = {};
+  for (const g of scheduledGames) {
+    remainingMap[g.home_team_id] = (remainingMap[g.home_team_id] || 0) + 1;
+    remainingMap[g.away_team_id] = (remainingMap[g.away_team_id] || 0) + 1;
+  }
+
+  // Per-season conference/division overrides
+  const confOverrides = seasonId
+    ? await db.prepare('SELECT team_id, conference, division FROM season_team_conf WHERE season_id = ?').all(seasonId)
+    : [];
+  const confMap = {};
+  for (const r of confOverrides) confMap[r.team_id] = r;
+
   const teamIds = new Set();
   for (const g of games) { teamIds.add(g.home_team_id); teamIds.add(g.away_team_id); }
   const allTeams = await db.prepare('SELECT * FROM teams').all();
   const teams = seasonId ? allTeams.filter(t => teamIds.has(t.id)) : allTeams;
   const stats = {};
   for (const t of teams) {
+    const co = confMap[t.id];
     stats[t.id] = {
       id: t.id, name: t.name, logo_url: t.logo_url || null,
-      conference: t.conference, division: t.division,
+      conference: co ? co.conference : (t.conference || ''),
+      division:   co ? co.division   : (t.division   || ''),
       color1: t.color1 || null, color2: t.color2 || null,
       gp: 0, w: 0, otw: 0, l: 0, otl: 0, pts: 0, gf: 0, ga: 0,
       home_w: 0, home_l: 0, home_otl: 0,
       away_w: 0, away_l: 0, away_otl: 0,
       _results: [],
+      remaining: remainingMap[t.id] || 0,
+      pim_for: 0,
     };
   }
+
+  // Head-to-head win map: h2h[teamA][teamB] = regulation/OT wins by A against B
+  const h2h = {};
+  const ensureH2h = id => { if (!h2h[id]) h2h[id] = {}; };
+
   for (const g of games) {
     const home = stats[g.home_team_id], away = stats[g.away_team_id];
     if (!home || !away) continue;
@@ -2377,14 +2408,32 @@ async function calcStandings(seasonId) {
     home.gf += g.home_score; home.ga += g.away_score;
     away.gf += g.away_score; away.ga += g.home_score;
     const ot = !!g.is_overtime;
+    ensureH2h(g.home_team_id); ensureH2h(g.away_team_id);
     if (g.home_score > g.away_score) {
       if (ot) { home.w++; home.otw++; home.pts += 2; home.home_w++; away.otl++; away.pts++; away.away_otl++; home._results.push('W'); away._results.push('OTL'); }
       else    { home.w++; home.pts += 2; home.home_w++; away.l++; away.away_l++; home._results.push('W'); away._results.push('L'); }
+      h2h[g.home_team_id][g.away_team_id] = (h2h[g.home_team_id][g.away_team_id] || 0) + 1;
     } else if (g.away_score > g.home_score) {
       if (ot) { away.w++; away.otw++; away.pts += 2; away.away_w++; home.otl++; home.pts++; home.home_otl++; away._results.push('W'); home._results.push('OTL'); }
       else    { away.w++; away.pts += 2; away.away_w++; home.l++; home.home_l++; away._results.push('W'); home._results.push('L'); }
+      h2h[g.away_team_id][g.home_team_id] = (h2h[g.away_team_id][g.home_team_id] || 0) + 1;
     } else { home.pts++; away.pts++; home._results.push('T'); away._results.push('T'); }
   }
+
+  // Load penalty minutes per team for the season (tiebreaker #7)
+  if (seasonId && teamIds.size > 0) {
+    const pimRows = await db.prepare(
+      `SELECT gps.team_id, SUM(gps.pim) AS pim_total
+       FROM game_player_stats gps
+       JOIN games g ON gps.game_id = g.id
+       WHERE g.season_id = ? AND g.status IN ('complete','forfeit')
+       GROUP BY gps.team_id`
+    ).all(seasonId);
+    for (const row of pimRows) {
+      if (stats[row.team_id]) stats[row.team_id].pim_for = row.pim_total || 0;
+    }
+  }
+
   for (const t of Object.values(stats)) {
     if (t._results.length === 0) { t.streak = '—'; }
     else {
@@ -2402,17 +2451,158 @@ async function calcStandings(seasonId) {
     t.away_record = `${t.away_w}-${t.away_l}-${t.away_otl}`;
     delete t._results;
   }
-  return Object.values(stats).sort((a, b) => b.pts - a.pts || b.w - a.w);
+
+  // ── Full tiebreaker comparator ─────────────────────────────────────────
+  // 1. Points  2. Regulation Wins  3. H2H Wins  4. Goal Diff
+  // 5. Total Wins  6. Goals For  7. Least Goals Against  8. Least PIM Against
+  function cmpTeams(a, b) {
+    if (b.pts !== a.pts) return b.pts - a.pts;
+    // 1. Regulation wins (wins not in OT)
+    const rw_a = a.w - a.otw, rw_b = b.w - b.otw;
+    if (rw_b !== rw_a) return rw_b - rw_a;
+    // 2. Head-to-head wins (a's wins vs b vs b's wins vs a)
+    const h2h_a = (h2h[a.id] && h2h[a.id][b.id]) || 0;
+    const h2h_b = (h2h[b.id] && h2h[b.id][a.id]) || 0;
+    if (h2h_a !== h2h_b) return h2h_b - h2h_a;
+    // 3. Goal differential
+    const diff_a = a.gf - a.ga, diff_b = b.gf - b.ga;
+    if (diff_b !== diff_a) return diff_b - diff_a;
+    // 4. Total wins
+    if (b.w !== a.w) return b.w - a.w;
+    // 5. Greater goals for
+    if (b.gf !== a.gf) return b.gf - a.gf;
+    // 6. Least goals against (lower is better)
+    if (a.ga !== b.ga) return a.ga - b.ga;
+    // 7. Least penalty minutes (lower is better)
+    return (a.pim_for || 0) - (b.pim_for || 0);
+  }
+
+  const sorted = Object.values(stats).sort(cmpTeams);
+
+  // ── NHL-style clinch indicators ────────────────────────────────────────
+  // Only compute if a playoff bracket is configured for this season
+  if (seasonId && sorted.length > 0) {
+    const pc = await db.prepare('SELECT teams_qualify FROM playoffs WHERE season_id = ?').get(seasonId);
+    if (pc) {
+      const N = Math.min(pc.teams_qualify, sorted.length);
+
+      // Helper: can opponent 'o' surpass team 't' given remaining games?
+      // Uses the full tiebreaker chain. Returns true if there is any possible
+      // outcome where o would rank above t.
+      function canSurpass(o, t) {
+        const maxPts = o.pts + 2 * o.remaining;
+        if (maxPts < t.pts) return false;
+        if (maxPts > t.pts) return true;
+        // Equal pts scenario — worst case: o wins all remaining games in regulation (max reg wins)
+        const rw_t = t.w - t.otw;
+        const maxRegW_o = (o.w - o.otw) + o.remaining;
+        if (maxRegW_o < rw_t) return false;
+        if (maxRegW_o > rw_t) return true;
+        // Reg wins tied — H2H can still change; if o has remaining games assume possible
+        if (o.remaining > 0) return true;
+        // All games done — use actual tiebreakers
+        return cmpTeams(o, t) < 0; // o sorts above t (cmpTeams < 0 means o before t)
+      }
+
+      // Helper: is team t currently ranked first among the given peer list using tiebreakers?
+      function isLeader(t, peers) {
+        return peers.length > 0 && peers.every(o => cmpTeams(t, o) < 0);
+      }
+
+      for (let i = 0; i < sorted.length; i++) {
+        const t = sorted[i];
+        const rank = i + 1;
+        t.clinch = null;
+
+        if (rank <= N) {
+          // P – clinched Presidents' Trophy (best overall record, tiebreaker-aware)
+          if (rank === 1) {
+            const anyCanPass = sorted.slice(1).some(o => canSurpass(o, t));
+            if (!anyCanPass) { t.clinch = 'P'; continue; }
+          }
+
+          // Z – clinched conference title (first in conf, no conf peer can catch)
+          if (t.conference) {
+            const confPeers = sorted.filter(o => o.id !== t.id && o.conference === t.conference);
+            if (isLeader(t, confPeers) && !confPeers.some(o => canSurpass(o, t))) {
+              t.clinch = 'Z'; continue;
+            }
+          }
+
+          // Y – clinched division title (first in div, no div peer can catch)
+          if (t.division && t.conference) {
+            const divPeers = sorted.filter(o => o.id !== t.id && o.division === t.division && o.conference === t.conference);
+            if (isLeader(t, divPeers) && !divPeers.some(o => canSurpass(o, t))) {
+              t.clinch = 'Y'; continue;
+            }
+          }
+
+          // X – clinched a playoff spot (no team outside top N can reach this team)
+          const outside = sorted.slice(N);
+          if (!outside.some(o => o.pts + 2 * o.remaining >= t.pts)) {
+            t.clinch = 'X';
+          }
+        } else {
+          // E – mathematically eliminated (max possible pts < pts of last playoff team)
+          if (t.pts + 2 * t.remaining < sorted[N - 1].pts) {
+            t.clinch = 'E';
+          }
+        }
+      }
+    }
+  }
+
+  return sorted;
 }
 
 // ── Standings ──────────────────────────────────────────────────────────────
 
 app.get('/api/standings', async (req, res) => {
   const seasonId = req.query.season_id ? Number(req.query.season_id) : null;
-  res.json(await calcStandings(seasonId));
+  const teams = await calcStandings(seasonId);
+  let playoff_cutoff = null;
+  if (seasonId) {
+    const pc = await db.prepare('SELECT teams_qualify FROM playoffs WHERE season_id = ?').get(seasonId);
+    if (pc) playoff_cutoff = Math.min(pc.teams_qualify, teams.length);
+  }
+  res.json({ teams, playoff_cutoff });
 });
 
-// ── Transactions (recent accepted signings) ──────────────────────────────
+// GET /api/seasons/:id/team-conf – return all teams for this season's league type
+// with their current season-specific conference/division (falls back to team default)
+app.get('/api/seasons/:id/team-conf', requireAdmin, async (req, res) => {
+  const season = await db.prepare('SELECT * FROM seasons WHERE id = ?').get(req.params.id);
+  if (!season) return res.status(404).json({ error: 'Season not found' });
+  const teamRows = season.league_type
+    ? await db.prepare('SELECT id, name, conference, division, logo_url FROM teams WHERE league_type = ? ORDER BY name').all(season.league_type)
+    : await db.prepare('SELECT id, name, conference, division, logo_url FROM teams ORDER BY name').all();
+  const overrides = await db.prepare('SELECT team_id, conference, division FROM season_team_conf WHERE season_id = ?').all(req.params.id);
+  const overMap = {};
+  for (const o of overrides) overMap[o.team_id] = o;
+  res.json(teamRows.map(t => ({
+    team_id: t.id,
+    name: t.name,
+    logo_url: t.logo_url,
+    conference: overMap[t.id] ? overMap[t.id].conference : (t.conference || ''),
+    division:   overMap[t.id] ? overMap[t.id].division   : (t.division   || ''),
+    has_override: !!overMap[t.id],
+  })));
+});
+
+// POST /api/seasons/:id/team-conf – bulk upsert season-specific conf/div assignments
+app.post('/api/seasons/:id/team-conf', requireOwner, async (req, res) => {
+  const assignments = req.body;
+  if (!Array.isArray(assignments)) return res.status(400).json({ error: 'Expected array of assignments' });
+  const season = await db.prepare('SELECT id FROM seasons WHERE id = ?').get(req.params.id);
+  if (!season) return res.status(404).json({ error: 'Season not found' });
+  await db.prepare('DELETE FROM season_team_conf WHERE season_id = ?').run(req.params.id);
+  for (const a of assignments) {
+    if (!a.team_id) continue;
+    await db.prepare('INSERT INTO season_team_conf (season_id, team_id, conference, division) VALUES (?, ?, ?, ?)')
+      .run(req.params.id, Number(a.team_id), a.conference || '', a.division || '');
+  }
+  res.json({ ok: true });
+});
 
 app.get('/api/transactions', async (req, res) => {
   const limit = Math.min(Number(req.query.limit) || 25, 100);
@@ -2433,15 +2623,15 @@ async function getPlayoffBracket(playoffId) {
   const playoff = await db.prepare('SELECT * FROM playoffs WHERE id = ?').get(playoffId);
   if (!playoff) return null;
   const teams = await db.prepare(`
-    SELECT pt.seed, t.id AS team_id, t.name, t.logo_url, t.color1, t.color2
+    SELECT pt.seed, t.id AS team_id, t.name, t.abbreviation, t.logo_url, t.color1, t.color2
     FROM playoff_teams pt JOIN teams t ON pt.team_id = t.id
     WHERE pt.playoff_id = ? ORDER BY pt.seed
   `).all(playoffId);
   const allSeries = await db.prepare(`
     SELECT ps.*,
-      ht.name AS high_seed_name, ht.logo_url AS high_seed_logo,
+      ht.name AS high_seed_name, ht.abbreviation AS high_seed_abbrev, ht.logo_url AS high_seed_logo,
       ht.color1 AS high_seed_color1, ht.color2 AS high_seed_color2,
-      lt.name AS low_seed_name, lt.logo_url AS low_seed_logo,
+      lt.name AS low_seed_name, lt.abbreviation AS low_seed_abbrev, lt.logo_url AS low_seed_logo,
       lt.color1 AS low_seed_color1, lt.color2 AS low_seed_color2,
       wt.name AS winner_name
     FROM playoff_series ps
@@ -2708,6 +2898,21 @@ app.get('/api/playoff-series/:id/games', async (req, res) => {
     ORDER BY g.date, g.id
   `).all(req.params.id);
   res.json(games);
+});
+
+// PATCH /api/playoffs/:playoffId/teams/:teamId – update a playoff team's seed
+app.patch('/api/playoffs/:playoffId/teams/:teamId', requireOwner, async (req, res) => {
+  const { seed } = req.body;
+  if (seed === undefined || seed === null || isNaN(Number(seed))) {
+    return res.status(400).json({ error: 'seed must be a number' });
+  }
+  const row = await db.prepare(
+    'SELECT id FROM playoff_teams WHERE playoff_id = ? AND team_id = ?'
+  ).get(req.params.playoffId, req.params.teamId);
+  if (!row) return res.status(404).json({ error: 'Team not in this playoff' });
+  await db.prepare('UPDATE playoff_teams SET seed = ? WHERE playoff_id = ? AND team_id = ?')
+    .run(Number(seed), req.params.playoffId, req.params.teamId);
+  res.json({ ok: true });
 });
 
 // DELETE /api/playoffs/:id
