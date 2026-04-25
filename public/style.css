@@ -247,6 +247,7 @@ button:hover, .btn:hover { opacity: 0.85; }
 /* ── Cards / Conference blocks ────────────────────────────── */
 .conference-block { margin-bottom: 2.5rem; }
 .division-block { margin-bottom: 1.5rem; }
+.clinch-badge { font-size: 0.72rem; font-weight: 700; margin-left: 0.3rem; vertical-align: middle; }
 
 /* ── Hero (index page) ────────────────────────────────────── */
 .hero {

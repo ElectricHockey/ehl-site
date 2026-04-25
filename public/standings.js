@@ -16,12 +16,6 @@ function teamRowAttrs(t) {
   return ` class="team-row" style="--c1:${c1};--c2:${c2};"`;
 }
 
-const thead = `<thead><tr>
-  <th>Team</th><th>GP</th><th>W</th><th title="Overtime wins (included in W)">OTW</th>
-  <th>L</th><th title="Overtime losses">OTL</th><th>PTS</th>
-  <th>GF</th><th>GA</th><th>DIFF</th><th>STK</th><th>HOME</th><th>AWAY</th>
-</tr></thead>`;
-
 const logoHtml = t => t.logo_url
   ? `<img src="${t.logo_url}" style="width:24px;height:24px;object-fit:contain;vertical-align:middle;margin-right:0.4rem;border-radius:3px;" />`
   : '';
@@ -30,10 +24,74 @@ const streakStyle = s => s && s.startsWith('W')
   ? 'font-weight:600;color:#3fb950;'
   : s && s.startsWith('L') ? 'font-weight:600;color:#f85149;' : '';
 
-function makeRow(t) {
+// ── Clinch indicators (NHL-style) ─────────────────────────────────────────
+const CLINCH_INFO = {
+  p: { label: '– p', title: 'Clinched Presidents\' Trophy (best record)', legend: 'p – Presidents\' Trophy (best record)',         color: '#e3b341' },
+  z: { label: '– z', title: 'Clinched conference',                        legend: 'z – Clinched conference',                       color: '#58a6ff' },
+  y: { label: '– y', title: 'Clinched division',                          legend: 'y – Clinched division',                         color: '#3fb950' },
+  x: { label: '– x', title: 'Clinched playoff spot',                      legend: 'x – Clinched playoff spot',                     color: '#3fb950' },
+  e: { label: '– e', title: 'Eliminated from playoff contention',         legend: 'e – Eliminated from playoff contention',        color: '#f85149' },
+};
+
+function clinchBadge(t) {
+  const c = CLINCH_INFO[t.clinch];
+  if (!c) return '';
+  return ` <span class="clinch-badge" style="color:${c.color};" title="${c.title}">${c.label}</span>`;
+}
+
+// ── Sort state ────────────────────────────────────────────────────────────
+let _standingsData = null;
+let _sortCol = 'pts';
+let _sortDir = 'desc';
+
+const SORT_DEFAULTS = { name: 'asc', streak: 'asc', home_record: 'asc', away_record: 'asc' };
+
+function sortTeams(teams, col, dir) {
+  return [...teams].sort((a, b) => {
+    let va, vb;
+    if (col === 'diff') {
+      va = a.gf - a.ga; vb = b.gf - b.ga;
+    } else if (col === 'name') {
+      va = (a.name || '').toLowerCase(); vb = (b.name || '').toLowerCase();
+      return dir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
+    } else {
+      va = a[col] ?? 0; vb = b[col] ?? 0;
+    }
+    return dir === 'asc' ? va - vb : vb - va;
+  });
+}
+
+function thSortable(col, label, title) {
+  const active = _sortCol === col;
+  const arrow = active ? (_sortDir === 'desc' ? ' ▼' : ' ▲') : '';
+  const titleAttr = title ? ` title="${title}"` : '';
+  return `<th style="cursor:pointer;user-select:none;white-space:nowrap;${active ? 'color:#58a6ff;' : ''}"${titleAttr} onclick="handleSortClick('${col}')">${label}${arrow}</th>`;
+}
+
+function buildThead() {
+  return `<thead><tr>
+    ${thSortable('rank', '#', 'Rank')}
+    ${thSortable('name', 'Team')}
+    ${thSortable('gp', 'GP', 'Games Played')}
+    ${thSortable('w', 'W', 'Wins')}
+    ${thSortable('otw', 'OTW', 'Overtime wins (included in W)')}
+    ${thSortable('l', 'L', 'Losses')}
+    ${thSortable('otl', 'OTL', 'Overtime Losses')}
+    ${thSortable('pts', 'PTS', 'Points')}
+    ${thSortable('gf', 'GF', 'Goals For')}
+    ${thSortable('ga', 'GA', 'Goals Against')}
+    ${thSortable('diff', 'DIFF', 'Goal Differential')}
+    ${thSortable('streak', 'STK', 'Current Streak')}
+    ${thSortable('home_record', 'HOME', 'Home Record')}
+    ${thSortable('away_record', 'AWAY', 'Away Record')}
+  </tr></thead>`;
+}
+
+function makeRow(t, rank) {
   const diff = t.gf - t.ga;
   return `<tr${teamRowAttrs(t)}>
-    <td>${logoHtml(t)}<a href="team.html?id=${t.id}">${t.name}</a></td>
+    <td style="color:#8b949e;font-size:0.82rem;font-weight:600;min-width:24px;">${rank}</td>
+    <td>${logoHtml(t)}<a href="team.html?id=${t.id}">${t.name}</a>${clinchBadge(t)}</td>
     <td>${t.gp}</td>
     <td>${t.w}</td>
     <td style="color:#8b949e;">${t.otw || 0}</td>
@@ -48,14 +106,33 @@ function makeRow(t) {
   </tr>`;
 }
 
+function clinchLegend(teams) {
+  const present = new Set(teams.map(t => t.clinch).filter(Boolean));
+  if (present.size === 0) return '';
+  const items = ['p', 'z', 'y', 'x', 'e']
+    .filter(k => present.has(k))
+    .map(k => {
+      const c = CLINCH_INFO[k];
+      return `<span style="color:${c.color};font-size:0.78rem;">${c.legend}</span>`;
+    }).join(' &nbsp;|&nbsp; ');
+  return `<div style="margin-top:0.5rem;padding:0.4rem 0.6rem;background:#161b22;border:1px solid #30363d;border-radius:6px;font-size:0.78rem;color:#8b949e;">
+    ${items}
+  </div>`;
+}
+
 function buildStandingsHtml(teams) {
   if (!teams) return '<p style="color:#8b949e">Select a season above to view standings.</p>';
   if (teams.length === 0) return '<p style="color:#8b949e">No standings data for this season yet.</p>';
 
   const hasGroups = teams.some(t => t.conference || t.division);
+  const thead = buildThead();
+
   if (!hasGroups) {
-    const rows = [...teams].sort((a, b) => b.pts - a.pts || b.w - a.w).map(makeRow).join('');
-    return `<div style="overflow-x:auto;"><table>${thead}<tbody>${rows}</tbody></table></div>`;
+    const sorted = _sortCol === 'rank'
+      ? sortTeams(teams, 'pts', 'desc')         // rank col = default pts sort
+      : sortTeams(teams, _sortCol, _sortDir);
+    const rows = sorted.map((t, i) => makeRow(t, i + 1)).join('');
+    return `<div style="overflow-x:auto;"><table>${thead}<tbody>${rows}</tbody></table></div>${clinchLegend(teams)}`;
   }
 
   // Grouped by conference → division
@@ -72,16 +149,30 @@ function buildStandingsHtml(teams) {
     html += `<div class="conference-block"><h3>${conf}${conf !== 'Unassigned' ? ' Conference' : ''}</h3>`;
     for (const div of Object.keys(conferences[conf]).sort()) {
       if (div) html += `<div class="division-block"><h4 style="font-size:1rem;color:#8b949e;margin-top:1rem;">${div} Division</h4>`;
+      const group = _sortCol === 'rank'
+        ? sortTeams(conferences[conf][div], 'pts', 'desc')
+        : sortTeams(conferences[conf][div], _sortCol, _sortDir);
       html += `<div style="overflow-x:auto;"><table>${thead}<tbody>`;
-      for (const t of conferences[conf][div].sort((a, b) => b.pts - a.pts || b.w - a.w)) {
-        html += makeRow(t);
-      }
+      group.forEach((t, i) => { html += makeRow(t, i + 1); });
       html += '</tbody></table></div>';
       if (div) html += '</div>';
     }
     html += '</div>';
   }
+  html += clinchLegend(teams);
   return html;
+}
+
+function handleSortClick(col) {
+  if (_sortCol === col) {
+    _sortDir = _sortDir === 'desc' ? 'asc' : 'desc';
+  } else {
+    _sortCol = col;
+    _sortDir = SORT_DEFAULTS[col] || 'desc';
+  }
+  if (_standingsData) {
+    document.getElementById('standings-root').innerHTML = buildStandingsHtml(_standingsData);
+  }
 }
 
 async function fetchStandings(seasonId) {
@@ -104,8 +195,8 @@ async function loadStandings() {
       return;
     }
 
-    const teams = await fetchStandings(sid);
-    root.innerHTML = buildStandingsHtml(teams);
+    _standingsData = await fetchStandings(sid);
+    root.innerHTML = buildStandingsHtml(_standingsData);
   } catch {
     root.innerHTML = `<p class="error">Failed to load standings. Is the server running?</p>`;
   }

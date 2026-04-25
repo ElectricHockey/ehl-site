@@ -2358,20 +2358,41 @@ async function calcStandings(seasonId) {
     ? "SELECT * FROM games WHERE status IN ('complete','forfeit') AND season_id = ? ORDER BY date ASC, id ASC"
     : "SELECT * FROM games WHERE status IN ('complete','forfeit') ORDER BY date ASC, id ASC";
   const games = seasonId ? await db.prepare(filter).all(seasonId) : await db.prepare(filter).all();
+
+  // Count remaining (scheduled) games per team — needed for clinch math
+  const scheduledGames = seasonId
+    ? await db.prepare("SELECT home_team_id, away_team_id FROM games WHERE season_id = ? AND status = 'scheduled'").all(seasonId)
+    : [];
+  const remainingMap = {};
+  for (const g of scheduledGames) {
+    remainingMap[g.home_team_id] = (remainingMap[g.home_team_id] || 0) + 1;
+    remainingMap[g.away_team_id] = (remainingMap[g.away_team_id] || 0) + 1;
+  }
+
+  // Per-season conference/division overrides
+  const confOverrides = seasonId
+    ? await db.prepare('SELECT team_id, conference, division FROM season_team_conf WHERE season_id = ?').all(seasonId)
+    : [];
+  const confMap = {};
+  for (const r of confOverrides) confMap[r.team_id] = r;
+
   const teamIds = new Set();
   for (const g of games) { teamIds.add(g.home_team_id); teamIds.add(g.away_team_id); }
   const allTeams = await db.prepare('SELECT * FROM teams').all();
   const teams = seasonId ? allTeams.filter(t => teamIds.has(t.id)) : allTeams;
   const stats = {};
   for (const t of teams) {
+    const co = confMap[t.id];
     stats[t.id] = {
       id: t.id, name: t.name, logo_url: t.logo_url || null,
-      conference: t.conference, division: t.division,
+      conference: co ? co.conference : (t.conference || ''),
+      division:   co ? co.division   : (t.division   || ''),
       color1: t.color1 || null, color2: t.color2 || null,
       gp: 0, w: 0, otw: 0, l: 0, otl: 0, pts: 0, gf: 0, ga: 0,
       home_w: 0, home_l: 0, home_otl: 0,
       away_w: 0, away_l: 0, away_otl: 0,
       _results: [],
+      remaining: remainingMap[t.id] || 0,
     };
   }
   for (const g of games) {
@@ -2406,7 +2427,61 @@ async function calcStandings(seasonId) {
     t.away_record = `${t.away_w}-${t.away_l}-${t.away_otl}`;
     delete t._results;
   }
-  return Object.values(stats).sort((a, b) => b.pts - a.pts || b.w - a.w);
+
+  const sorted = Object.values(stats).sort((a, b) => b.pts - a.pts || b.w - a.w);
+
+  // ── NHL-style clinch indicators ────────────────────────────────────────
+  // Only compute if a playoff bracket is configured for this season
+  if (seasonId && sorted.length > 0) {
+    const pc = await db.prepare('SELECT teams_qualify FROM playoffs WHERE season_id = ?').get(seasonId);
+    if (pc) {
+      const N = Math.min(pc.teams_qualify, sorted.length);
+      for (let i = 0; i < sorted.length; i++) {
+        const t = sorted[i];
+        const rank = i + 1;
+        t.clinch = null;
+
+        if (rank <= N) {
+          // p – clinched Presidents' Trophy (best record, no one can catch)
+          if (rank === 1) {
+            const canPass = sorted.slice(1).some(o => o.pts + 2 * o.remaining >= t.pts);
+            if (!canPass) { t.clinch = 'p'; continue; }
+          }
+
+          // z – clinched conference title (first in conf, no conf peer can catch)
+          if (t.conference) {
+            const confPeers = sorted.filter(o => o.id !== t.id && o.conference === t.conference);
+            const isConfLeader = confPeers.length > 0 && confPeers.every(o => o.pts < t.pts || (o.pts === t.pts && o.w < t.w));
+            if (isConfLeader && !confPeers.some(o => o.pts + 2 * o.remaining >= t.pts)) {
+              t.clinch = 'z'; continue;
+            }
+          }
+
+          // y – clinched division title (first in div, no div peer can catch)
+          if (t.division && t.conference) {
+            const divPeers = sorted.filter(o => o.id !== t.id && o.division === t.division && o.conference === t.conference);
+            const isDivLeader = divPeers.length > 0 && divPeers.every(o => o.pts < t.pts || (o.pts === t.pts && o.w < t.w));
+            if (isDivLeader && !divPeers.some(o => o.pts + 2 * o.remaining >= t.pts)) {
+              t.clinch = 'y'; continue;
+            }
+          }
+
+          // x – clinched a playoff spot (no team outside top N can reach this team)
+          const outside = sorted.slice(N);
+          if (!outside.some(o => o.pts + 2 * o.remaining >= t.pts)) {
+            t.clinch = 'x';
+          }
+        } else {
+          // e – mathematically eliminated (max possible pts < current pts of last playoff team)
+          if (t.pts + 2 * t.remaining < sorted[N - 1].pts) {
+            t.clinch = 'e';
+          }
+        }
+      }
+    }
+  }
+
+  return sorted;
 }
 
 // ── Standings ──────────────────────────────────────────────────────────────
@@ -2416,7 +2491,41 @@ app.get('/api/standings', async (req, res) => {
   res.json(await calcStandings(seasonId));
 });
 
-// ── Transactions (recent accepted signings) ──────────────────────────────
+// GET /api/seasons/:id/team-conf – return all teams for this season's league type
+// with their current season-specific conference/division (falls back to team default)
+app.get('/api/seasons/:id/team-conf', requireAdmin, async (req, res) => {
+  const season = await db.prepare('SELECT * FROM seasons WHERE id = ?').get(req.params.id);
+  if (!season) return res.status(404).json({ error: 'Season not found' });
+  const teamRows = season.league_type
+    ? await db.prepare('SELECT id, name, conference, division, logo_url FROM teams WHERE league_type = ? ORDER BY name').all(season.league_type)
+    : await db.prepare('SELECT id, name, conference, division, logo_url FROM teams ORDER BY name').all();
+  const overrides = await db.prepare('SELECT team_id, conference, division FROM season_team_conf WHERE season_id = ?').all(req.params.id);
+  const overMap = {};
+  for (const o of overrides) overMap[o.team_id] = o;
+  res.json(teamRows.map(t => ({
+    team_id: t.id,
+    name: t.name,
+    logo_url: t.logo_url,
+    conference: overMap[t.id] ? overMap[t.id].conference : (t.conference || ''),
+    division:   overMap[t.id] ? overMap[t.id].division   : (t.division   || ''),
+    has_override: !!overMap[t.id],
+  })));
+});
+
+// POST /api/seasons/:id/team-conf – bulk upsert season-specific conf/div assignments
+app.post('/api/seasons/:id/team-conf', requireOwner, async (req, res) => {
+  const assignments = req.body;
+  if (!Array.isArray(assignments)) return res.status(400).json({ error: 'Expected array of assignments' });
+  const season = await db.prepare('SELECT id FROM seasons WHERE id = ?').get(req.params.id);
+  if (!season) return res.status(404).json({ error: 'Season not found' });
+  await db.prepare('DELETE FROM season_team_conf WHERE season_id = ?').run(req.params.id);
+  for (const a of assignments) {
+    if (!a.team_id) continue;
+    await db.prepare('INSERT INTO season_team_conf (season_id, team_id, conference, division) VALUES (?, ?, ?, ?)')
+      .run(req.params.id, Number(a.team_id), a.conference || '', a.division || '');
+  }
+  res.json({ ok: true });
+});
 
 app.get('/api/transactions', async (req, res) => {
   const limit = Math.min(Number(req.query.limit) || 25, 100);

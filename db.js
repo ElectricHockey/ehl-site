@@ -409,6 +409,14 @@ async function initSchema() {
       status       TEXT NOT NULL DEFAULT 'pending',
       created_at   TIMESTAMPTZ DEFAULT NOW()
     )`,
+    `CREATE TABLE IF NOT EXISTS season_team_conf (
+      id        SERIAL PRIMARY KEY,
+      season_id INTEGER NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+      team_id   INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+      conference TEXT NOT NULL DEFAULT '',
+      division   TEXT NOT NULL DEFAULT '',
+      UNIQUE(season_id, team_id)
+    )`,
   ];
 
   for (const sql of tables) {
