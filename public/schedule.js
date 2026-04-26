@@ -402,7 +402,7 @@ function renderGameDetail(data) {
   }
 
   const hasEaLink = !!(game.ea_match_id);
-  const editBtn = (isAdmin && (isComplete || hasEaLink))
+  const editBtn = isAdmin
     ? `<p style="text-align:center;margin:0.4rem 0 0.2rem;">
          <button aria-label="Edit Stats or Score" onclick="editGameStats(${game.id})" style="padding:0.3rem 0.85rem;background:#21262d;border:1px solid #30363d;border-radius:6px;color:#58a6ff;font-size:0.82rem;cursor:pointer;">
            ✏️ Edit Stats / Score
@@ -510,6 +510,11 @@ function closePicker() {
   currentPickerMatches = [];
 }
 
+function closePickerAndEditManually(gameId) {
+  closePicker();
+  editGameStats(gameId);
+}
+
 async function openPicker(gameId) {
   activePickerGameId = gameId;
   const game = allGames.find(g => g.id === gameId);
@@ -552,7 +557,10 @@ async function openPicker(gameId) {
           <p class="picker-empty">Set the home team's EA Club ID in the <a href="admin.html">Admin Panel</a>.</p>`;
       } else {
         const detail = err.details ? ` (${err.details})` : '';
-        body.innerHTML = `<p class="picker-error">⚠️ Failed to fetch EA data${detail} — please enter stats manually.</p>`;
+        body.innerHTML = `<p class="picker-error">⚠️ Failed to fetch EA data${detail} — please enter stats manually.</p>
+          <p style="text-align:center;margin:0.5rem 0;">
+            <button onclick="closePickerAndEditManually(${gameId})" style="padding:0.35rem 0.9rem;background:#238636;border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:0.85rem;">✏️ Enter Stats Manually</button>
+          </p>`;
       }
       return;
     }

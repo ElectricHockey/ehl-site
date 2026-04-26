@@ -2732,6 +2732,23 @@ app.get('/api/standings', async (req, res) => {
   res.json({ teams, playoff_cutoff });
 });
 
+// GET /api/seasons/:id/teams – return teams that have at least one game in this season
+app.get('/api/seasons/:id/teams', requireAdmin, async (req, res) => {
+  const season = await db.prepare('SELECT id FROM seasons WHERE id = ?').get(req.params.id);
+  if (!season) return res.status(404).json({ error: 'Season not found' });
+  const teams = await db.prepare(`
+    SELECT DISTINCT t.id, t.name, t.logo_url, t.league_type, t.abbreviation
+    FROM teams t
+    WHERE t.id IN (
+      SELECT home_team_id FROM games WHERE season_id = ?
+      UNION
+      SELECT away_team_id FROM games WHERE season_id = ?
+    )
+    ORDER BY t.name
+  `).all(req.params.id, req.params.id);
+  res.json(teams);
+});
+
 // GET /api/seasons/:id/team-conf – return all teams for this season's league type
 // with their current season-specific conference/division (falls back to team default)
 app.get('/api/seasons/:id/team-conf', requireAdmin, async (req, res) => {
