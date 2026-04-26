@@ -602,6 +602,7 @@ app.delete('/api/seasons/:id', requireOwner, async (req, res) => {
     await tx.prepare('DELETE FROM game_player_stats WHERE game_id IN (SELECT id FROM games WHERE season_id = ?)').run(req.params.id);
     await tx.prepare('DELETE FROM games WHERE season_id = ?').run(req.params.id);
     await tx.prepare('DELETE FROM season_player_stats WHERE season_id = ?').run(req.params.id);
+    await tx.prepare('DELETE FROM season_team_conf WHERE season_id = ?').run(req.params.id);
     await tx.prepare('DELETE FROM seasons WHERE id = ?').run(req.params.id);
   });
 
@@ -1360,6 +1361,20 @@ app.get('/api/teams/:id/stats', async (req, res) => {
   `).all(req.params.id, req.params.id);
 
   res.json({ team, roster, skaterStats, goalieStats, recentGames, staff, record, transactions, upcoming });
+});
+
+// GET /api/teams/:id/seasons – all seasons a team has played at least one game in
+app.get('/api/teams/:id/seasons', async (req, res) => {
+  const team = await db.prepare('SELECT id FROM teams WHERE id = ?').get(req.params.id);
+  if (!team) return res.status(404).json({ error: 'Team not found' });
+  const seasons = await db.prepare(`
+    SELECT DISTINCT s.id, s.name, s.is_active, s.is_playoff
+    FROM games g
+    JOIN seasons s ON g.season_id = s.id
+    WHERE g.home_team_id = ? OR g.away_team_id = ?
+    ORDER BY s.sort_order ASC, s.id ASC
+  `).all(req.params.id, req.params.id);
+  res.json(seasons);
 });
 
 // ── Team records ────────────────────────────────────────────────────────────
@@ -2254,9 +2269,28 @@ app.get('/api/games/:id/stats', async (req, res) => {
 // ── League stats leaders ───────────────────────────────────────────────────
 
 app.get('/api/stats/leaders', async (req, res) => {
-  const seasonId = req.query.season_id ? Number(req.query.season_id) : null;
-  const sf = seasonId ? 'AND g.season_id = ?' : '';
-  const p = seasonId ? [seasonId] : [];
+  const seasonId    = req.query.season_id   ? Number(req.query.season_id) : null;
+  const leagueType  = req.query.league_type || null;
+  const isPlayoff   = req.query.is_playoff;   // '0' = regular only, '1' = playoff only
+
+  let sf = '';
+  let extraJoin = '';
+  const p = [];
+
+  if (seasonId) {
+    sf = 'AND g.season_id = ?';
+    p.push(seasonId);
+  } else if (leagueType) {
+    // All-time query filtered by league type and optionally regular/playoff
+    extraJoin = 'LEFT JOIN seasons s ON g.season_id = s.id';
+    sf = "AND COALESCE(s.league_type,'') = ?";
+    p.push(leagueType);
+    if (isPlayoff === '1') {
+      sf += ' AND g.playoff_series_id IS NOT NULL';
+    } else if (isPlayoff === '0') {
+      sf += ' AND g.playoff_series_id IS NULL';
+    }
+  }
 
   // Goalie stats min GP setting
   const minGPRow = await db.prepare("SELECT value FROM settings WHERE key = 'goalie_stats_min_gp'").get();
@@ -2349,6 +2383,7 @@ app.get('/api/stats/leaders', async (req, res) => {
                AND g.is_overtime = 1 THEN 1 ELSE 0 END) AS player_otl
     FROM game_player_stats gps
     JOIN games g ON gps.game_id = g.id
+    ${extraJoin}
     LEFT JOIN ${rosterSub} ON rp.name = gps.player_name
     LEFT JOIN teams t ON t.id = rp.team_id
     LEFT JOIN users u ON u.username = gps.player_name
@@ -2406,6 +2441,7 @@ app.get('/api/stats/leaders', async (req, res) => {
       ROUND(AVG(NULLIF(gps.team_play_rating,0)),0)  AS team_play_rating
     FROM game_player_stats gps
     JOIN games g ON gps.game_id = g.id
+    ${extraJoin}
     LEFT JOIN ${rosterSub} ON rp.name = gps.player_name
     LEFT JOIN teams t ON t.id = rp.team_id
     WHERE gps.position = 'G' AND g.status IN ('complete','forfeit') ${sf}

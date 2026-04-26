@@ -31,12 +31,13 @@ function computeOvr(p) {
 // Returns an inline style string that colour-codes a rating value 0-100
 function ratingStyle(v) {
   if (!v || v <= 0) return 'color:#484f58;';
-  if (v >= 90) return 'background:rgba(35,134,54,0.35);color:#2ea043;font-weight:700;';
-  if (v >= 80) return 'background:rgba(35,134,54,0.28);color:#3fb950;font-weight:700;';
-  if (v >= 70) return 'background:rgba(46,160,67,0.18);color:#56d364;font-weight:600;';
-  if (v >= 60) return 'background:rgba(158,106,3,0.22);color:#e3b341;font-weight:600;';
-  if (v >= 50) return 'background:rgba(188,76,0,0.22);color:#f0883e;';
-  return 'background:rgba(248,81,73,0.18);color:#f85149;';
+  const t = Math.max(0, Math.min(1, (v - 45) / (99 - 45)));
+  const hue = Math.round(t * 120);
+  const bgAlpha = (0.12 + t * 0.23).toFixed(2);
+  const bgL = 22 + Math.round(t * 12);
+  const textL = 58 + Math.round(t * 8);
+  const fw = v >= 80 ? 'font-weight:700;' : v >= 65 ? 'font-weight:600;' : '';
+  return `background:hsla(${hue},90%,${bgL}%,${bgAlpha});color:hsl(${hue},90%,${textL}%);${fw}`;
 }
 // OVR gets a slightly thicker border to stand out
 function ovrStyle(v) {
@@ -240,26 +241,46 @@ function renderGoalies(league) {
   if (root.firstElementChild && prevScroll) root.firstElementChild.scrollLeft = prevScroll;
 }
 
-async function fetchLeagueStats(seasonId) {
-  if (!seasonId) return { skaters: [], goalies: [] };
+async function fetchLeagueStats(seasonId, opts) {
   try {
-    const res = await fetch(`${API}/stats/leaders?season_id=${seasonId}`);
+    const params = new URLSearchParams();
+    if (seasonId) {
+      params.set('season_id', seasonId);
+    } else if (opts) {
+      if (opts.league_type) params.set('league_type', opts.league_type);
+      if (opts.is_playoff !== undefined) params.set('is_playoff', opts.is_playoff);
+    }
+    const qs = params.toString();
+    const res = await fetch(`${API}/stats/leaders${qs ? '?' + qs : ''}`);
     if (!res.ok) return { skaters: [], goalies: [] };
     return await res.json();
   } catch { return { skaters: [], goalies: [] }; }
 }
 
 async function loadStats() {
+  const rawVal = (typeof SeasonSelector !== 'undefined' && SeasonSelector.getSelectedSeasonValue)
+    ? SeasonSelector.getSelectedSeasonValue()
+    : null;
   const sid    = typeof SeasonSelector !== 'undefined' ? SeasonSelector.getSelectedSeasonId()    : null;
   const league = (typeof SeasonSelector !== 'undefined' ? SeasonSelector.getSelectedLeagueType() : null) || 'threes';
 
-  if (!sid) {
+  const isAlltimeRegular = rawVal === 'alltime_regular';
+  const isAlltimePlayoff = rawVal === 'alltime_playoff';
+
+  if (!sid && !isAlltimeRegular && !isAlltimePlayoff) {
     document.getElementById('skaters-root').innerHTML = '<p style="color:#8b949e">Select a league and season above.</p>';
     document.getElementById('goalies-root').innerHTML = '';
     return;
   }
 
-  const data = await fetchLeagueStats(sid);
+  let data;
+  if (isAlltimeRegular) {
+    data = await fetchLeagueStats(null, { league_type: league, is_playoff: 0 });
+  } else if (isAlltimePlayoff) {
+    data = await fetchLeagueStats(null, { league_type: league, is_playoff: 1 });
+  } else {
+    data = await fetchLeagueStats(sid);
+  }
   leagueData[league].skaters = data.skaters || [];
   leagueData[league].goalies = data.goalies || [];
 

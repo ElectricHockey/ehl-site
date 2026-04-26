@@ -5,6 +5,8 @@ let _teamSkaterData = [];
 let _teamGoalieData = [];
 let _teamColors = null;
 let _teamId = null;
+let _teamSeasons = null;          // seasons this team has played in (fetched once)
+let _teamSelectedSeasonId = null; // currently selected season (null = all)
 const teamSort = {
   skater: { key: 'points', dir: 'desc' },
   goalie: { key: 'save_pct', dir: 'desc' },
@@ -59,13 +61,13 @@ function computeOvr(p) {
 }
 function ovrBadge(v) {
   if (!v || v <= 0) return '';
-  let bg, col;
-  if (v >= 90) { bg='rgba(255,215,0,0.22)'; col='#ffd700'; }
-  else if (v >= 80) { bg='rgba(35,134,54,0.28)'; col='#3fb950'; }
-  else if (v >= 70) { bg='rgba(46,160,67,0.18)'; col='#56d364'; }
-  else if (v >= 60) { bg='rgba(158,106,3,0.22)'; col='#e3b341'; }
-  else if (v >= 50) { bg='rgba(188,76,0,0.22)'; col='#f0883e'; }
-  else { bg='rgba(248,81,73,0.18)'; col='#f85149'; }
+  const t = Math.max(0, Math.min(1, (v - 45) / (99 - 45)));
+  const hue = Math.round(t * 120);
+  const bgAlpha = (0.12 + t * 0.23).toFixed(2);
+  const bgL = 22 + Math.round(t * 12);
+  const textL = 58 + Math.round(t * 8);
+  const bg = `hsla(${hue},90%,${bgL}%,${bgAlpha})`;
+  const col = `hsl(${hue},90%,${textL}%)`;
   return `<span style="background:${bg};color:${col};font-weight:700;font-size:0.72rem;padding:0.1rem 0.4rem;border-radius:3px;outline:1px solid ${col};">${v}</span>`;
 }
 function pct3(v) {
@@ -248,7 +250,7 @@ async function loadTeamPage() {
   _teamId = id;
 
   try {
-    const sid = typeof SeasonSelector !== 'undefined' ? SeasonSelector.getSelectedSeasonId() : null;
+    const sid = _teamSelectedSeasonId;
     const url = sid ? `${API}/teams/${id}/stats?season_id=${sid}` : `${API}/teams/${id}/stats`;
     const [statsRes, recordsRes] = await Promise.all([
       fetch(url),
@@ -469,14 +471,34 @@ async function loadTeamPage() {
     document.getElementById('team-skaters-root').innerHTML = renderSkaterTable(_teamSkaterData);
     document.getElementById('team-goalies-root').innerHTML = renderGoalieTable(_teamGoalieData);
 
-    if (typeof SeasonSelector !== 'undefined') {
-      await SeasonSelector.init('season-selector-container');
-      SeasonSelector.onSeasonChange(() => loadTeamPage());
-    }
+    renderTeamSeasonSelector();
   } catch (err) {
     console.error(err);
     root.innerHTML = '<p class="error">Failed to load team data. Is the server running?</p>';
   }
+}
+
+// ── Team season selector (custom, filtered to seasons the team played) ─────
+function renderTeamSeasonSelector() {
+  const container = document.getElementById('season-selector-container');
+  if (!container || !_teamSeasons) return;
+  if (_teamSeasons.length === 0) { container.innerHTML = ''; return; }
+
+  const selectStyle = 'background:#161b22;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.3rem 0.6rem;font-size:0.88rem;';
+  const opts = _teamSeasons.map(s => {
+    const selected = s.id === _teamSelectedSeasonId ? 'selected' : '';
+    return `<option value="${s.id}" ${selected}>${s.name}${s.is_active ? ' ★' : ''}</option>`;
+  }).join('');
+
+  container.innerHTML = `<div style="display:flex;align-items:center;gap:0.5rem;">
+    <label for="team-season-select" style="color:#8b949e;font-size:0.85rem;white-space:nowrap;">Season:</label>
+    <select id="team-season-select" style="${selectStyle}">${opts}</select>
+  </div>`;
+
+  document.getElementById('team-season-select').addEventListener('change', function() {
+    _teamSelectedSeasonId = this.value ? Number(this.value) : null;
+    loadTeamPage();
+  });
 }
 
 // Stats tab switcher
@@ -491,4 +513,27 @@ function switchStatsTab(tab) {
   if (goaliesRoot) goaliesRoot.style.display = tab === 'goalies' ? '' : 'none';
 }
 
-loadTeamPage();
+// ── Entry point ───────────────────────────────────────────────────────────
+async function initTeamPage() {
+  const params = new URLSearchParams(window.location.search);
+  const id = params.get('id');
+  if (!id) return loadTeamPage(); // let loadTeamPage handle the error
+
+  // Fetch the seasons this team has actually played in
+  try {
+    const res = await fetch(`${API}/teams/${id}/seasons`);
+    _teamSeasons = res.ok ? await res.json() : [];
+  } catch { _teamSeasons = []; }
+
+  // Default to the active regular season (if team played there), else first season
+  if (_teamSeasons.length > 0) {
+    const activeRegular = _teamSeasons.find(s => s.is_active && !s.is_playoff);
+    _teamSelectedSeasonId = activeRegular
+      ? activeRegular.id
+      : _teamSeasons[0].id;
+  }
+
+  loadTeamPage();
+}
+
+initTeamPage();
