@@ -148,7 +148,7 @@ const GOALIE_COLS = [
   { key: 'toi',                  label: 'TOI',  tip: 'Time on Ice',                             fmt: p => formatToi(p.toi) },
   { key: 'shutouts',             label: 'SO',   tip: 'Shutouts',                                fmt: p => p.shutouts || 0 },
   // ── Penalty Shots ────────────────────────────────────────────────────────
-  { key: 'penalty_shot_attempts',label: 'PSA',  tip: 'Penalty Shot Attempts Against',           fmt: p => p.penalty_shot_attempts || 0 },
+  { key: 'penalty_shot_attempts',label: 'PSS',  tip: 'Penalty Shot Saves',                              fmt: p => Math.max(0, (p.penalty_shot_attempts || 0) - (p.penalty_shot_ga || 0)) },
   { key: 'penalty_shot_ga',      label: 'PSGA', tip: 'Penalty Shot Goals Against',              fmt: p => p.penalty_shot_ga || 0 },
   // ── Breakaways ───────────────────────────────────────────────────────────
   { key: 'breakaway_shots',      label: 'BKSA', tip: 'Breakaway Shots Against',                 fmt: p => p.breakaway_shots || 0 },

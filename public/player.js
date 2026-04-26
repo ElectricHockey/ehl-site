@@ -330,7 +330,7 @@ function renderLastGames(lastGames, name, isGoalie) {
         <td>${g.shots_against || 0}</td><td>${g.goals_against || 0}</td>
         <td><strong>${svp}</strong></td>
         <td>${g.shutouts || 0}</td>
-        <td>${g.penalty_shot_attempts || 0}</td><td>${g.penalty_shot_ga || 0}</td>
+        <td>${Math.max(0, (g.penalty_shot_attempts || 0) - (g.penalty_shot_ga || 0))}</td><td>${g.penalty_shot_ga || 0}</td>
         <td>${g.breakaway_shots || 0}</td><td>${g.breakaway_saves || 0}</td>
         <td>${bksvp}</td>
         <td>${formatToi(g.toi)}</td>
@@ -382,7 +382,7 @@ function renderLastGames(lastGames, name, isGoalie) {
     <th data-tip="Goals">G</th><th data-tip="Assists">A</th>
     <th data-tip="Shots Against">SA</th><th data-tip="Goals Against">GA</th>
     <th data-tip="Save Percentage">SV%</th><th data-tip="Shutouts">SO</th>
-    <th data-tip="Penalty Shot Attempts">PSA</th><th data-tip="Penalty Shot Goals Against">PSGA</th>
+    <th data-tip="Penalty Shot Saves">PSS</th><th data-tip="Penalty Shot Goals Against">PSGA</th>
     <th data-tip="Breakaway Shots Against">BKSA</th><th data-tip="Breakaway Saves">BKSV</th>
     <th data-tip="Breakaway Save %">BKS%</th>
     <th data-tip="Time on Ice">TOI</th>`;

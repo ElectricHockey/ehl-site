@@ -668,7 +668,7 @@
         <th data-tip="Save Percentage">Sv%</th>
         <th data-tip="Goals Against Average">GAA</th>
         <th data-tip="Time on Ice">TOI</th>
-        <th data-tip="Penalty Shot Attempts">PSA</th>
+        <th data-tip="Penalty Shot Saves">PSS</th>
         <th data-tip="Penalty Shot Goals Against">PSGA</th>
         <th data-tip="Breakaway Shots Against">BKSA</th>
         <th data-tip="Breakaway Saves">BKSV</th>
@@ -683,7 +683,7 @@
           <td><strong>${pct3(p.save_pct)}</strong></td>
           <td>${p.gaa !== null ? Number(p.gaa).toFixed(2) : '–'}</td>
           <td>${formatToi(p.toi)}</td>
-          <td>${p.penalty_shot_attempts}</td>
+          <td>${Math.max(0, p.penalty_shot_attempts - p.penalty_shot_ga)}</td>
           <td>${p.penalty_shot_ga}</td>
           <td>${p.breakaway_shots}</td>
           <td>${p.breakaway_saves}</td>

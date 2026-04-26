@@ -1544,12 +1544,13 @@ app.get('/api/records', async (req, res) => {
     giveaways:        await leagueCareerRecord("SUM(gps.giveaways)",          'S', 'DESC'),
     pass_completions: await leagueCareerRecord("SUM(gps.pass_completions)",   'S', 'DESC'),
     penalties_drawn:  await leagueCareerRecord("SUM(gps.penalties_drawn)",    'S', 'DESC'),
+    pk_clears:        await leagueCareerRecord("SUM(gps.pk_clears)",           'S', 'DESC'),
     // Goalie all-time (GP included)
     goalie_gp:        await leagueCareerRecord("COUNT(DISTINCT gps.game_id)", 'G', 'DESC'),
     goalie_wins:      await leagueCareerRecord("SUM(gps.goalie_wins)",        'G', 'DESC'),
     saves:            await leagueCareerRecord("SUM(gps.saves)",              'G', 'DESC'),
     shutouts:         await leagueCareerRecord("SUM(gps.shutouts)",           'G', 'DESC'),
-    psa:              await leagueCareerRecord("SUM(gps.penalty_shot_attempts)", 'G', 'DESC'),
+    psa:              await leagueCareerRecord("SUM(gps.penalty_shot_attempts) - SUM(gps.penalty_shot_ga)", 'G', 'DESC'),
     bksv:             await leagueCareerRecord("SUM(gps.breakaway_saves)",    'G', 'DESC'),
     desperation_saves: await leagueCareerRecord("SUM(gps.desperation_saves)", 'G', 'DESC'),
     poke_check_saves:  await leagueCareerRecord("SUM(gps.poke_check_saves)",  'G', 'DESC'),
@@ -1578,11 +1579,12 @@ app.get('/api/records', async (req, res) => {
     giveaways:        await leagueSeasonRecord("SUM(gps.giveaways)",          'S', 'DESC'),
     pass_completions: await leagueSeasonRecord("SUM(gps.pass_completions)",   'S', 'DESC'),
     penalties_drawn:  await leagueSeasonRecord("SUM(gps.penalties_drawn)",    'S', 'DESC'),
+    pk_clears:        await leagueSeasonRecord("SUM(gps.pk_clears)",           'S', 'DESC'),
     // Goalie seasonal (no GP; Save% with min-GP filter)
     goalie_wins:      await leagueSeasonRecord("SUM(gps.goalie_wins)",        'G', 'DESC'),
     saves:            await leagueSeasonRecord("SUM(gps.saves)",              'G', 'DESC'),
     shutouts:         await leagueSeasonRecord("SUM(gps.shutouts)",           'G', 'DESC'),
-    psa:              await leagueSeasonRecord("SUM(gps.penalty_shot_attempts)", 'G', 'DESC'),
+    psa:              await leagueSeasonRecord("SUM(gps.penalty_shot_attempts) - SUM(gps.penalty_shot_ga)", 'G', 'DESC'),
     bksv:             await leagueSeasonRecord("SUM(gps.breakaway_saves)",    'G', 'DESC'),
     desperation_saves: await leagueSeasonRecord("SUM(gps.desperation_saves)", 'G', 'DESC'),
     poke_check_saves:  await leagueSeasonRecord("SUM(gps.poke_check_saves)",  'G', 'DESC'),
@@ -1606,7 +1608,6 @@ app.get('/api/records', async (req, res) => {
     pim:              await leagueSingleGameRecord('pim',                'S', 'DESC'),
     pp_goals:         await leagueSingleGameRecord('pp_goals',           'S', 'DESC'),
     sh_goals:         await leagueSingleGameRecord('sh_goals',           'S', 'DESC'),
-    hat_tricks:       await leagueSingleGameRecord('hat_tricks',         'S', 'DESC'),
     faceoff_wins:     await leagueSingleGameRecord('faceoff_wins',       'S', 'DESC'),
     deflections:      await leagueSingleGameRecord('deflections',        'S', 'DESC'),
     interceptions:    await leagueSingleGameRecord('interceptions',      'S', 'DESC'),
@@ -1614,9 +1615,10 @@ app.get('/api/records', async (req, res) => {
     giveaways:        await leagueSingleGameRecord('giveaways',          'S', 'DESC'),
     pass_completions: await leagueSingleGameRecord('pass_completions',   'S', 'DESC'),
     penalties_drawn:  await leagueSingleGameRecord('penalties_drawn',    'S', 'DESC'),
+    pk_clears:        await leagueSingleGameRecord('pk_clears',          'S', 'DESC'),
     // Goalie single game
     saves:            await leagueSingleGameRecord('saves',              'G', 'DESC'),
-    psa:              await leagueSingleGameRecord('penalty_shot_attempts', 'G', 'DESC'),
+    psa:              await leagueSingleGameRecord('penalty_shot_attempts - gps.penalty_shot_ga', 'G', 'DESC'),
     bksv:             await leagueSingleGameRecord('breakaway_saves',    'G', 'DESC'),
     desperation_saves: await leagueSingleGameRecord('desperation_saves', 'G', 'DESC'),
     poke_check_saves:  await leagueSingleGameRecord('poke_check_saves',  'G', 'DESC'),
@@ -1809,12 +1811,15 @@ app.get('/api/players/records/:name', async (req, res) => {
       await checkLeagueRecord('Career Giveaways',       "SUM(gps.giveaways)",              'S', 'DESC', lt, 'alltime', stFilter, st);
       await checkLeagueRecord('Career Pass Completions',"SUM(gps.pass_completions)",       'S', 'DESC', lt, 'alltime', stFilter, st);
       await checkLeagueRecord('Career Penalties Drawn', "SUM(gps.penalties_drawn)",        'S', 'DESC', lt, 'alltime', stFilter, st);
+      if (lt !== 'threes') {
+        await checkLeagueRecord('Career PK Clears',     "SUM(gps.pk_clears)",              'S', 'DESC', lt, 'alltime', stFilter, st);
+      }
       // All-time goalie records
       await checkLeagueRecord('Career GP',              "COUNT(DISTINCT gps.game_id)",     'G', 'DESC', lt, 'alltime', stFilter, st);
       await checkLeagueRecord('Career Wins',            "SUM(gps.goalie_wins)",            'G', 'DESC', lt, 'alltime', stFilter, st);
       await checkLeagueRecord('Career Saves',           "SUM(gps.saves)",                  'G', 'DESC', lt, 'alltime', stFilter, st);
       await checkLeagueRecord('Career Shutouts',        "SUM(gps.shutouts)",               'G', 'DESC', lt, 'alltime', stFilter, st);
-      await checkLeagueRecord('Career PSA',             "SUM(gps.penalty_shot_attempts)",  'G', 'DESC', lt, 'alltime', stFilter, st);
+      await checkLeagueRecord('Career PSS',             "SUM(gps.penalty_shot_attempts) - SUM(gps.penalty_shot_ga)",  'G', 'DESC', lt, 'alltime', stFilter, st);
       await checkLeagueRecord('Career BKSV',            "SUM(gps.breakaway_saves)",        'G', 'DESC', lt, 'alltime', stFilter, st);
       await checkLeagueRecord('Career Goals Against',   "SUM(gps.goals_against)",          'G', 'DESC', lt, 'alltime', stFilter, st);
       // Seasonal skater records
@@ -1840,11 +1845,14 @@ app.get('/api/players/records/:name', async (req, res) => {
       await checkSeasonRecord('Season Giveaways',       "SUM(gps.giveaways)",              'S', 'DESC', lt, 'seasonal', null, stFilter, st);
       await checkSeasonRecord('Season Pass Completions',"SUM(gps.pass_completions)",       'S', 'DESC', lt, 'seasonal', null, stFilter, st);
       await checkSeasonRecord('Season Penalties Drawn', "SUM(gps.penalties_drawn)",        'S', 'DESC', lt, 'seasonal', null, stFilter, st);
+      if (lt !== 'threes') {
+        await checkSeasonRecord('Season PK Clears',     "SUM(gps.pk_clears)",              'S', 'DESC', lt, 'seasonal', null, stFilter, st);
+      }
       // Seasonal goalie records
       await checkSeasonRecord('Season Wins',            "SUM(gps.goalie_wins)",            'G', 'DESC', lt, 'seasonal', null, stFilter, st);
       await checkSeasonRecord('Season Saves',           "SUM(gps.saves)",                  'G', 'DESC', lt, 'seasonal', null, stFilter, st);
       await checkSeasonRecord('Season Shutouts',        "SUM(gps.shutouts)",               'G', 'DESC', lt, 'seasonal', null, stFilter, st);
-      await checkSeasonRecord('Season PSA',             "SUM(gps.penalty_shot_attempts)",  'G', 'DESC', lt, 'seasonal', null, stFilter, st);
+      await checkSeasonRecord('Season PSS',             "SUM(gps.penalty_shot_attempts) - SUM(gps.penalty_shot_ga)",  'G', 'DESC', lt, 'seasonal', null, stFilter, st);
       await checkSeasonRecord('Season BKSV',            "SUM(gps.breakaway_saves)",        'G', 'DESC', lt, 'seasonal', null, stFilter, st);
       await checkSeasonRecord('Season Goals Against',   "SUM(gps.goals_against)",          'G', 'DESC', lt, 'seasonal', null, stFilter, st);
       await checkSeasonRecord('Season Save%',           "CASE WHEN SUM(gps.shots_against)>0 THEN ROUND(CAST(SUM(gps.saves) AS NUMERIC)/SUM(gps.shots_against),3) ELSE NULL END", 'G', 'DESC', lt, 'seasonal', goalieSeasonMinGP, stFilter, st);
@@ -1861,7 +1869,6 @@ app.get('/api/players/records/:name', async (req, res) => {
         await checkSingleGameRecord('Single Game PP Goals',       'pp_goals',           'S', 'DESC', lt, 'singlegame', stFilter, st);
         await checkSingleGameRecord('Single Game SH Goals',       'sh_goals',           'S', 'DESC', lt, 'singlegame', stFilter, st);
       }
-      await checkSingleGameRecord('Single Game Hat Tricks',       'hat_tricks',         'S', 'DESC', lt, 'singlegame', stFilter, st);
       await checkSingleGameRecord('Single Game Faceoff Wins',     'faceoff_wins',       'S', 'DESC', lt, 'singlegame', stFilter, st);
       await checkSingleGameRecord('Single Game Deflections',      'deflections',        'S', 'DESC', lt, 'singlegame', stFilter, st);
       await checkSingleGameRecord('Single Game Interceptions',    'interceptions',      'S', 'DESC', lt, 'singlegame', stFilter, st);
@@ -1869,11 +1876,14 @@ app.get('/api/players/records/:name', async (req, res) => {
       await checkSingleGameRecord('Single Game Giveaways',        'giveaways',          'S', 'DESC', lt, 'singlegame', stFilter, st);
       await checkSingleGameRecord('Single Game Pass Completions', 'pass_completions',   'S', 'DESC', lt, 'singlegame', stFilter, st);
       await checkSingleGameRecord('Single Game Penalties Drawn',  'penalties_drawn',    'S', 'DESC', lt, 'singlegame', stFilter, st);
+      if (lt !== 'threes') {
+        await checkSingleGameRecord('Single Game PK Clears',      'pk_clears',          'S', 'DESC', lt, 'singlegame', stFilter, st);
+      }
       // Single-game goalie records
-      await checkSingleGameRecord('Single Game Saves',        'saves',                  'G', 'DESC', lt, 'singlegame', stFilter, st);
-      await checkSingleGameRecord('Single Game PSA',          'penalty_shot_attempts',  'G', 'DESC', lt, 'singlegame', stFilter, st);
-      await checkSingleGameRecord('Single Game BKSV',         'breakaway_saves',        'G', 'DESC', lt, 'singlegame', stFilter, st);
-      await checkSingleGameRecord('Single Game Goals Against','goals_against',           'G', 'DESC', lt, 'singlegame', stFilter, st);
+      await checkSingleGameRecord('Single Game Saves',        'saves',                                    'G', 'DESC', lt, 'singlegame', stFilter, st);
+      await checkSingleGameRecord('Single Game PSS',          'penalty_shot_attempts - gps.penalty_shot_ga', 'G', 'DESC', lt, 'singlegame', stFilter, st);
+      await checkSingleGameRecord('Single Game BKSV',         'breakaway_saves',                          'G', 'DESC', lt, 'singlegame', stFilter, st);
+      await checkSingleGameRecord('Single Game Goals Against','goals_against',                             'G', 'DESC', lt, 'singlegame', stFilter, st);
 
       // Single-game pts (goals+assists) – computed expression
       const ltFilterPts = 'AND COALESCE(s.league_type,\'\') = ?';
@@ -1989,6 +1999,7 @@ app.get('/api/players/profile/:name', async (req, res) => {
       gps.goalie_wins, gps.goalie_losses, gps.goalie_otw, gps.goalie_otl,
       gps.shutouts, gps.penalty_shot_attempts, gps.penalty_shot_ga,
       gps.breakaway_shots, gps.breakaway_saves,
+      gps.overall_rating,
       COALESCE(s.league_type,'') AS league_type,
       CASE WHEN g.playoff_series_id IS NOT NULL THEN 1 ELSE 0 END AS is_playoff
     FROM game_player_stats gps
