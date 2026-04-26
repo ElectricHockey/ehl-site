@@ -95,7 +95,7 @@ function sumSkaterRows(rows) {
     faceoff_wins: 0, faceoff_total: 0, deflections: 0, interceptions: 0,
     pass_attempts: 0, pass_completions: 0, hat_tricks: 0, toi: 0,
     saucer_passes: 0, pk_clears: 0, player_wins: 0, player_losses: 0, player_otl: 0,
-    goal_support: 0,
+    goal_support: 0, _gs_sum: 0,
     _apt_sum: 0, _apt_gp: 0,
     _or_sum: 0, _offr_sum: 0, _dr_sum: 0, _tpr_sum: 0, _r_count: 0,
   };
@@ -128,7 +128,7 @@ function sumSkaterRows(rows) {
     tot.player_wins += Number(r.player_wins) || 0;
     tot.player_losses += Number(r.player_losses) || 0;
     tot.player_otl += Number(r.player_otl) || 0;
-    tot.goal_support += Number(r.goal_support) || 0;
+    tot._gs_sum += (Number(r.goal_support) || 0) * (Number(r.gp) || 0);
     if (r.apt) { tot._apt_sum += Number(r.apt) * (Number(r.gp) || 1); tot._apt_gp += Number(r.gp) || 1; }
     tot.toi += Number(r.toi) || 0;
     if (Number(r.overall_rating) > 0)    { tot._or_sum   += Number(r.overall_rating);   tot._r_count++; }
@@ -145,6 +145,7 @@ function sumSkaterRows(rows) {
   tot.shot_pct = tot.shots > 0 ? Math.round(tot.goals * 100 / tot.shots * 10) / 10 : null;
   tot.pass_pct_calc = tot.pass_attempts > 0 ? Math.round(tot.pass_completions * 100 / tot.pass_attempts * 10) / 10 : null;
   tot.apt = tot._apt_gp > 0 ? Math.round(tot._apt_sum / tot._apt_gp) : 0;
+  tot.goal_support = tot.gp > 0 ? Math.round(tot._gs_sum / tot.gp * 100) / 100 : 0;
   return tot;
 }
 
@@ -157,7 +158,7 @@ function sumGoalieRows(rows) {
     breakaway_shots: 0, breakaway_saves: 0,
     desperation_saves: 0, poke_check_saves: 0,
     goalie_wins: 0, goalie_losses: 0, goalie_otw: 0, goalie_otl: 0,
-    goal_support: 0,
+    goal_support: 0, _gs_sum: 0,
     _or_sum: 0, _offr_sum: 0, _dr_sum: 0, _tpr_sum: 0, _r_count: 0,
   };
   for (const r of rows) {
@@ -179,7 +180,7 @@ function sumGoalieRows(rows) {
     tot.goalie_losses += Number(r.goalie_losses) || 0;
     tot.goalie_otw += Number(r.goalie_otw) || 0;
     tot.goalie_otl += Number(r.goalie_otl) || 0;
-    tot.goal_support += Number(r.goal_support) || 0;
+    tot._gs_sum += (Number(r.goal_support) || 0) * (Number(r.gp) || 0);
     if (Number(r.overall_rating) > 0)  { tot._or_sum   += Number(r.overall_rating);   tot._r_count++; }
     if (Number(r.offensive_rating) > 0)  tot._offr_sum += Number(r.offensive_rating);
     if (Number(r.defensive_rating) > 0)  tot._dr_sum   += Number(r.defensive_rating);
@@ -193,6 +194,7 @@ function sumGoalieRows(rows) {
   tot.save_pct = tot.shots_against > 0 ? tot.saves / tot.shots_against : null;
   tot.gaa = tot.toi > 0 ? Math.round(tot.goals_against * 3600 / tot.toi * 100) / 100 : null;
   tot.shots_per_game = tot.gp > 0 ? Math.round((tot.shots_against / tot.gp) * 10) / 10 : null;
+  tot.goal_support = tot.gp > 0 ? Math.round(tot._gs_sum / tot.gp * 100) / 100 : 0;
   return tot;
 }
 

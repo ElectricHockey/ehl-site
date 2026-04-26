@@ -476,6 +476,8 @@ button:hover, .btn:hover { opacity: 0.85; }
 /* Player / team links inside tables */
 .player-link { color: #e6edf3; text-decoration: none; }
 .player-link:hover { text-decoration: underline; }
+.team-link   { color: #e6edf3; text-decoration: none; }
+.team-link:hover { text-decoration: underline; }
 
 /* ── Unified game stats table (game.html, schedule.html panel) ── */
 /* Scroll wrapper – overflow-y:visible allows JS tooltip to escape vertically */

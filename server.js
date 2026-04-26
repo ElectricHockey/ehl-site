@@ -1227,7 +1227,7 @@ const SKATER_SELECT = `
   SUM(CASE WHEN ((gps.team_id = g.home_team_id AND g.home_score < g.away_score)
               OR (gps.team_id = g.away_team_id AND g.away_score < g.home_score))
            AND g.is_overtime = 1 THEN 1 ELSE 0 END) AS player_otl,
-  SUM(CASE WHEN gps.team_id = g.home_team_id THEN g.home_score ELSE g.away_score END) AS goal_support`;
+  ROUND(CAST(SUM(CASE WHEN gps.team_id = g.home_team_id THEN g.home_score ELSE g.away_score END) AS NUMERIC) / NULLIF(COUNT(DISTINCT gps.game_id), 0), 2) AS goal_support`;
 
 const GOALIE_SELECT = `
   MAX(gps.player_name) AS name, MAX(gps.team_id) AS team_id, MAX(t.name) AS team_name, MAX(t.logo_url) AS team_logo,
@@ -1275,7 +1275,7 @@ const GOALIE_SELECT = `
   ROUND(AVG(NULLIF(gps.offensive_rating,0)),0)  AS offensive_rating,
   ROUND(AVG(NULLIF(gps.defensive_rating,0)),0)  AS defensive_rating,
   ROUND(AVG(NULLIF(gps.team_play_rating,0)),0)  AS team_play_rating,
-  SUM(CASE WHEN gps.team_id = g.home_team_id THEN g.home_score ELSE g.away_score END) AS goal_support`;
+  ROUND(CAST(SUM(CASE WHEN gps.team_id = g.home_team_id THEN g.home_score ELSE g.away_score END) AS NUMERIC) / NULLIF(COUNT(DISTINCT gps.game_id), 0), 2) AS goal_support`;
 
 app.get('/api/teams/:id/stats', async (req, res) => {
   const team = await db.prepare('SELECT * FROM teams WHERE id = ?').get(req.params.id);
@@ -2412,7 +2412,7 @@ app.get('/api/stats/leaders', async (req, res) => {
       SUM(CASE WHEN ((gps.team_id = g.home_team_id AND g.home_score < g.away_score)
                   OR (gps.team_id = g.away_team_id AND g.away_score < g.home_score))
                AND g.is_overtime = 1 THEN 1 ELSE 0 END) AS player_otl,
-      SUM(CASE WHEN gps.team_id = g.home_team_id THEN g.home_score ELSE g.away_score END) AS goal_support
+      ROUND(CAST(SUM(CASE WHEN gps.team_id = g.home_team_id THEN g.home_score ELSE g.away_score END) AS NUMERIC) / NULLIF(COUNT(DISTINCT gps.game_id), 0), 2) AS goal_support
     FROM game_player_stats gps
     JOIN games g ON gps.game_id = g.id
     ${extraJoin}
@@ -2471,7 +2471,7 @@ app.get('/api/stats/leaders', async (req, res) => {
       ROUND(AVG(NULLIF(gps.offensive_rating,0)),0)  AS offensive_rating,
       ROUND(AVG(NULLIF(gps.defensive_rating,0)),0)  AS defensive_rating,
       ROUND(AVG(NULLIF(gps.team_play_rating,0)),0)  AS team_play_rating,
-      SUM(CASE WHEN gps.team_id = g.home_team_id THEN g.home_score ELSE g.away_score END) AS goal_support
+      ROUND(CAST(SUM(CASE WHEN gps.team_id = g.home_team_id THEN g.home_score ELSE g.away_score END) AS NUMERIC) / NULLIF(COUNT(DISTINCT gps.game_id), 0), 2) AS goal_support
     FROM game_player_stats gps
     JOIN games g ON gps.game_id = g.id
     ${extraJoin}
@@ -2647,6 +2647,11 @@ async function calcStandings(seasonId) {
     }
     t.home_record = `${t.home_w}-${t.home_l}-${t.home_otl}`;
     t.away_record = `${t.away_w}-${t.away_l}-${t.away_otl}`;
+    const last10 = t._results.slice(-10);
+    const l10_w = last10.filter(r => r === 'W').length;
+    const l10_l = last10.filter(r => r === 'L').length;
+    const l10_otl = last10.filter(r => r === 'OTL').length;
+    t.l10 = `${l10_w}-${l10_l}-${l10_otl}`;
     delete t._results;
   }
 

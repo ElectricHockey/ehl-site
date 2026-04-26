@@ -124,7 +124,7 @@ const SKATER_COLS = [
   { key: 'apt',             label: 'APT',  tip: 'Avg. Puck Possession (sec/game)',         fmt: p => formatToi(p.apt) },
   { key: 'toi',             label: 'TOI',  tip: 'Time on Ice',                             fmt: p => formatToi(p.toi) },
   // ── Support ──────────────────────────────────────────────────────────────
-  { key: 'goal_support',    label: 'GS',   tip: 'Goal Support – team goals scored while player is in the game', fmt: p => p.goal_support ?? 0 },
+  { key: 'goal_support',    label: 'GS',   tip: 'Goal Support – avg team goals scored per game while playing', fmt: p => p.goal_support != null ? Number(p.goal_support).toFixed(2) : '–' },
 ];
 
 // ── Goalie column definitions ──────────────────────────────────────────────
@@ -159,5 +159,5 @@ const GOALIE_COLS = [
   { key: 'desperation_saves',    label: 'DSV',  tip: 'Desperation Saves',                       fmt: p => p.desperation_saves || 0 },
   { key: 'poke_check_saves',     label: 'PCHK', tip: 'Poke Check Saves',                        fmt: p => p.poke_check_saves || 0 },
   // ── Support ──────────────────────────────────────────────────────────────
-  { key: 'goal_support',         label: 'GS',   tip: 'Goal Support – team goals scored while goalie is playing', fmt: p => p.goal_support ?? 0 },
+  { key: 'goal_support',         label: 'GS',   tip: 'Goal Support – avg team goals scored per game while goalie is playing', fmt: p => p.goal_support != null ? Number(p.goal_support).toFixed(2) : '–' },
 ];

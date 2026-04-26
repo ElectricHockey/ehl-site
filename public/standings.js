@@ -77,6 +77,8 @@ function sortTeams(teams, col, dir) {
       va = recordPts(a.home_record); vb = recordPts(b.home_record);
     } else if (col === 'away_record') {
       va = recordPts(a.away_record); vb = recordPts(b.away_record);
+    } else if (col === 'l10') {
+      va = recordPts(a.l10); vb = recordPts(b.l10);
     } else {
       va = a[col] ?? 0; vb = b[col] ?? 0;
     }
@@ -91,7 +93,7 @@ function thSortable(col, label, title) {
   return `<th style="cursor:pointer;user-select:none;white-space:nowrap;${active ? 'color:#58a6ff;' : ''}"${titleAttr} onclick="handleSortClick('${col}')">${label}${arrow}</th>`;
 }
 
-// Column order: #, Team, GP, W, L, OTL, OTW, PTS, GF, GA, DIFF, STK, HOME, AWAY
+// Column order: #, Team, GP, W, L, OTL, OTW, PTS, GF, GA, DIFF, STK, L10, HOME, AWAY
 function buildThead() {
   return `<thead><tr>
     ${thSortable('rank', '#', 'Rank')}
@@ -106,6 +108,7 @@ function buildThead() {
     ${thSortable('ga', 'GA', 'Goals Against')}
     ${thSortable('diff', 'DIFF', 'Goal Differential')}
     ${thSortable('streak', 'STK', 'Current Streak')}
+    ${thSortable('l10', 'L10', 'Last 10 Games Record (W-L-OTL)')}
     ${thSortable('home_record', 'HOME', 'Home Record')}
     ${thSortable('away_record', 'AWAY', 'Away Record')}
   </tr></thead>`;
@@ -115,7 +118,7 @@ function makeRow(t, rank) {
   const diff = t.gf - t.ga;
   return `<tr${teamRowAttrs(t)}>
     <td style="color:#8b949e;font-size:0.82rem;font-weight:600;min-width:24px;">${rank}</td>
-    <td>${logoHtml(t)}<a href="team.html?id=${t.id}">${t.name}</a>${clinchBadge(t)}</td>
+    <td>${logoHtml(t)}<a href="team.html?id=${t.id}" class="team-link">${t.name}</a>${clinchBadge(t)}</td>
     <td>${t.gp}</td>
     <td>${t.w}</td>
     <td>${t.l}</td>
@@ -125,13 +128,14 @@ function makeRow(t, rank) {
     <td>${t.gf}</td><td>${t.ga}</td>
     <td>${diff >= 0 ? '+' : ''}${diff}</td>
     <td style="${streakStyle(t.streak)}">${t.streak || '—'}</td>
+    <td style="color:#8b949e;font-size:0.82rem;">${t.l10 || '0-0-0'}</td>
     <td style="color:#8b949e;font-size:0.82rem;">${t.home_record || '0-0-0'}</td>
     <td style="color:#8b949e;font-size:0.82rem;">${t.away_record || '0-0-0'}</td>
   </tr>`;
 }
 
 // A horizontal separator row spanning all columns (playoff cutoff line, no label)
-const PLAYOFF_LINE_ROW = `<tr class="playoff-cutoff-row"><td colspan="14" style="padding:0;height:2px;border-top:2px solid #58a6ff;"></td></tr>`;
+const PLAYOFF_LINE_ROW = `<tr class="playoff-cutoff-row"><td colspan="15" style="padding:0;height:2px;border-top:2px solid #58a6ff;"></td></tr>`;
 
 function clinchLegend(teams) {
   const present = new Set(teams.map(t => t.clinch).filter(Boolean));
