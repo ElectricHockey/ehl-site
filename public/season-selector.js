@@ -23,7 +23,13 @@ const SeasonSelector = (() => {
 
   function getSelectedSeasonId() {
     const el = document.getElementById('season-select');
-    return el && el.value ? Number(el.value) : null;
+    if (!el || !el.value || el.value.startsWith('alltime_')) return null;
+    return Number(el.value);
+  }
+
+  function getSelectedSeasonValue() {
+    const el = document.getElementById('season-select');
+    return el ? el.value : null;
   }
 
   function getSelectedSeasonIsPlayoff() {
@@ -77,7 +83,11 @@ const SeasonSelector = (() => {
     const activeRegularSeason = regularSeasons.find(s => s.is_active);
     let defaultId = saved ? Number(saved) : (activeRegularSeason ? activeRegularSeason.id : seasons[0].id);
     if (!seasons.find(s => s.id === defaultId)) defaultId = activeRegularSeason ? activeRegularSeason.id : seasons[0].id;
-    el.innerHTML = seasons.map(s =>
+    // All-time options always at the top; real seasons follow
+    const alltimeOpts =
+      `<option value="alltime_regular">★ All Time – Regular Season</option>` +
+      `<option value="alltime_playoff">★ All Time – Playoffs</option>`;
+    el.innerHTML = alltimeOpts + seasons.map(s =>
       `<option value="${s.id}" data-is-playoff="${s.is_playoff ? '1' : '0'}" ${s.id === defaultId ? 'selected' : ''}>${s.name}${s.is_active ? ' ★' : ''}</option>`
     ).join('');
   }
@@ -129,7 +139,10 @@ const SeasonSelector = (() => {
 
       document.getElementById('season-select').addEventListener('change', e => {
         const type = getSelectedLeagueType();
-        localStorage.setItem(STORAGE_SEASON[type], e.target.value);
+        // Don't persist all-time sentinel values; only persist real season IDs
+        if (!e.target.value.startsWith('alltime_')) {
+          localStorage.setItem(STORAGE_SEASON[type], e.target.value);
+        }
         if (_onChange) _onChange();
       });
     } catch (err) {
@@ -138,5 +151,5 @@ const SeasonSelector = (() => {
     }
   }
 
-  return { init, getSelectedSeasonId, getSelectedLeagueType, getSelectedSeasonIsPlayoff, onSeasonChange };
+  return { init, getSelectedSeasonId, getSelectedSeasonValue, getSelectedLeagueType, getSelectedSeasonIsPlayoff, onSeasonChange };
 })();

@@ -34,7 +34,7 @@ async function loadRecentScores(seasonId, rootId) {
       const homeLogo = g.home_logo ? `<img src="${g.home_logo}" class="home-score-logo" />` : '';
       const awayLogo = g.away_logo ? `<img src="${g.away_logo}" class="home-score-logo" />` : '';
       const ot = g.is_overtime ? '<span class="home-ot-badge">OT</span>' : '';
-      return `<a href="schedule.html?g=${g.id}" class="home-score-row">
+      return `<a href="game.html?id=${g.id}" class="home-score-row">
         <span class="home-score-team">${homeLogo}${g.home_team_name}</span>
         <span class="home-score-nums"><strong>${g.home_score}</strong> – <strong>${g.away_score}</strong>${ot}</span>
         <span class="home-score-team home-score-away">${g.away_team_name}${awayLogo}</span>
@@ -60,7 +60,7 @@ async function loadMiniStandings(seasonId, rootId) {
     if (!teams || !teams.length) { root.innerHTML = '<p style="color:#8b949e;font-size:0.88rem;">No standings data yet.</p>'; return; }
     const sorted = [...teams].sort((a, b) => b.pts - a.pts || b.w - a.w).slice(0, 8);
     root.innerHTML = `<div style="overflow-x:auto;"><table class="home-standings-table">
-      <thead><tr><th>Team</th><th>GP</th><th>W</th><th>L</th><th>PTS</th></tr></thead>
+      <thead><tr><th>Team</th><th>GP</th><th>W</th><th>L</th><th>OTL</th><th>PTS</th></tr></thead>
       <tbody>${sorted.map((t, i) => {
         const c1 = hexToRgbStr(t.color1);
         const c2 = hexToRgbStr(t.color2) || c1;
@@ -69,6 +69,7 @@ async function loadMiniStandings(seasonId, rootId) {
         return `<tr${rowStyle}>
           <td>${logo}<a href="team.html?id=${t.id}" style="color:#58a6ff;text-decoration:none;">${t.name}</a></td>
           <td>${t.gp}</td><td>${t.w}</td><td>${t.l}</td>
+          <td style="color:#8b949e;">${t.otl}</td>
           <td><strong>${t.pts}</strong></td>
         </tr>`;
       }).join('')}</tbody>
@@ -86,7 +87,7 @@ function leaderRow(p, stat, fmtFn) {
   const val = fmtFn ? fmtFn(p[stat]) : (p[stat] ?? 0);
   return `<div class="home-leader-row">
     <span class="home-leader-name"><a href="player.html?name=${encodeURIComponent(p.name)}" style="color:#e6edf3;text-decoration:none;">${p.name}</a></span>
-    <span class="home-leader-team">${logo}${p.team_name || '—'}</span>
+    <span class="home-leader-team">${logo}</span>
     <span class="home-leader-val">${val}</span>
   </div>`;
 }

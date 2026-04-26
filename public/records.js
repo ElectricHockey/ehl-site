@@ -102,14 +102,19 @@ function renderAllTime(career) {
     buildRow('Giveaways',        career.giveaways,         null,  gpMeta),
     buildRow('Pass Completions', career.pass_completions,  null,  gpMeta),
     buildRow('Penalties Drawn',  career.penalties_drawn,   null,  gpMeta),
+    ...(!isThrees ? [
+      buildRow('PK Clears',      career.pk_clears,         null,  gpMeta),
+    ] : []),
   ];
   const goalieRows = [
     buildRow('GP',               career.goalie_gp,         null,  null),
     buildRow('Wins',             career.goalie_wins,       null,  gpMeta),
     buildRow('Saves',            career.saves,             null,  gpMeta),
     buildRow('Shutouts',         career.shutouts,          null,  gpMeta),
-    buildRow('PSA',              career.psa,               null,  gpMeta),
+    buildRow('PSS',              career.psa,               null,  gpMeta),
     buildRow('BKSV',             career.bksv,              null,  gpMeta),
+    buildRow('Desperation Saves',career.desperation_saves, null,  gpMeta),
+    buildRow('Poke Check Saves', career.poke_check_saves,  null,  gpMeta),
     buildRow('Goals Against',    career.goals_against,     null,  gpMeta),
   ];
   return section('Skater Records') + table(skaterRows) +
@@ -148,14 +153,19 @@ function renderSeasonal(seasonal, goalieSeasonMinGP) {
     buildRow('Giveaways',        seasonal.giveaways,        null,  meta),
     buildRow('Pass Completions', seasonal.pass_completions, null,  meta),
     buildRow('Penalties Drawn',  seasonal.penalties_drawn,  null,  meta),
+    ...(!isThrees ? [
+      buildRow('PK Clears',      seasonal.pk_clears,        null,  meta),
+    ] : []),
   ];
   const minLabel = goalieSeasonMinGP ? ` (min ${goalieSeasonMinGP} GP)` : '';
   const goalieRows = [
     buildRow('Wins',             seasonal.goalie_wins,      null,  meta),
     buildRow('Saves',            seasonal.saves,            null,  meta),
     buildRow('Shutouts',         seasonal.shutouts,         null,  meta),
-    buildRow('PSA',              seasonal.psa,              null,  meta),
+    buildRow('PSS',              seasonal.psa,              null,  meta),
     buildRow('BKSV',             seasonal.bksv,             null,  meta),
+    buildRow('Desperation Saves',seasonal.desperation_saves,null,  meta),
+    buildRow('Poke Check Saves', seasonal.poke_check_saves, null,  meta),
     buildRow('Goals Against',    seasonal.goals_against,    null,  meta),
     buildRow('Save%' + minLabel, seasonal.save_pct,         'pct3',meta),
   ];
@@ -186,11 +196,16 @@ function renderSingleGame(sg) {
     buildRow('Giveaways',        sg.giveaways,        null, gameRef),
     buildRow('Pass Completions', sg.pass_completions, null, gameRef),
     buildRow('Penalties Drawn',  sg.penalties_drawn,  null, gameRef),
+    ...(!isThrees ? [
+      buildRow('PK Clears',      sg.pk_clears,        null, gameRef),
+    ] : []),
   ];
   const goalieRows = [
     buildRow('Saves',            sg.saves,            null, gameRef),
-    buildRow('PSA',              sg.psa,              null, gameRef),
+    buildRow('PSS',              sg.psa,              null, gameRef),
     buildRow('BKSV',             sg.bksv,             null, gameRef),
+    buildRow('Desperation Saves',sg.desperation_saves,null, gameRef),
+    buildRow('Poke Check Saves', sg.poke_check_saves, null, gameRef),
     buildRow('Goals Against',    sg.goals_against,    null, gameRef),
   ];
   return section('Skater Records') + table(skaterRows) +

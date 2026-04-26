@@ -6,6 +6,18 @@ const typeLabel = lt => lt === 'threes' ? "3's" : lt === 'sixes' ? "6's" : lt ||
 // ── Admin league filter (3's or 6's) ───────────────────────────────────────
 let adminLeagueFilter = localStorage.getItem('ehl_admin_league') || 'threes';
 
+// ── Admin season filter (null = all seasons) ───────────────────────────────
+let adminSeasonFilter = null;
+
+function setAdminSeason(id) {
+  adminSeasonFilter = id ? Number(id) : null;
+  // Pre-select in game form season dropdown
+  const gameSeason = document.getElementById('game-season');
+  if (gameSeason && adminSeasonFilter) gameSeason.value = adminSeasonFilter;
+  loadTeams();
+  loadGames();
+}
+
 function _syncLeagueFormDefaults(league) {
   // Auto-set the season form league type selector
   const seasonType = document.getElementById('season-type');
@@ -17,10 +29,14 @@ function _syncLeagueFormDefaults(league) {
 
 function setAdminLeague(league) {
   adminLeagueFilter = league;
+  adminSeasonFilter = null; // reset season when league changes
   localStorage.setItem('ehl_admin_league', league);
   document.querySelectorAll('.admin-league-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.league === league);
   });
+  // Reset season dropdown
+  const sel = document.getElementById('admin-season-filter');
+  if (sel) sel.value = '';
   // Sync form defaults to the new league
   _syncLeagueFormDefaults(league);
   // Reload data for the active sections
@@ -328,6 +344,25 @@ async function loadSeasons() {
   const seasonOpts = '<option value="">— No Season —</option>' +
     regularSeasons.map(s => `<option value="${s.id}"${s.is_active ? ' selected' : ''}>${s.name} (${typeLabel(s.league_type)})</option>`).join('');
   document.getElementById('game-season').innerHTML = seasonOpts;
+  // If a season filter is active, keep it selected in the game form
+  if (adminSeasonFilter) {
+    const gameSeason = document.getElementById('game-season');
+    if (gameSeason) gameSeason.value = adminSeasonFilter;
+  }
+
+  // Populate the Working Season dropdown in the league bar
+  const adminSeasonSel = document.getElementById('admin-season-filter');
+  if (adminSeasonSel) {
+    const prevVal = adminSeasonSel.value;
+    adminSeasonSel.innerHTML = '<option value="">— All Seasons —</option>' +
+      regularSeasons.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+    // Restore selection if the season still exists
+    if (prevVal && regularSeasons.find(s => String(s.id) === prevVal)) {
+      adminSeasonSel.value = prevVal;
+    } else if (adminSeasonFilter && regularSeasons.find(s => s.id === adminSeasonFilter)) {
+      adminSeasonSel.value = adminSeasonFilter;
+    }
+  }
 
   // Populate MSO import season dropdown (all regular seasons, not filtered by league)
   const msoSeasonSelect = document.getElementById('mso-season-select');
@@ -499,16 +534,29 @@ async function loadTeams() {
   // Dropdowns always show ALL teams (for player team assignment)
   const tOpts = '<option value="">— No Team —</option>' + allTeams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
   document.getElementById('player-team').innerHTML = tOpts;
-  // Game home/away dropdowns: filter by current league
+  // Game home/away and roster dropdowns: filter by current league, further by season if selected
   const leagueTeams = allTeams.filter(t => !t.league_type || t.league_type === adminLeagueFilter);
-  const gOpts = '<option value="">Select team</option>' + leagueTeams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+  let dropdownTeams = leagueTeams;
+  if (adminSeasonFilter) {
+    try {
+      const seasonTeamsRes = await fetch(`${API}/seasons/${adminSeasonFilter}/teams`, { headers: adminHeaders() });
+      if (seasonTeamsRes.ok) {
+        const seasonTeams = await seasonTeamsRes.json();
+        const seasonTeamIds = new Set(seasonTeams.map(t => t.id));
+        const filtered = leagueTeams.filter(t => seasonTeamIds.has(t.id));
+        if (filtered.length > 0) dropdownTeams = filtered;
+        // fallback: if no teams in season yet, show all league teams
+      }
+    } catch { /* fallback to all league teams */ }
+  }
+  const gOpts = '<option value="">Select team</option>' + dropdownTeams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
   document.getElementById('game-home').innerHTML = gOpts;
   document.getElementById('game-away').innerHTML = gOpts;
-  // Roster tab team selector: filter by current league
+  // Roster tab team selector
   const rSel = document.getElementById('roster-team-select');
   const rPrev = rSel.value;
-  rSel.innerHTML = '<option value="">— Select a team —</option>' + leagueTeams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
-  if (rPrev && leagueTeams.find(t => String(t.id) === rPrev)) rSel.value = rPrev;
+  rSel.innerHTML = '<option value="">— Select a team —</option>' + dropdownTeams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+  if (rPrev && dropdownTeams.find(t => String(t.id) === rPrev)) rSel.value = rPrev;
 
   // Merge teams dropdowns: show ALL teams
   const mergeOpts = '<option value="">— Select team —</option>' + allTeams.map(t => `<option value="${t.id}">${t.name}${t.league_type ? ' (' + ltLabel(t.league_type) + ')' : ''}</option>`).join('');
@@ -808,9 +856,13 @@ async function mergePlayers() {
 async function loadGames() {
   const res = await fetch(`${API}/games`);
   const allGames = await res.json();
-  // Filter games by current league using the season's league_type
+  // Filter games by current league using the season's league_type, and by season if selected
   const seasonLeagueMap = Object.fromEntries(allSeasons.map(s => [s.id, s.league_type]));
   const games = allGames.filter(g => {
+    if (adminSeasonFilter) {
+      // When a season filter is set, only show games from that season
+      return g.season_id === adminSeasonFilter;
+    }
     if (!g.season_id) return true; // unassigned games: show in both
     const lt = seasonLeagueMap[g.season_id];
     return !lt || lt === adminLeagueFilter;
