@@ -258,7 +258,7 @@ async function fetchLeagueStats(seasonId, opts) {
 }
 
 async function loadStats() {
-  const rawVal = (typeof SeasonSelector !== 'undefined' && SeasonSelector.getSelectedSeasonValue)
+  const rawVal = (typeof SeasonSelector !== 'undefined' && typeof SeasonSelector.getSelectedSeasonValue === 'function')
     ? SeasonSelector.getSelectedSeasonValue()
     : null;
   const sid    = typeof SeasonSelector !== 'undefined' ? SeasonSelector.getSelectedSeasonId()    : null;

@@ -2269,9 +2269,9 @@ app.get('/api/games/:id/stats', async (req, res) => {
 // ── League stats leaders ───────────────────────────────────────────────────
 
 app.get('/api/stats/leaders', async (req, res) => {
-  const seasonId    = req.query.season_id   ? Number(req.query.season_id) : null;
-  const leagueType  = req.query.league_type || null;
-  const isPlayoff   = req.query.is_playoff;   // '0' = regular only, '1' = playoff only
+  const seasonId = req.query.season_id ? Number(req.query.season_id) : null;
+  const leagueType = req.query.league_type || null;
+  const isPlayoff = req.query.is_playoff; // '0' = regular only, '1' = playoff only
 
   let sf = '';
   let extraJoin = '';
@@ -2283,7 +2283,7 @@ app.get('/api/stats/leaders', async (req, res) => {
   } else if (leagueType) {
     // All-time query filtered by league type and optionally regular/playoff
     extraJoin = 'LEFT JOIN seasons s ON g.season_id = s.id';
-    sf = "AND COALESCE(s.league_type,'') = ?";
+    sf = 'AND s.league_type = ?';
     p.push(leagueType);
     if (isPlayoff === '1') {
       sf += ' AND g.playoff_series_id IS NOT NULL';
