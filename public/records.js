@@ -110,6 +110,8 @@ function renderAllTime(career) {
     buildRow('Shutouts',         career.shutouts,          null,  gpMeta),
     buildRow('PSA',              career.psa,               null,  gpMeta),
     buildRow('BKSV',             career.bksv,              null,  gpMeta),
+    buildRow('Desperation Saves',career.desperation_saves, null,  gpMeta),
+    buildRow('Poke Check Saves', career.poke_check_saves,  null,  gpMeta),
     buildRow('Goals Against',    career.goals_against,     null,  gpMeta),
   ];
   return section('Skater Records') + table(skaterRows) +
@@ -156,6 +158,8 @@ function renderSeasonal(seasonal, goalieSeasonMinGP) {
     buildRow('Shutouts',         seasonal.shutouts,         null,  meta),
     buildRow('PSA',              seasonal.psa,              null,  meta),
     buildRow('BKSV',             seasonal.bksv,             null,  meta),
+    buildRow('Desperation Saves',seasonal.desperation_saves,null,  meta),
+    buildRow('Poke Check Saves', seasonal.poke_check_saves, null,  meta),
     buildRow('Goals Against',    seasonal.goals_against,    null,  meta),
     buildRow('Save%' + minLabel, seasonal.save_pct,         'pct3',meta),
   ];
@@ -191,6 +195,8 @@ function renderSingleGame(sg) {
     buildRow('Saves',            sg.saves,            null, gameRef),
     buildRow('PSA',              sg.psa,              null, gameRef),
     buildRow('BKSV',             sg.bksv,             null, gameRef),
+    buildRow('Desperation Saves',sg.desperation_saves,null, gameRef),
+    buildRow('Poke Check Saves', sg.poke_check_saves, null, gameRef),
     buildRow('Goals Against',    sg.goals_against,    null, gameRef),
   ];
   return section('Skater Records') + table(skaterRows) +

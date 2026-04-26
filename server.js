@@ -1551,6 +1551,8 @@ app.get('/api/records', async (req, res) => {
     shutouts:         await leagueCareerRecord("SUM(gps.shutouts)",           'G', 'DESC'),
     psa:              await leagueCareerRecord("SUM(gps.penalty_shot_attempts)", 'G', 'DESC'),
     bksv:             await leagueCareerRecord("SUM(gps.breakaway_saves)",    'G', 'DESC'),
+    desperation_saves: await leagueCareerRecord("SUM(gps.desperation_saves)", 'G', 'DESC'),
+    poke_check_saves:  await leagueCareerRecord("SUM(gps.poke_check_saves)",  'G', 'DESC'),
     goals_against:    await leagueCareerRecord("SUM(gps.goals_against)",      'G', 'DESC'),
   };
 
@@ -1582,6 +1584,8 @@ app.get('/api/records', async (req, res) => {
     shutouts:         await leagueSeasonRecord("SUM(gps.shutouts)",           'G', 'DESC'),
     psa:              await leagueSeasonRecord("SUM(gps.penalty_shot_attempts)", 'G', 'DESC'),
     bksv:             await leagueSeasonRecord("SUM(gps.breakaway_saves)",    'G', 'DESC'),
+    desperation_saves: await leagueSeasonRecord("SUM(gps.desperation_saves)", 'G', 'DESC'),
+    poke_check_saves:  await leagueSeasonRecord("SUM(gps.poke_check_saves)",  'G', 'DESC'),
     goals_against:    await leagueSeasonRecord("SUM(gps.goals_against)",      'G', 'DESC'),
     save_pct:         await leagueSeasonRecord(
       "CASE WHEN SUM(gps.shots_against)>0 THEN ROUND(CAST(SUM(gps.saves) AS NUMERIC)/SUM(gps.shots_against),3) ELSE NULL END",
@@ -1614,6 +1618,8 @@ app.get('/api/records', async (req, res) => {
     saves:            await leagueSingleGameRecord('saves',              'G', 'DESC'),
     psa:              await leagueSingleGameRecord('penalty_shot_attempts', 'G', 'DESC'),
     bksv:             await leagueSingleGameRecord('breakaway_saves',    'G', 'DESC'),
+    desperation_saves: await leagueSingleGameRecord('desperation_saves', 'G', 'DESC'),
+    poke_check_saves:  await leagueSingleGameRecord('poke_check_saves',  'G', 'DESC'),
     goals_against:    await leagueSingleGameRecord('goals_against',      'G', 'DESC'),
   };
 
