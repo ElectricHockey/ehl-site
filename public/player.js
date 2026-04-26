@@ -26,17 +26,16 @@ function pct3(v) {
 }
 function computeOvr(p) {
   if (p.overall_rating && Number(p.overall_rating) > 0) return Number(p.overall_rating);
+  const isG = /goalie/i.test(p.position || '') || (p.position || '').toUpperCase() === 'G';
   const off = Number(p.offensive_rating) || 0;
   const def = Number(p.defensive_rating) || 0;
   const tpl = Number(p.team_play_rating) || 0;
   if (off > 0 || def > 0 || tpl > 0) {
     const isD = /defense/i.test(p.position || '') || /^[lr]d$/i.test(p.position || '');
-    const isG = /goalie/i.test(p.position || '') || (p.position || '').toUpperCase() === 'G';
     if (isG || isD) return Math.round((def * 2 + off + tpl * 1.5) / 4.5);
     return Math.round((off * 2 + def + tpl * 1.5) / 4.5);
   }
   // Per-game stats-based fallback (mirrors the SQL formula in SKATER_SELECT / GOALIE_SELECT)
-  const isG = /goalie/i.test(p.position || '') || (p.position || '').toUpperCase() === 'G';
   if (isG) {
     const sa = Number(p.shots_against) || 0;
     if (sa > 0) {
