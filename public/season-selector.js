@@ -13,6 +13,7 @@ const SeasonSelector = (() => {
   const STORAGE_SEASON = { threes: 'ehl_season_threes', sixes: 'ehl_season_sixes' };
   let _onChange = null;
   let _seasonsCache = { threes: [], sixes: [] };
+  let _noAllTime = false;
 
   const selectStyle = 'background:#161b22;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.3rem 0.6rem;font-size:0.88rem;';
 
@@ -83,8 +84,8 @@ const SeasonSelector = (() => {
     const activeRegularSeason = regularSeasons.find(s => s.is_active);
     let defaultId = saved ? Number(saved) : (activeRegularSeason ? activeRegularSeason.id : seasons[0].id);
     if (!seasons.find(s => s.id === defaultId)) defaultId = activeRegularSeason ? activeRegularSeason.id : seasons[0].id;
-    // All-time options always at the top; real seasons follow
-    const alltimeOpts =
+    // All-time options always at the top; real seasons follow (skip when noAllTime is set)
+    const alltimeOpts = _noAllTime ? '' :
       `<option value="alltime_regular">★ All Time – Regular Season</option>` +
       `<option value="alltime_playoff">★ All Time – Playoffs</option>`;
     el.innerHTML = alltimeOpts + seasons.map(s =>
@@ -102,7 +103,8 @@ const SeasonSelector = (() => {
     if (_onChange) _onChange();
   }
 
-  async function init(containerId) {
+  async function init(containerId, options) {
+    _noAllTime = !!(options && options.noAllTime);
     const container = document.getElementById(containerId || 'season-selector-container');
     if (!container) return;
     try {

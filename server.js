@@ -1132,10 +1132,21 @@ function mapEAPlayer(p) {
 async function fetchEA(url) {
   const res = await fetch(url, {
     headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
       Accept: 'application/json, text/plain, */*',
-      Referer: 'https://proclubs.ea.com/',
       'Accept-Language': 'en-US,en;q=0.9',
+      'Accept-Encoding': 'gzip, deflate, br',
+      Origin: 'https://proclubs.ea.com',
+      Referer: 'https://proclubs.ea.com/',
+      'Sec-Fetch-Dest': 'empty',
+      'Sec-Fetch-Mode': 'cors',
+      'Sec-Fetch-Site': 'same-origin',
+      'Sec-Ch-Ua': '"Chromium";v="136", "Google Chrome";v="136", "Not.A/Brand";v="99"',
+      'Sec-Ch-Ua-Mobile': '?0',
+      'Sec-Ch-Ua-Platform': '"Windows"',
+      Connection: 'keep-alive',
+      'Cache-Control': 'no-cache',
+      Pragma: 'no-cache',
     },
   });
   if (!res.ok) throw new Error(`EA API responded with ${res.status}`);
@@ -1215,7 +1226,8 @@ const SKATER_SELECT = `
            AND (g.is_overtime IS NULL OR g.is_overtime = 0) THEN 1 ELSE 0 END) AS player_losses,
   SUM(CASE WHEN ((gps.team_id = g.home_team_id AND g.home_score < g.away_score)
               OR (gps.team_id = g.away_team_id AND g.away_score < g.home_score))
-           AND g.is_overtime = 1 THEN 1 ELSE 0 END) AS player_otl`;
+           AND g.is_overtime = 1 THEN 1 ELSE 0 END) AS player_otl,
+  ROUND(CAST(SUM(CASE WHEN gps.team_id = g.home_team_id THEN g.home_score ELSE g.away_score END) AS NUMERIC) / NULLIF(COUNT(DISTINCT gps.game_id), 0), 2) AS goal_support`;
 
 const GOALIE_SELECT = `
   MAX(gps.player_name) AS name, MAX(gps.team_id) AS team_id, MAX(t.name) AS team_name, MAX(t.logo_url) AS team_logo,
@@ -1262,7 +1274,8 @@ const GOALIE_SELECT = `
           END), 0) AS overall_rating,
   ROUND(AVG(NULLIF(gps.offensive_rating,0)),0)  AS offensive_rating,
   ROUND(AVG(NULLIF(gps.defensive_rating,0)),0)  AS defensive_rating,
-  ROUND(AVG(NULLIF(gps.team_play_rating,0)),0)  AS team_play_rating`;
+  ROUND(AVG(NULLIF(gps.team_play_rating,0)),0)  AS team_play_rating,
+  ROUND(CAST(SUM(CASE WHEN gps.team_id = g.home_team_id THEN g.home_score ELSE g.away_score END) AS NUMERIC) / NULLIF(COUNT(DISTINCT gps.game_id), 0), 2) AS goal_support`;
 
 app.get('/api/teams/:id/stats', async (req, res) => {
   const team = await db.prepare('SELECT * FROM teams WHERE id = ?').get(req.params.id);
@@ -2000,6 +2013,7 @@ app.get('/api/players/profile/:name', async (req, res) => {
       gps.shutouts, gps.penalty_shot_attempts, gps.penalty_shot_ga,
       gps.breakaway_shots, gps.breakaway_saves,
       gps.overall_rating,
+      CASE WHEN gps.team_id = g.home_team_id THEN g.home_score ELSE g.away_score END AS goal_support,
       COALESCE(s.league_type,'') AS league_type,
       CASE WHEN g.playoff_series_id IS NOT NULL THEN 1 ELSE 0 END AS is_playoff
     FROM game_player_stats gps
@@ -2397,7 +2411,8 @@ app.get('/api/stats/leaders', async (req, res) => {
                AND (g.is_overtime IS NULL OR g.is_overtime = 0) THEN 1 ELSE 0 END) AS player_losses,
       SUM(CASE WHEN ((gps.team_id = g.home_team_id AND g.home_score < g.away_score)
                   OR (gps.team_id = g.away_team_id AND g.away_score < g.home_score))
-               AND g.is_overtime = 1 THEN 1 ELSE 0 END) AS player_otl
+               AND g.is_overtime = 1 THEN 1 ELSE 0 END) AS player_otl,
+      ROUND(CAST(SUM(CASE WHEN gps.team_id = g.home_team_id THEN g.home_score ELSE g.away_score END) AS NUMERIC) / NULLIF(COUNT(DISTINCT gps.game_id), 0), 2) AS goal_support
     FROM game_player_stats gps
     JOIN games g ON gps.game_id = g.id
     ${extraJoin}
@@ -2455,7 +2470,8 @@ app.get('/api/stats/leaders', async (req, res) => {
                 END), 0) AS overall_rating,
       ROUND(AVG(NULLIF(gps.offensive_rating,0)),0)  AS offensive_rating,
       ROUND(AVG(NULLIF(gps.defensive_rating,0)),0)  AS defensive_rating,
-      ROUND(AVG(NULLIF(gps.team_play_rating,0)),0)  AS team_play_rating
+      ROUND(AVG(NULLIF(gps.team_play_rating,0)),0)  AS team_play_rating,
+      ROUND(CAST(SUM(CASE WHEN gps.team_id = g.home_team_id THEN g.home_score ELSE g.away_score END) AS NUMERIC) / NULLIF(COUNT(DISTINCT gps.game_id), 0), 2) AS goal_support
     FROM game_player_stats gps
     JOIN games g ON gps.game_id = g.id
     ${extraJoin}
@@ -2487,7 +2503,8 @@ app.get('/api/stats/leaders', async (req, res) => {
         0 AS pass_attempts, 0 AS pass_completions, 0 AS hat_tricks,
         0 AS overall_rating, 0 AS offensive_rating, 0 AS defensive_rating, 0 AS team_play_rating,
         0 AS shot_attempts, 0 AS saucer_passes, 0 AS pk_clears,
-        0 AS player_wins, 0 AS player_losses, 0 AS player_otl
+        0 AS player_wins, 0 AS player_losses, 0 AS player_otl,
+        0 AS goal_support
       FROM season_player_stats sps
       LEFT JOIN teams t ON t.id = sps.team_id
       WHERE sps.season_id = ? AND (sps.position IS NULL OR sps.position != 'G')
@@ -2505,7 +2522,7 @@ app.get('/api/stats/leaders', async (req, res) => {
         0 AS breakaway_shots, 0 AS breakaway_saves,
         0 AS desperation_saves, 0 AS poke_check_saves,
         0 AS overall_rating, 0 AS offensive_rating, 0 AS defensive_rating, 0 AS team_play_rating,
-        NULL AS shots_per_game
+        NULL AS shots_per_game, 0 AS goal_support
       FROM season_player_stats sps
       LEFT JOIN teams t ON t.id = sps.team_id
       WHERE sps.season_id = ? AND sps.position = 'G'
@@ -2630,6 +2647,11 @@ async function calcStandings(seasonId) {
     }
     t.home_record = `${t.home_w}-${t.home_l}-${t.home_otl}`;
     t.away_record = `${t.away_w}-${t.away_l}-${t.away_otl}`;
+    const last10 = t._results.slice(-10);
+    const l10_w = last10.filter(r => r === 'W').length;
+    const l10_l = last10.filter(r => r === 'L').length;
+    const l10_otl = last10.filter(r => r === 'OTL').length;
+    t.l10 = `${l10_w}-${l10_l}-${l10_otl}`;
     delete t._results;
   }
 
@@ -3514,7 +3536,8 @@ app.get('/api/stats/historical', async (req, res) => {
       0 AS deflections, 0 AS interceptions, 0 AS giveaways, 0 AS takeaways,
       0 AS pass_attempts, 0 AS pass_completions, 0 AS hat_tricks, 0 AS penalties_drawn,
       0 AS shot_attempts, 0 AS saucer_passes, 0 AS pk_clears,
-      0 AS player_wins, 0 AS player_losses, 0 AS player_otl
+      0 AS player_wins, 0 AS player_losses, 0 AS player_otl,
+      0 AS goal_support
     FROM season_player_stats sps
     LEFT JOIN teams t ON t.id = sps.team_id
     LEFT JOIN seasons s ON s.id = sps.season_id
@@ -3534,7 +3557,7 @@ app.get('/api/stats/historical', async (req, res) => {
       0 AS penalty_shot_attempts, 0 AS penalty_shot_ga,
       0 AS breakaway_shots, 0 AS breakaway_saves,
       0 AS desperation_saves, 0 AS poke_check_saves,
-      0 AS goalie_otw, 0 AS goalie_otl, NULL AS shots_per_game
+      0 AS goalie_otw, 0 AS goalie_otl, NULL AS shots_per_game, 0 AS goal_support
     FROM season_player_stats sps
     LEFT JOIN teams t ON t.id = sps.team_id
     LEFT JOIN seasons s ON s.id = sps.season_id

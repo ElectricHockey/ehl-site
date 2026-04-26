@@ -26,14 +26,46 @@ function pct3(v) {
 }
 function computeOvr(p) {
   if (p.overall_rating && Number(p.overall_rating) > 0) return Number(p.overall_rating);
+  const isG = /goalie/i.test(p.position || '') || (p.position || '').toUpperCase() === 'G';
   const off = Number(p.offensive_rating) || 0;
   const def = Number(p.defensive_rating) || 0;
   const tpl = Number(p.team_play_rating) || 0;
   if (off > 0 || def > 0 || tpl > 0) {
     const isD = /defense/i.test(p.position || '') || /^[lr]d$/i.test(p.position || '');
-    const isG = /goalie/i.test(p.position || '') || (p.position || '').toUpperCase() === 'G';
     if (isG || isD) return Math.round((def * 2 + off + tpl * 1.5) / 4.5);
     return Math.round((off * 2 + def + tpl * 1.5) / 4.5);
+  }
+  // Per-game stats-based fallback (mirrors the SQL formula in SKATER_SELECT / GOALIE_SELECT)
+  if (isG) {
+    const sa = Number(p.shots_against) || 0;
+    if (sa > 0) {
+      const ga = Number(p.goals_against) || 0;
+      const raw = 60 + ((sa - ga) / sa * 100 - 88) * 3 + (ga === 0 ? 8 : 0);
+      return Math.max(0, Math.min(99, Math.round(raw)));
+    }
+    return null;
+  }
+  const goals = Number(p.goals) || 0;
+  const assists = Number(p.assists) || 0;
+  const pm = Number(p.plus_minus) || 0;
+  const shots = Number(p.shots) || 0;
+  const hits = Number(p.hits) || 0;
+  const bs = Number(p.blocked_shots) || 0;
+  const tka = Number(p.takeaways) || 0;
+  const gva = Number(p.giveaways) || 0;
+  const pim = Number(p.pim) || 0;
+  if (goals || assists || shots || hits || bs || tka) {
+    const raw = 60
+      + Math.min(goals * 7, 21)
+      + Math.min(assists * 4, 14)
+      + Math.max(Math.min(pm * 3, 12), -12)
+      + Math.min(shots * 0.5, 5)
+      + Math.min(hits * 0.5, 5)
+      + Math.min(bs * 1.5, 6)
+      + Math.min(tka * 1.5, 6)
+      - Math.min(gva * 2, 8)
+      - Math.min(pim * 0.5, 5);
+    return Math.max(0, Math.min(99, Math.round(raw)));
   }
   return null;
 }
@@ -62,6 +94,7 @@ function sumSkaterRows(rows) {
     faceoff_wins: 0, faceoff_total: 0, deflections: 0, interceptions: 0,
     pass_attempts: 0, pass_completions: 0, hat_tricks: 0, toi: 0,
     saucer_passes: 0, pk_clears: 0, player_wins: 0, player_losses: 0, player_otl: 0,
+    goal_support: 0, _gs_sum: 0,
     _apt_sum: 0, _apt_gp: 0,
     _or_sum: 0, _offr_sum: 0, _dr_sum: 0, _tpr_sum: 0, _r_count: 0,
   };
@@ -94,6 +127,7 @@ function sumSkaterRows(rows) {
     tot.player_wins += Number(r.player_wins) || 0;
     tot.player_losses += Number(r.player_losses) || 0;
     tot.player_otl += Number(r.player_otl) || 0;
+    tot._gs_sum += (Number(r.goal_support) || 0) * (Number(r.gp) || 0);
     if (r.apt) { tot._apt_sum += Number(r.apt) * (Number(r.gp) || 1); tot._apt_gp += Number(r.gp) || 1; }
     tot.toi += Number(r.toi) || 0;
     if (Number(r.overall_rating) > 0)    { tot._or_sum   += Number(r.overall_rating);   tot._r_count++; }
@@ -110,6 +144,7 @@ function sumSkaterRows(rows) {
   tot.shot_pct = tot.shots > 0 ? Math.round(tot.goals * 100 / tot.shots * 10) / 10 : null;
   tot.pass_pct_calc = tot.pass_attempts > 0 ? Math.round(tot.pass_completions * 100 / tot.pass_attempts * 10) / 10 : null;
   tot.apt = tot._apt_gp > 0 ? Math.round(tot._apt_sum / tot._apt_gp) : 0;
+  tot.goal_support = tot.gp > 0 ? Math.round(tot._gs_sum / tot.gp * 100) / 100 : 0;
   return tot;
 }
 
@@ -122,6 +157,7 @@ function sumGoalieRows(rows) {
     breakaway_shots: 0, breakaway_saves: 0,
     desperation_saves: 0, poke_check_saves: 0,
     goalie_wins: 0, goalie_losses: 0, goalie_otw: 0, goalie_otl: 0,
+    goal_support: 0, _gs_sum: 0,
     _or_sum: 0, _offr_sum: 0, _dr_sum: 0, _tpr_sum: 0, _r_count: 0,
   };
   for (const r of rows) {
@@ -143,6 +179,7 @@ function sumGoalieRows(rows) {
     tot.goalie_losses += Number(r.goalie_losses) || 0;
     tot.goalie_otw += Number(r.goalie_otw) || 0;
     tot.goalie_otl += Number(r.goalie_otl) || 0;
+    tot._gs_sum += (Number(r.goal_support) || 0) * (Number(r.gp) || 0);
     if (Number(r.overall_rating) > 0)  { tot._or_sum   += Number(r.overall_rating);   tot._r_count++; }
     if (Number(r.offensive_rating) > 0)  tot._offr_sum += Number(r.offensive_rating);
     if (Number(r.defensive_rating) > 0)  tot._dr_sum   += Number(r.defensive_rating);
@@ -156,6 +193,7 @@ function sumGoalieRows(rows) {
   tot.save_pct = tot.shots_against > 0 ? tot.saves / tot.shots_against : null;
   tot.gaa = tot.toi > 0 ? Math.round(tot.goals_against * 3600 / tot.toi * 100) / 100 : null;
   tot.shots_per_game = tot.gp > 0 ? Math.round((tot.shots_against / tot.gp) * 10) / 10 : null;
+  tot.goal_support = tot.gp > 0 ? Math.round(tot._gs_sum / tot.gp * 100) / 100 : 0;
   return tot;
 }
 
@@ -334,6 +372,7 @@ function renderLastGames(lastGames, name, isGoalie) {
         <td>${g.breakaway_shots || 0}</td><td>${g.breakaway_saves || 0}</td>
         <td>${bksvp}</td>
         <td>${formatToi(g.toi)}</td>
+        <td>${g.goal_support ?? 0}</td>
       </tr>`;
     } else {
       const fow_pct = g.faceoff_wins !== null && (g.faceoff_wins + (g.faceoff_losses || 0)) > 0
@@ -359,6 +398,7 @@ function renderLastGames(lastGames, name, isGoalie) {
         <td>${g.hat_tricks || 0}</td>
         <td>${formatToi(g.possession_secs)}</td>
         <td>${formatToi(g.toi)}</td>
+        <td>${g.goal_support ?? 0}</td>
       </tr>`;
     }
   }).join('');
@@ -376,7 +416,8 @@ function renderLastGames(lastGames, name, isGoalie) {
     <th data-tip="Pass Attempts">PA</th><th data-tip="Pass Completions">PC</th><th data-tip="Pass Completion %">PC%</th>
     <th data-tip="Hat Tricks">HT</th>
     <th data-tip="Avg Puck Possession">POSS</th>
-    <th data-tip="Time on Ice">TOI</th>`;
+    <th data-tip="Time on Ice">TOI</th>
+    <th data-tip="Goal Support – team goals scored while playing">GS</th>`;
 
   const goalieHead = `
     <th data-tip="Goals">G</th><th data-tip="Assists">A</th>
@@ -385,7 +426,8 @@ function renderLastGames(lastGames, name, isGoalie) {
     <th data-tip="Penalty Shot Saves">PSS</th><th data-tip="Penalty Shot Goals Against">PSGA</th>
     <th data-tip="Breakaway Shots Against">BKSA</th><th data-tip="Breakaway Saves">BKSV</th>
     <th data-tip="Breakaway Save %">BKS%</th>
-    <th data-tip="Time on Ice">TOI</th>`;
+    <th data-tip="Time on Ice">TOI</th>
+    <th data-tip="Goal Support – team goals scored while playing">GS</th>`;
 
   return `<div style="overflow-x:auto;max-width:100%;"><table class="last-games-table">
     <thead><tr>
