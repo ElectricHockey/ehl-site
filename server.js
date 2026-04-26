@@ -3533,7 +3533,10 @@ app.get('/api/stats/historical', async (req, res) => {
       0 AS shot_attempts, 0 AS saucer_passes, 0 AS pk_clears,
       0 AS player_wins, 0 AS player_losses, 0 AS player_otl,
       0 AS goal_support
-    FROM season_player_stats sps ${sf}
+    FROM season_player_stats sps
+    LEFT JOIN teams t ON t.id = sps.team_id
+    LEFT JOIN seasons s ON s.id = sps.season_id
+    WHERE (sps.position IS NULL OR sps.position = '' OR sps.position != 'G') ${sf}
     ORDER BY points DESC, goals DESC
   `).all(...params);
 
