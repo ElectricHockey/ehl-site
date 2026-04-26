@@ -539,9 +539,9 @@ async function loadTeams() {
   let dropdownTeams = leagueTeams;
   if (adminSeasonFilter) {
     try {
-      const sr = await fetch(`${API}/seasons/${adminSeasonFilter}/teams`, { headers: adminHeaders() });
-      if (sr.ok) {
-        const seasonTeams = await sr.json();
+      const seasonTeamsRes = await fetch(`${API}/seasons/${adminSeasonFilter}/teams`, { headers: adminHeaders() });
+      if (seasonTeamsRes.ok) {
+        const seasonTeams = await seasonTeamsRes.json();
         const seasonTeamIds = new Set(seasonTeams.map(t => t.id));
         const filtered = leagueTeams.filter(t => seasonTeamIds.has(t.id));
         if (filtered.length > 0) dropdownTeams = filtered;
