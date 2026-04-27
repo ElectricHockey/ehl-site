@@ -4812,10 +4812,12 @@ app.post('/api/admin/discord-sync-nicknames', requireOwner, async (req, res) => 
 
   // Paginate through all guild members
   const members = [];
-  let after = '0';
+  let after = null;
   const limit = 1000;
   while (true) {
-    const url = `https://discord.com/api/v10/guilds/${DISCORD_GUILD_ID}/members?limit=${limit}&after=${after}`;
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (after) params.set('after', after);
+    const url = `https://discord.com/api/v10/guilds/${DISCORD_GUILD_ID}/members?${params}`;
     let discordRes;
     try {
       discordRes = await fetch(url, {
@@ -4940,10 +4942,12 @@ app.post('/api/admin/discord-auto-link', requireOwner, async (req, res) => {
 
   // Paginate through all guild members
   const members = [];
-  let after = '0';
+  let after = null;
   const limit = 1000;
   while (true) {
-    const url = `https://discord.com/api/v10/guilds/${DISCORD_GUILD_ID}/members?limit=${limit}&after=${after}`;
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (after) params.set('after', after);
+    const url = `https://discord.com/api/v10/guilds/${DISCORD_GUILD_ID}/members?${params}`;
     let discordRes;
     try {
       discordRes = await fetch(url, {
