@@ -373,8 +373,9 @@ app.post('/api/players/register', async (req, res) => {
   const r = await db.prepare('INSERT INTO users (username, platform, email, position, discord, discord_id) VALUES (?, ?, ?, ?, ?, ?)')
     .run(username.trim(), plat, email ? email.trim() : null, pos, discord.trim(), discord_id);
 
-  // Try to merge with an existing custom-added player whose discord_id matches.
-  // This links their user account to the existing roster spot instead of creating a fresh record.
+  // Try to merge with an existing player record so that previously-recorded stats are linked.
+  // Priority 1: match by discord_id (admin pre-set the ID on the roster entry).
+  // Priority 2: match by gamertag name (player had stats before registering; no discord_id set yet).
   let playerId;
   let merged = false;
   if (discord_id) {
@@ -389,8 +390,21 @@ app.post('/api/players/register', async (req, res) => {
     }
   }
   if (!merged) {
-    const pr = await db.prepare('INSERT INTO players (name, user_id, is_rostered, position) VALUES (?, ?, 0, ?)')
-      .run(username.trim(), r.lastInsertRowid, pos);
+    // Fall back to name-based match: covers players who have recorded stats (game_player_stats
+    // stores by player_name) and may already have a players row added by an admin without a discord_id.
+    const nameCandidate = await db.prepare(
+      'SELECT id FROM players WHERE LOWER(name) = LOWER(?) AND user_id IS NULL LIMIT 1'
+    ).get(username.trim());
+    if (nameCandidate) {
+      await db.prepare('UPDATE players SET user_id=?, name=?, position=COALESCE(?,position), discord=COALESCE(?,discord), discord_id=COALESCE(discord_id,?) WHERE id=?')
+        .run(r.lastInsertRowid, username.trim(), pos || null, (discord && discord.trim()) ? discord.trim() : null, discord_id || null, nameCandidate.id);
+      playerId = nameCandidate.id;
+      merged = true;
+    }
+  }
+  if (!merged) {
+    const pr = await db.prepare('INSERT INTO players (name, user_id, is_rostered, position, discord, discord_id) VALUES (?, ?, 0, ?, ?, ?)')
+      .run(username.trim(), r.lastInsertRowid, pos, (discord && discord.trim()) ? discord.trim() : null, discord_id || null);
     playerId = pr.lastInsertRowid;
   }
 
@@ -3414,11 +3428,27 @@ app.get('/api/discord/callback', async (req, res) => {
     const discord    = du.username;
     console.log('[auth] discord callback: mode=', stateData.mode, 'discord_id=', discord_id, 'discord=', discord);
 
-    // Auto-link an unlinked players record whose discord_id matches the authenticated Discord account.
+    // Auto-link an unlinked players record to a user account.
+    // Priority 1: match by discord_id.
+    // Priority 2: match by gamertag name (covers players with recorded stats who registered
+    //             before the admin pre-set a discord_id on their roster entry).
     async function autoLinkPlayerByDiscord(userId, discordId, discordName) {
       const unlinked = await db.prepare('SELECT id FROM players WHERE discord_id = ? AND user_id IS NULL LIMIT 1').get(discordId);
       if (unlinked) {
         await db.prepare('UPDATE players SET user_id = ?, discord = ? WHERE id = ?').run(userId, discordName, unlinked.id);
+        return;
+      }
+      // Fall back to matching by the user's registered gamertag so that stats recorded under
+      // that name are linked even when no discord_id was pre-set on the players row.
+      const user = await db.prepare('SELECT username FROM users WHERE id = ?').get(userId);
+      if (user) {
+        const nameMatch = await db.prepare(
+          'SELECT id FROM players WHERE LOWER(name) = LOWER(?) AND user_id IS NULL LIMIT 1'
+        ).get(user.username);
+        if (nameMatch) {
+          await db.prepare('UPDATE players SET user_id = ?, discord = ?, discord_id = COALESCE(discord_id, ?) WHERE id = ?')
+            .run(userId, discordName, discordId, nameMatch.id);
+        }
       }
     }
 
