@@ -2154,6 +2154,7 @@ async function runMsoRosterImport() {
   if (!teamId)   { showMsoRosterStatus('❌ Please select a team.', false); return; }
   if (!msoUrl)   { showMsoRosterStatus('❌ Please enter the MSO team page URL.', false); return; }
   showMsoRosterStatus('⏳ Fetching and parsing MSO roster…', true);
+  const MAX_DISPLAYED_ROSTER_DETAILS = 20;
   try {
     const res = await fetch(`${API}/admin/import-mso-roster`, {
       method: 'POST', headers: adminJsonHeaders(),
@@ -2165,7 +2166,7 @@ async function runMsoRosterImport() {
       showMsoRosterStatus(
         `✅ Roster import complete!\n` +
         `Matched: ${s.matched}  |  Created: ${s.created}  |  Skipped (already on roster): ${s.skipped}  |  Total: ${s.total}\n\n` +
-        (data.details || []).slice(0, 20).map(d => `${d.name} → ${d.status}${d.player_id ? ` (#${d.player_id})` : ''}`).join('\n'),
+        (data.details || []).slice(0, MAX_DISPLAYED_ROSTER_DETAILS).map(d => `${d.name} → ${d.status}${d.player_id ? ` (#${d.player_id})` : ''}`).join('\n'),
         true
       );
     } else {

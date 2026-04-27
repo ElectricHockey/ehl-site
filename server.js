@@ -4258,7 +4258,7 @@ function _mso_parseRosterHtml(html) {
       const rawName = (row[playerColIdx] || '').trim();
       if (!rawName || rawName.toLowerCase() === 'player' || rawName.toLowerCase() === 'players') continue;
       const rawPos = posColIdx >= 0 ? (row[posColIdx] || '') : '';
-      const firstPos = rawPos.split(/[,\/\s]+/).map(p => p.trim()).find(p => p.length > 0) || null;
+      const firstPos = rawPos.split(/[,/\s]+/).map(p => p.trim()).find(p => p.length > 0) || null;
       players.push({ name: rawName, position: firstPos });
     }
     if (players.length > 0) break;
