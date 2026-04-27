@@ -289,7 +289,7 @@ async function demoteGameAdmin(userId, username) {
 let allSeasons = [];
 
 async function loadSeasons() {
-  const res = await fetch(`${API}/seasons`);
+  const res = await fetch(`${API}/seasons`, { headers: adminHeaders() });
   allSeasons = await res.json();
   _wireGseAdmin(); // keep GSE season list in sync
 
@@ -322,10 +322,12 @@ async function loadSeasons() {
       const riPos      = regularIdxs.indexOf(idx);
       const upDisabled = (!s.is_playoff && riPos <= 0) ? ' disabled' : '';
       const downDisabled = (!s.is_playoff && riPos >= regularIdxs.length - 1) ? ' disabled' : '';
+      const isDisabled = s.is_disabled;
       return `
-      <div class="season-item">
+      <div class="season-item" style="${isDisabled ? 'opacity:0.55;' : ''}">
         ${s.is_active ? '<span class="season-active-badge">★ Active</span>' : ''}
         ${s.is_playoff ? '<span style="background:#2d1b00;color:#e3b341;border:1px solid #9e6a03;border-radius:10px;padding:0.1rem 0.45rem;font-size:0.72rem;margin-right:0.25rem;">🏆 Playoffs</span>' : ''}
+        ${isDisabled ? '<span style="background:#2d0f0f;color:#f85149;border:1px solid #f85149;border-radius:10px;padding:0.1rem 0.45rem;font-size:0.72rem;margin-right:0.25rem;" title="Hidden from public">🚫 Disabled</span>' : ''}
         <strong style="flex:1;">${s.name}</strong>
         <span style="color:#8b949e;font-size:0.8rem;">${typeLabel(s.league_type)}</span>
         ${!s.is_playoff ? `
@@ -334,6 +336,8 @@ async function loadSeasons() {
         ` : ''}
         ${!s.is_active && !s.is_playoff ? `<button class="btn-secondary" style="font-size:0.8rem;padding:0.25rem 0.6rem;" onclick="setActiveSeason(${s.id})">Set Active</button>` : ''}
         ${!s.is_playoff ? `<button class="btn-secondary" style="font-size:0.8rem;padding:0.25rem 0.6rem;" data-manage-conf="${s.id}">Conf/Div</button>` : ''}
+        ${!s.is_playoff ? `<button class="btn-secondary" style="font-size:0.8rem;padding:0.25rem 0.6rem;" data-playoff-lines="${s.id}" title="Configure playoff cutoff lines">📊 Lines</button>` : ''}
+        ${!s.is_playoff ? `<button class="btn-secondary" style="font-size:0.8rem;padding:0.25rem 0.6rem;" onclick="toggleSeasonDisabled(${s.id}, ${isDisabled ? 'false' : 'true'})">${isDisabled ? '✅ Enable' : '🚫 Disable'}</button>` : ''}
         <button class="btn-danger" style="font-size:0.8rem;padding:0.25rem 0.6rem;" onclick="deleteSeason(${s.id}, ${s.is_playoff ? 'true' : 'false'})">Delete</button>
       </div>`;
     }).join('');
@@ -371,6 +375,22 @@ async function loadSeasons() {
     msoSeasonSelect.innerHTML = '<option value="">– Create new season –</option>' +
       allRegular.map(s => `<option value="${s.id}">${s.name} (${typeLabel(s.league_type)})${s.is_active ? ' ★' : ''}</option>`).join('');
   }
+
+  // Populate MSO Roster Import season dropdown
+  const msoRosterSeason = document.getElementById('mso-roster-season');
+  if (msoRosterSeason) {
+    const allRegular = allSeasons.filter(s => !s.is_playoff);
+    msoRosterSeason.innerHTML = '<option value="">— Select Season —</option>' +
+      allRegular.map(s => `<option value="${s.id}">${s.name} (${typeLabel(s.league_type)})${s.is_active ? ' ★' : ''}</option>`).join('');
+  }
+
+  // Populate copy-from dropdown (all regular seasons in current league)
+  const copyFromSel = document.getElementById('season-copy-from');
+  if (copyFromSel) {
+    const allRegular = allSeasons.filter(s => !s.is_playoff && (!s.league_type || s.league_type === adminLeagueFilter));
+    copyFromSel.innerHTML = '<option value="">— None (fresh season) —</option>' +
+      allRegular.map(s => `<option value="${s.id}">${s.name} (${typeLabel(s.league_type)})</option>`).join('');
+  }
 }
 
 document.getElementById('season-form').addEventListener('submit', async e => {
@@ -378,16 +398,60 @@ document.getElementById('season-form').addEventListener('submit', async e => {
   const name = document.getElementById('season-name').value.trim();
   const make_active = document.getElementById('season-active').checked;
   const league_type = document.getElementById('season-type').value;
+  const copy_from_season_id = document.getElementById('season-copy-from').value;
+
+  const body = { name, make_active, league_type };
+  if (copy_from_season_id) {
+    body.copy_from_season_id = Number(copy_from_season_id);
+    const teamChecks = document.querySelectorAll('#season-copy-teams-list input[type="checkbox"]:checked');
+    body.copy_teams = Array.from(teamChecks).map(c => Number(c.value));
+    body.copy_rosters = document.getElementById('season-copy-rosters').checked;
+  }
+
   const res = await fetch(`${API}/seasons`, {
     method: 'POST', headers: adminJsonHeaders(),
-    body: JSON.stringify({ name, make_active, league_type }),
+    body: JSON.stringify(body),
   });
-  if (res.ok) { e.target.reset(); await loadSeasons(); await loadGames(); }
+  if (res.ok) { e.target.reset(); document.getElementById('season-copy-options').style.display = 'none'; await loadSeasons(); await loadGames(); }
 });
 
 async function setActiveSeason(id) {
   await fetch(`${API}/seasons/${id}`, { method: 'PATCH', headers: adminJsonHeaders(), body: JSON.stringify({ is_active: true }) });
   await loadSeasons();
+}
+
+async function toggleSeasonDisabled(id, disable) {
+  const res = await fetch(`${API}/seasons/${id}`, {
+    method: 'PATCH', headers: adminJsonHeaders(),
+    body: JSON.stringify({ is_disabled: disable }),
+  });
+  if (res.ok) { await loadSeasons(); }
+  else { const e = await res.json().catch(() => ({})); alert(e.error || 'Failed to update season'); }
+}
+
+async function onCopyFromChange() {
+  const seasonId = document.getElementById('season-copy-from').value;
+  const optionsDiv = document.getElementById('season-copy-options');
+  const teamList = document.getElementById('season-copy-teams-list');
+  if (!seasonId) {
+    optionsDiv.style.display = 'none';
+    return;
+  }
+  optionsDiv.style.display = '';
+  teamList.innerHTML = '<span style="color:#8b949e;font-size:0.82rem;">Loading teams…</span>';
+  try {
+    const res = await fetch(`${API}/seasons/${seasonId}/teams`, { headers: adminHeaders() });
+    const teams = res.ok ? await res.json() : [];
+    if (teams.length === 0) {
+      teamList.innerHTML = '<span style="color:#8b949e;font-size:0.82rem;">No teams found for this season.</span>';
+      return;
+    }
+    teamList.innerHTML = teams.map(t => `
+      <label style="display:flex;align-items:center;gap:0.4rem;cursor:pointer;font-size:0.85rem;">
+        <input type="checkbox" value="${t.id}" checked />
+        ${escAttr(t.name)}
+      </label>`).join('');
+  } catch { teamList.innerHTML = '<span style="color:#f85149;font-size:0.82rem;">Failed to load teams.</span>'; }
 }
 
 async function deleteSeason(id, isPlayoff) {
@@ -1129,7 +1193,7 @@ document.getElementById('edit-player-overlay').addEventListener('click', e => {
 
 async function loadAdminPlayoffs() {
   // Populate season dropdown for create form – only regular (non-playoff) seasons
-  const res = await fetch(`${API}/seasons`);
+  const res = await fetch(`${API}/seasons`, { headers: adminHeaders() });
   const seasons = res.ok ? await res.json() : [];
   const regularSeasons = seasons.filter(s => !s.is_playoff);
   const sel = document.getElementById('po-season');
@@ -1579,12 +1643,37 @@ document.addEventListener('DOMContentLoaded', () => {
   const seasonsList = document.getElementById('seasons-list');
   if (seasonsList) {
     seasonsList.addEventListener('click', e => {
-      const btn = e.target.closest('button[data-manage-conf]');
-      if (!btn) return;
-      const sid = Number(btn.dataset.manageConf);
-      // Find the season name from allSeasons
-      const s = allSeasons.find(x => x.id === sid);
-      manageSeasonConf(sid, s ? s.name : `Season ${sid}`);
+      const confBtn = e.target.closest('button[data-manage-conf]');
+      if (confBtn) {
+        const sid = Number(confBtn.dataset.manageConf);
+        const s = allSeasons.find(x => x.id === sid);
+        manageSeasonConf(sid, s ? s.name : `Season ${sid}`);
+        return;
+      }
+      const linesBtn = e.target.closest('button[data-playoff-lines]');
+      if (linesBtn) {
+        const sid = Number(linesBtn.dataset.playoffLines);
+        const s = allSeasons.find(x => x.id === sid);
+        managePlayoffLines(sid, s ? s.name : `Season ${sid}`);
+      }
+    });
+  }
+
+  // Populate MSO Roster team dropdown when a season is selected
+  const msoRosterSeason = document.getElementById('mso-roster-season');
+  if (msoRosterSeason) {
+    msoRosterSeason.addEventListener('change', async () => {
+      const seasonId = msoRosterSeason.value;
+      const teamSel = document.getElementById('mso-roster-team');
+      if (!teamSel) return;
+      if (!seasonId) { teamSel.innerHTML = '<option value="">— Select Team —</option>'; return; }
+      teamSel.innerHTML = '<option value="">Loading…</option>';
+      try {
+        const allTeamsRes = await fetch(`${API}/teams`);
+        const allTeams = allTeamsRes.ok ? await allTeamsRes.json() : [];
+        teamSel.innerHTML = '<option value="">— Select Team —</option>' +
+          allTeams.map(t => `<option value="${t.id}">${escAttr(t.name)}</option>`).join('');
+      } catch { teamSel.innerHTML = '<option value="">— Failed to load —</option>'; }
     });
   }
 });
@@ -1866,4 +1955,221 @@ async function declineNameChange(id) {
   const res = await fetch(`${API}/admin/name-change-requests/${id}/decline`, { method: 'POST', headers: adminHeaders() });
   if (res.ok) { showStatus('Name change declined.'); await loadNameChangeRequests(); }
   else { const e = await res.json().catch(() => ({})); alert(e.error || 'Failed to decline'); }
+}
+
+// ── Playoff Lines Modal ───────────────────────────────────────────────────
+
+let _playoffLinesSeasonId = null;
+let _playoffLinesSeasonTeams = [];
+
+async function managePlayoffLines(seasonId, seasonName) {
+  _playoffLinesSeasonId = seasonId;
+  document.getElementById('playoff-lines-title').textContent = `Playoff Lines — ${seasonName}`;
+  document.getElementById('playoff-lines-msg').textContent = '';
+  document.getElementById('playoff-lines-form').innerHTML = '<span style="color:#8b949e;font-size:0.85rem;">Loading…</span>';
+
+  const overlay = document.getElementById('playoff-lines-overlay');
+  overlay.style.display = 'flex';
+
+  try {
+    const [overridesRes, teamsRes] = await Promise.all([
+      fetch(`${API}/seasons/${seasonId}/playoff-lines`, { headers: adminHeaders() }),
+      fetch(`${API}/seasons/${seasonId}/team-conf`, { headers: adminHeaders() }),
+    ]);
+    const overrides = overridesRes.ok ? await overridesRes.json() : [];
+    const teamConfs = teamsRes.ok ? await teamsRes.json() : [];
+
+    const overrideMap = {};
+    for (const ov of overrides) {
+      const key = ov.scope === 'league' ? 'league' : `${ov.scope}:${ov.scope_value}`;
+      overrideMap[key] = ov.cutoff_position;
+    }
+
+    // Determine distinct conferences and divisions from this season's team conf
+    const conferences = new Set();
+    const divisions = new Set();
+    for (const t of teamConfs) {
+      if (t.conference) conferences.add(t.conference);
+      if (t.division) divisions.add(`${t.conference}/${t.division}`);
+    }
+
+    let formHtml = `<table style="width:100%;border-collapse:collapse;">
+      <thead><tr style="color:#8b949e;font-size:0.82rem;">
+        <th style="text-align:left;padding:0.3rem 0.5rem;">Scope</th>
+        <th style="text-align:left;padding:0.3rem 0.5rem;">Name</th>
+        <th style="text-align:left;padding:0.3rem 0.5rem;">Cutoff After Position</th>
+      </tr></thead><tbody>`;
+
+    // League-wide row
+    const leagueVal = overrideMap['league'] || '';
+    formHtml += `<tr style="border-top:1px solid #21262d;">
+      <td style="padding:0.35rem 0.5rem;color:#8b949e;font-size:0.82rem;">League</td>
+      <td style="padding:0.35rem 0.5rem;">—</td>
+      <td style="padding:0.35rem 0.5rem;"><input type="number" min="0" max="99" placeholder="—" value="${leagueVal}" data-scope="league" data-scope-value="" style="width:60px;background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:4px;padding:0.2rem 0.4rem;text-align:center;" /></td>
+    </tr>`;
+
+    for (const conf of [...conferences].sort()) {
+      const confKey = `conference:${conf}`;
+      const val = overrideMap[confKey] || '';
+      formHtml += `<tr style="border-top:1px solid #21262d;">
+        <td style="padding:0.35rem 0.5rem;color:#8b949e;font-size:0.82rem;">Conference</td>
+        <td style="padding:0.35rem 0.5rem;">${escAttr(conf)}</td>
+        <td style="padding:0.35rem 0.5rem;"><input type="number" min="0" max="99" placeholder="—" value="${val}" data-scope="conference" data-scope-value="${escAttr(conf)}" style="width:60px;background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:4px;padding:0.2rem 0.4rem;text-align:center;" /></td>
+      </tr>`;
+    }
+
+    for (const divStr of [...divisions].sort()) {
+      const [conf, div] = divStr.split('/');
+      if (!div) continue;
+      const divKey = `division:${div}`;
+      const val = overrideMap[divKey] || '';
+      formHtml += `<tr style="border-top:1px solid #21262d;">
+        <td style="padding:0.35rem 0.5rem;color:#8b949e;font-size:0.82rem;">Division</td>
+        <td style="padding:0.35rem 0.5rem;">${escAttr(div)} <span style="color:#8b949e;font-size:0.78rem;">(${escAttr(conf)})</span></td>
+        <td style="padding:0.35rem 0.5rem;"><input type="number" min="0" max="99" placeholder="—" value="${val}" data-scope="division" data-scope-value="${escAttr(div)}" style="width:60px;background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:4px;padding:0.2rem 0.4rem;text-align:center;" /></td>
+      </tr>`;
+    }
+    formHtml += '</tbody></table>';
+    document.getElementById('playoff-lines-form').innerHTML = formHtml;
+  } catch (e) {
+    document.getElementById('playoff-lines-form').innerHTML = `<span style="color:#f85149;font-size:0.85rem;">Error loading data: ${e.message}</span>`;
+  }
+}
+
+function closePlayoffLinesModal() {
+  document.getElementById('playoff-lines-overlay').style.display = 'none';
+  _playoffLinesSeasonId = null;
+}
+
+async function savePlayoffLines() {
+  if (!_playoffLinesSeasonId) return;
+  const inputs = document.querySelectorAll('#playoff-lines-form input[data-scope]');
+  const lines = [];
+  for (const inp of inputs) {
+    lines.push({
+      scope: inp.dataset.scope,
+      scope_value: inp.dataset.scopeValue || '',
+      cutoff_position: inp.value ? Number(inp.value) : 0,
+    });
+  }
+  const msg = document.getElementById('playoff-lines-msg');
+  try {
+    const res = await fetch(`${API}/seasons/${_playoffLinesSeasonId}/playoff-lines`, {
+      method: 'PUT', headers: adminJsonHeaders(), body: JSON.stringify(lines),
+    });
+    if (res.ok) { msg.style.color = '#3fb950'; msg.textContent = '✅ Saved'; setTimeout(closePlayoffLinesModal, 800); }
+    else { const e = await res.json().catch(() => ({})); msg.style.color = '#f85149'; msg.textContent = e.error || 'Save failed'; }
+  } catch (e) { msg.style.color = '#f85149'; msg.textContent = `Network error: ${e.message}`; }
+}
+
+// Close playoff lines modal on overlay click
+document.getElementById('playoff-lines-overlay').addEventListener('click', e => {
+  if (e.target === document.getElementById('playoff-lines-overlay')) closePlayoffLinesModal();
+});
+
+// ── Discord Nickname Sync ─────────────────────────────────────────────────
+
+let _discordProposals = [];
+
+async function discordSyncNicknames() {
+  const btn = document.getElementById('discord-sync-btn');
+  const statusEl = document.getElementById('discord-sync-status');
+  const resultEl = document.getElementById('discord-sync-result');
+  if (btn) btn.disabled = true;
+  statusEl.style.color = '#8b949e';
+  statusEl.textContent = '⏳ Fetching Discord members…';
+  resultEl.style.display = 'none';
+  try {
+    const res = await fetch(`${API}/admin/discord-sync-nicknames`, { method: 'POST', headers: adminJsonHeaders() });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      statusEl.style.color = '#f85149';
+      statusEl.textContent = `❌ ${data.error || 'Request failed'}`;
+      return;
+    }
+    _discordProposals = data.proposals || [];
+    statusEl.textContent = `Fetched ${data.total_members} members. Found ${_discordProposals.length} proposed link(s).`;
+    statusEl.style.color = '#3fb950';
+    if (_discordProposals.length === 0) { resultEl.style.display = 'none'; return; }
+
+    const tbody = document.getElementById('discord-sync-tbody');
+    tbody.innerHTML = _discordProposals.map((p, i) => `
+      <tr style="border-top:1px solid #21262d;">
+        <td style="padding:0.3rem 0.5rem;"><input type="checkbox" data-idx="${i}" checked /></td>
+        <td style="padding:0.3rem 0.5rem;">${escAttr(p.player_name)}</td>
+        <td style="padding:0.3rem 0.5rem;color:#8b949e;">${escAttr(p.discord_username)}</td>
+        <td style="padding:0.3rem 0.5rem;">${escAttr(p.nick)}</td>
+        <td style="padding:0.3rem 0.5rem;color:#8b949e;font-size:0.78rem;font-family:monospace;">${escAttr(p.discord_id)}</td>
+        <td style="padding:0.3rem 0.5rem;font-size:0.78rem;">${escAttr(p.match_type.replace(/_/g, ' '))}</td>
+        <td style="padding:0.3rem 0.5rem;">
+          <span style="color:${p.confidence === 'high' ? '#3fb950' : p.confidence === 'medium' ? '#e3b341' : '#8b949e'};font-size:0.8rem;font-weight:600;">${p.confidence}</span>
+        </td>
+      </tr>`).join('');
+    resultEl.style.display = '';
+    document.getElementById('discord-apply-msg').textContent = '';
+  } catch (e) {
+    statusEl.style.color = '#f85149';
+    statusEl.textContent = `❌ Network error: ${e.message}`;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function discordApplyLinks() {
+  const checks = document.querySelectorAll('#discord-sync-tbody input[type="checkbox"]:checked');
+  const links = Array.from(checks).map(c => _discordProposals[Number(c.dataset.idx)]).filter(Boolean).map(p => ({
+    player_id: p.player_id,
+    discord_id: p.discord_id,
+    discord: p.discord_username,
+  }));
+  if (links.length === 0) { document.getElementById('discord-apply-msg').textContent = '⚠ No links selected.'; return; }
+  const msg = document.getElementById('discord-apply-msg');
+  msg.style.color = '#8b949e';
+  msg.textContent = '⏳ Applying…';
+  try {
+    const res = await fetch(`${API}/admin/discord-apply-links`, { method: 'POST', headers: adminJsonHeaders(), body: JSON.stringify(links) });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) { msg.style.color = '#3fb950'; msg.textContent = `✅ Applied ${data.applied} link(s).`; }
+    else { msg.style.color = '#f85149'; msg.textContent = `❌ ${data.error || 'Failed'}`; }
+  } catch (e) { msg.style.color = '#f85149'; msg.textContent = `❌ Network error: ${e.message}`; }
+}
+
+// ── MSO Roster Import ─────────────────────────────────────────────────────
+
+function showMsoRosterStatus(msg, ok) {
+  const el = document.getElementById('mso-roster-status');
+  if (!el) return;
+  el.style.display = 'block';
+  el.style.background = ok ? 'rgba(63,185,80,0.12)' : 'rgba(248,81,73,0.12)';
+  el.style.border = ok ? '1px solid rgba(63,185,80,0.4)' : '1px solid rgba(248,81,73,0.4)';
+  el.style.color = ok ? '#3fb950' : '#f85149';
+  el.textContent = msg;
+}
+
+async function runMsoRosterImport() {
+  const seasonId = document.getElementById('mso-roster-season').value;
+  const teamId   = document.getElementById('mso-roster-team').value;
+  const msoUrl   = document.getElementById('mso-roster-url').value.trim();
+  if (!seasonId) { showMsoRosterStatus('❌ Please select a season.', false); return; }
+  if (!teamId)   { showMsoRosterStatus('❌ Please select a team.', false); return; }
+  if (!msoUrl)   { showMsoRosterStatus('❌ Please enter the MSO team page URL.', false); return; }
+  showMsoRosterStatus('⏳ Fetching and parsing MSO roster…', true);
+  try {
+    const res = await fetch(`${API}/admin/import-mso-roster`, {
+      method: 'POST', headers: adminJsonHeaders(),
+      body: JSON.stringify({ season_id: Number(seasonId), team_id: Number(teamId), mso_url: msoUrl }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.ok) {
+      const s = data.summary || {};
+      showMsoRosterStatus(
+        `✅ Roster import complete!\n` +
+        `Matched: ${s.matched}  |  Created: ${s.created}  |  Skipped (already on roster): ${s.skipped}  |  Total: ${s.total}\n\n` +
+        (data.details || []).slice(0, 20).map(d => `${d.name} → ${d.status}${d.player_id ? ` (#${d.player_id})` : ''}`).join('\n'),
+        true
+      );
+    } else {
+      showMsoRosterStatus(`❌ Import failed: ${data.error || res.status}`, false);
+    }
+  } catch (e) { showMsoRosterStatus(`❌ Network error: ${e.message}`, false); }
 }

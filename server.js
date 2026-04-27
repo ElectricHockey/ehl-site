@@ -224,6 +224,9 @@ const DISCORD_CLIENT_ID     = process.env.DISCORD_CLIENT_ID     || '137954509192
 const DISCORD_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || 'hP2korc5GbEuCkbLPEfxyWLxNk8ql-Y6';
 // Leave blank to auto-detect from the incoming request (required for Vercel).
 const DISCORD_REDIRECT_URI  = process.env.DISCORD_REDIRECT_URI  || '';
+// Bot token and guild ID for server-side Discord operations (nickname sync, etc.)
+const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN || '';
+const DISCORD_GUILD_ID  = process.env.DISCORD_GUILD_ID  || '';
 
 // ── Stateless signed-token helpers for Discord OAuth ──────────────────────
 // On Vercel serverless each invocation may run in a different instance, so
@@ -521,14 +524,29 @@ app.patch('/api/users/:id', requireOwner, async (req, res) => {
 
 app.get('/api/seasons', async (req, res) => {
   const { type } = req.query;
-  const seasons = type
-    ? await db.prepare('SELECT s.*, p.season_id AS parent_season_id FROM seasons s LEFT JOIN playoffs p ON s.id = p.playoff_season_id WHERE s.league_type = ? ORDER BY s.sort_order ASC, s.id ASC').all(type)
-    : await db.prepare('SELECT s.*, p.season_id AS parent_season_id FROM seasons s LEFT JOIN playoffs p ON s.id = p.playoff_season_id ORDER BY s.sort_order ASC, s.id ASC').all();
+  // Admin callers (passing a valid X-Admin-Token) see all seasons including disabled ones.
+  const adminToken = req.headers['x-admin-token'];
+  const adminSession = adminToken ? _verifyAdminToken(adminToken) : null;
+  const includeDisabled = !!adminSession;
+
+  const parts = [
+    'SELECT s.*, p.season_id AS parent_season_id FROM seasons s LEFT JOIN playoffs p ON s.id = p.playoff_season_id WHERE 1=1',
+  ];
+  const params = [];
+  if (type) {
+    parts.push('AND s.league_type = ?');
+    params.push(type);
+  }
+  if (!includeDisabled) {
+    parts.push('AND COALESCE(s.is_disabled, 0) = 0');
+  }
+  parts.push('ORDER BY s.sort_order ASC, s.id ASC');
+  const seasons = await db.prepare(parts.join(' ')).all(...params);
   res.json(seasons);
 });
 
 app.post('/api/seasons', requireOwner, async (req, res) => {
-  const { name, make_active, league_type } = req.body;
+  const { name, make_active, league_type, copy_from_season_id, copy_teams, copy_rosters } = req.body;
   if (!name || !name.trim()) return res.status(400).json({ error: 'Season name is required' });
   if (make_active) await db.prepare('UPDATE seasons SET is_active = 0').run();
   const lt = league_type || '';
@@ -536,7 +554,42 @@ app.post('/api/seasons', requireOwner, async (req, res) => {
   const maxOrder = await db.prepare('SELECT COALESCE(MAX(sort_order), 0) AS m FROM seasons').get();
   const nextOrder = maxOrder.m + 1;
   const result = await db.prepare('INSERT INTO seasons (name, is_active, league_type, sort_order) VALUES (?, ?, ?, ?)').run(name.trim(), make_active ? 1 : 0, lt, nextOrder);
-  res.status(201).json({ id: result.lastInsertRowid, name: name.trim(), is_active: make_active ? 1 : 0, league_type: lt, sort_order: nextOrder });
+  const newSeasonId = result.lastInsertRowid;
+
+  // Copy teams (and optionally rosters) from another season
+  if (copy_from_season_id && Array.isArray(copy_teams) && copy_teams.length > 0) {
+    for (const rawTeamId of copy_teams) {
+      const teamId = Number(rawTeamId);
+      // Add to season_teams
+      await db.prepare('INSERT INTO season_teams (season_id, team_id) VALUES (?, ?) ON CONFLICT DO NOTHING').run(newSeasonId, teamId);
+
+      if (copy_rosters) {
+        // Try season_rosters first, fall back to global players table
+        const srcRoster = await db.prepare('SELECT * FROM season_rosters WHERE season_id = ? AND team_id = ?').all(Number(copy_from_season_id), teamId);
+        if (srcRoster.length > 0) {
+          for (const r of srcRoster) {
+            await db.prepare('INSERT INTO season_rosters (season_id, team_id, player_id, position, number) VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING')
+              .run(newSeasonId, teamId, r.player_id, r.position, r.number);
+          }
+        } else {
+          const globalPlayers = await db.prepare('SELECT id, position, number FROM players WHERE team_id = ? AND is_rostered = 1').all(teamId);
+          for (const p of globalPlayers) {
+            await db.prepare('INSERT INTO season_rosters (season_id, team_id, player_id, position, number) VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING')
+              .run(newSeasonId, teamId, p.id, p.position, p.number);
+          }
+        }
+      }
+
+      // Copy conf/div assignment if available
+      const confRow = await db.prepare('SELECT conference, division FROM season_team_conf WHERE season_id = ? AND team_id = ?').get(Number(copy_from_season_id), teamId);
+      if (confRow) {
+        await db.prepare('INSERT INTO season_team_conf (season_id, team_id, conference, division) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING')
+          .run(newSeasonId, teamId, confRow.conference, confRow.division);
+      }
+    }
+  }
+
+  res.status(201).json({ id: newSeasonId, name: name.trim(), is_active: make_active ? 1 : 0, league_type: lt, sort_order: nextOrder });
 });
 
 app.patch('/api/seasons/:id', requireOwner, async (req, res) => {
@@ -546,7 +599,8 @@ app.patch('/api/seasons/:id', requireOwner, async (req, res) => {
   const league_type = req.body.league_type !== undefined ? req.body.league_type : (season.league_type || '');
   if (req.body.is_active) await db.prepare('UPDATE seasons SET is_active = 0').run();
   const is_active = req.body.is_active ? 1 : (req.body.is_active === false ? 0 : season.is_active);
-  await db.prepare('UPDATE seasons SET name = ?, is_active = ?, league_type = ? WHERE id = ?').run(name, is_active, league_type, req.params.id);
+  const is_disabled = req.body.is_disabled !== undefined ? (req.body.is_disabled ? 1 : 0) : (season.is_disabled || 0);
+  await db.prepare('UPDATE seasons SET name = ?, is_active = ?, league_type = ?, is_disabled = ? WHERE id = ?').run(name, is_active, league_type, is_disabled, req.params.id);
   res.json({ updated: true });
 });
 
@@ -576,6 +630,9 @@ app.delete('/api/seasons/:id', requireOwner, async (req, res) => {
       await tx.prepare('DELETE FROM games WHERE season_id = ?').run(seasonId);
       await tx.prepare('DELETE FROM season_player_stats WHERE season_id = ?').run(seasonId);
       await tx.prepare('DELETE FROM season_team_conf WHERE season_id = ?').run(seasonId);
+      await tx.prepare('DELETE FROM season_rosters WHERE season_id = ?').run(seasonId);
+      await tx.prepare('DELETE FROM season_teams WHERE season_id = ?').run(seasonId);
+      await tx.prepare('DELETE FROM playoff_line_overrides WHERE season_id = ?').run(seasonId);
       await tx.prepare('DELETE FROM seasons WHERE id = ?').run(seasonId);
     }
 
@@ -2764,19 +2821,42 @@ app.get('/api/standings', async (req, res) => {
   const seasonId = req.query.season_id ? Number(req.query.season_id) : null;
   const teams = await calcStandings(seasonId);
   let playoff_cutoff = null;
+  let playoff_lines = null;
   if (seasonId) {
     const pc = await db.prepare('SELECT teams_qualify FROM playoffs WHERE season_id = ?').get(seasonId);
     if (pc) playoff_cutoff = Math.min(pc.teams_qualify, teams.length);
+    const overrides = await db.prepare('SELECT scope, scope_value, cutoff_position FROM playoff_line_overrides WHERE season_id = ?').all(seasonId);
+    if (overrides.length > 0) {
+      playoff_lines = {};
+      for (const ov of overrides) {
+        const key = ov.scope === 'league' ? 'league' : `${ov.scope}:${ov.scope_value}`;
+        playoff_lines[key] = ov.cutoff_position;
+      }
+    }
   }
-  res.json({ teams, playoff_cutoff });
+  res.json({ teams, playoff_cutoff, playoff_lines });
 });
 
-// GET /api/seasons/:id/teams – return teams that have at least one game in this season
+// GET /api/seasons/:id/teams – return teams enrolled in this season (via season_teams),
+// with a game-based fallback for seasons that pre-date the new season_teams table.
 app.get('/api/seasons/:id/teams', requireAdmin, async (req, res) => {
   const season = await db.prepare('SELECT id FROM seasons WHERE id = ?').get(req.params.id);
   if (!season) return res.status(404).json({ error: 'Season not found' });
+
+  // Try season_teams first
+  const seasonTeams = await db.prepare(`
+    SELECT t.id, t.name, t.logo_url, t.league_type, t.abbreviation, t.conference, t.division, t.color1, t.color2
+    FROM season_teams st
+    JOIN teams t ON st.team_id = t.id
+    WHERE st.season_id = ?
+    ORDER BY t.name
+  `).all(req.params.id);
+
+  if (seasonTeams.length > 0) return res.json(seasonTeams);
+
+  // Fallback: teams that appear in games for this season
   const teams = await db.prepare(`
-    SELECT DISTINCT t.id, t.name, t.logo_url, t.league_type, t.abbreviation
+    SELECT DISTINCT t.id, t.name, t.logo_url, t.league_type, t.abbreviation, t.conference, t.division, t.color1, t.color2
     FROM teams t
     WHERE t.id IN (
       SELECT home_team_id FROM games WHERE season_id = ?
@@ -2786,6 +2866,88 @@ app.get('/api/seasons/:id/teams', requireAdmin, async (req, res) => {
     ORDER BY t.name
   `).all(req.params.id, req.params.id);
   res.json(teams);
+});
+
+// POST /api/seasons/:id/teams – enrol a team in a season
+app.post('/api/seasons/:id/teams', requireOwner, async (req, res) => {
+  const { team_id } = req.body;
+  if (!team_id) return res.status(400).json({ error: 'team_id is required' });
+  const season = await db.prepare('SELECT id FROM seasons WHERE id = ?').get(req.params.id);
+  if (!season) return res.status(404).json({ error: 'Season not found' });
+  const team = await db.prepare('SELECT id FROM teams WHERE id = ?').get(Number(team_id));
+  if (!team) return res.status(404).json({ error: 'Team not found' });
+  await db.prepare('INSERT INTO season_teams (season_id, team_id) VALUES (?, ?) ON CONFLICT DO NOTHING').run(Number(req.params.id), Number(team_id));
+  res.status(201).json({ ok: true });
+});
+
+// DELETE /api/seasons/:id/teams/:teamId – remove a team from a season
+app.delete('/api/seasons/:id/teams/:teamId', requireOwner, async (req, res) => {
+  await db.prepare('DELETE FROM season_teams WHERE season_id = ? AND team_id = ?').run(Number(req.params.id), Number(req.params.teamId));
+  res.json({ deleted: true });
+});
+
+// GET /api/seasons/:id/teams/:teamId/roster – per-season roster for a team
+app.get('/api/seasons/:id/teams/:teamId/roster', requireAdmin, async (req, res) => {
+  const roster = await db.prepare(`
+    SELECT sr.id, sr.player_id, p.name, sr.position, sr.number, p.discord, p.discord_id, p.user_id
+    FROM season_rosters sr
+    JOIN players p ON sr.player_id = p.id
+    WHERE sr.season_id = ? AND sr.team_id = ?
+    ORDER BY p.name
+  `).all(Number(req.params.id), Number(req.params.teamId));
+  res.json(roster);
+});
+
+// POST /api/seasons/:id/teams/:teamId/roster – add a player to a season's team roster
+app.post('/api/seasons/:id/teams/:teamId/roster', requireOwner, async (req, res) => {
+  const { player_id, position, number } = req.body;
+  if (!player_id) return res.status(400).json({ error: 'player_id is required' });
+  const season = await db.prepare('SELECT id FROM seasons WHERE id = ?').get(req.params.id);
+  if (!season) return res.status(404).json({ error: 'Season not found' });
+  const player = await db.prepare('SELECT id FROM players WHERE id = ?').get(Number(player_id));
+  if (!player) return res.status(404).json({ error: 'Player not found' });
+  await db.prepare(`
+    INSERT INTO season_rosters (season_id, team_id, player_id, position, number)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT (season_id, player_id) DO UPDATE SET team_id = EXCLUDED.team_id, position = EXCLUDED.position, number = EXCLUDED.number
+  `).run(Number(req.params.id), Number(req.params.teamId), Number(player_id), position || null, number != null ? Number(number) : null);
+  res.status(201).json({ ok: true });
+});
+
+// DELETE /api/seasons/:id/teams/:teamId/roster/:playerId – remove a player from a season roster
+app.delete('/api/seasons/:id/teams/:teamId/roster/:playerId', requireOwner, async (req, res) => {
+  await db.prepare('DELETE FROM season_rosters WHERE season_id = ? AND team_id = ? AND player_id = ?')
+    .run(Number(req.params.id), Number(req.params.teamId), Number(req.params.playerId));
+  res.json({ deleted: true });
+});
+
+// GET /api/seasons/:id/playoff-lines – get playoff line overrides for a season
+app.get('/api/seasons/:id/playoff-lines', async (req, res) => {
+  const overrides = await db.prepare('SELECT * FROM playoff_line_overrides WHERE season_id = ? ORDER BY scope, scope_value').all(Number(req.params.id));
+  res.json(overrides);
+});
+
+// PUT /api/seasons/:id/playoff-lines – upsert playoff line overrides
+app.put('/api/seasons/:id/playoff-lines', requireOwner, async (req, res) => {
+  const lines = req.body;
+  if (!Array.isArray(lines)) return res.status(400).json({ error: 'Expected array of playoff line overrides' });
+  const season = await db.prepare('SELECT id FROM seasons WHERE id = ?').get(req.params.id);
+  if (!season) return res.status(404).json({ error: 'Season not found' });
+  for (const line of lines) {
+    const { scope, scope_value, cutoff_position } = line;
+    if (!scope) continue;
+    const sv = scope_value || '';
+    if (cutoff_position == null || cutoff_position === 0) {
+      await db.prepare('DELETE FROM playoff_line_overrides WHERE season_id = ? AND scope = ? AND scope_value = ?').run(Number(req.params.id), scope, sv);
+    } else {
+      await db.prepare(`
+        INSERT INTO playoff_line_overrides (season_id, scope, scope_value, cutoff_position)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT (season_id, scope, scope_value) DO UPDATE SET cutoff_position = EXCLUDED.cutoff_position
+      `).run(Number(req.params.id), scope, sv, Number(cutoff_position));
+    }
+  }
+  res.json({ ok: true });
 });
 
 // GET /api/seasons/:id/team-conf – return all teams for this season's league type
@@ -4077,6 +4239,33 @@ function _mso_parseTableHtml(tableHtml) {
   return rows;
 }
 
+// Parse the Roster tab HTML from an MSO team page.
+// Looks for a table with "Players" / "Positions" columns and returns
+// an array of { name, position } objects.
+function _mso_parseRosterHtml(html) {
+  const players = [];
+  const tableRe = /<table[\s\S]*?<\/table>/gi;
+  let tableM;
+  while ((tableM = tableRe.exec(html)) !== null) {
+    const rows = _mso_parseTableHtml(tableM[0]);
+    if (rows.length < 2) continue;
+    const header = rows[0].map(c => c.toLowerCase().trim());
+    const playerColIdx = header.findIndex(h => h.includes('player'));
+    const posColIdx    = header.findIndex(h => h.includes('pos') || h.includes('position'));
+    if (playerColIdx < 0) continue;
+    for (let i = 1; i < rows.length; i++) {
+      const row = rows[i];
+      const rawName = (row[playerColIdx] || '').trim();
+      if (!rawName || rawName.toLowerCase() === 'player' || rawName.toLowerCase() === 'players') continue;
+      const rawPos = posColIdx >= 0 ? (row[posColIdx] || '') : '';
+      const firstPos = rawPos.split(/[,\/\s]+/).map(p => p.trim()).find(p => p.length > 0) || null;
+      players.push({ name: rawName, position: firstPos });
+    }
+    if (players.length > 0) break;
+  }
+  return players;
+}
+
 function _mso_colIdx(headers, ...names) {
   for (const name of names) {
     const idx = headers.findIndex(h => h.toLowerCase() === name.toLowerCase());
@@ -4582,13 +4771,216 @@ app.post('/api/admin/import-excel', requireOwner, excelUpload.single('file'), as
   res.json({ ok: true, summary });
 });
 
+// ── Discord Nickname Sync ──────────────────────────────────────────────────
+
+// POST /api/admin/discord-sync-nicknames
+// Fetches all guild members from Discord and returns proposed player→discord_id links.
+app.post('/api/admin/discord-sync-nicknames', requireOwner, async (req, res) => {
+  if (!DISCORD_BOT_TOKEN || !DISCORD_GUILD_ID) {
+    return res.status(400).json({ error: 'DISCORD_BOT_TOKEN and DISCORD_GUILD_ID must be configured in environment variables' });
+  }
+
+  // Paginate through all guild members
+  const members = [];
+  let after = '0';
+  const limit = 1000;
+  while (true) {
+    const url = `https://discord.com/api/v10/guilds/${DISCORD_GUILD_ID}/members?limit=${limit}&after=${after}`;
+    let discordRes;
+    try {
+      discordRes = await fetch(url, {
+        headers: { 'Authorization': `Bot ${DISCORD_BOT_TOKEN}`, 'Content-Type': 'application/json' },
+      });
+    } catch (e) {
+      return res.status(500).json({ error: `Discord API request failed: ${e.message}` });
+    }
+    if (!discordRes.ok) {
+      const errBody = await discordRes.text().catch(() => 'unknown');
+      return res.status(500).json({ error: `Discord API error: ${discordRes.status} ${errBody}` });
+    }
+    const batch = await discordRes.json();
+    if (!Array.isArray(batch) || batch.length === 0) break;
+    members.push(...batch);
+    if (batch.length < limit) break;
+    after = batch[batch.length - 1].user.id;
+  }
+
+  // Load all players and users for matching
+  const players = await db.prepare('SELECT id, name, discord, discord_id, user_id FROM players').all();
+  const users   = await db.prepare('SELECT id, username, discord, discord_id FROM users').all();
+
+  const playersByDiscordId = new Map(players.filter(p => p.discord_id).map(p => [p.discord_id, p]));
+  const playersByName      = new Map(players.map(p => [p.name.toLowerCase(), p]));
+  const usersByDiscordId   = new Map(users.filter(u => u.discord_id).map(u => [u.discord_id, u]));
+  const usersByUsername    = new Map(users.map(u => [u.username.toLowerCase(), u]));
+
+  const proposals = [];
+  for (const member of members) {
+    const discordId = member.user?.id;
+    if (!discordId) continue;
+    if (playersByDiscordId.has(discordId)) continue; // already linked
+
+    const nick           = member.nick || '';
+    const discordUsername = member.user?.username || '';
+    const globalName     = member.user?.global_name || '';
+
+    let match = null;
+    let matchType = null;
+    let confidence = 'low';
+
+    // 1. Nick exact match vs player name
+    if (nick) {
+      const pl = playersByName.get(nick.toLowerCase());
+      if (pl && !pl.discord_id) { match = pl; matchType = 'nick_vs_player_name'; confidence = 'high'; }
+    }
+    // 2. Discord username match vs player name
+    if (!match && discordUsername) {
+      const pl = playersByName.get(discordUsername.toLowerCase());
+      if (pl && !pl.discord_id) { match = pl; matchType = 'username_vs_player_name'; confidence = 'medium'; }
+    }
+    // 3. Global name match vs player name
+    if (!match && globalName) {
+      const pl = playersByName.get(globalName.toLowerCase());
+      if (pl && !pl.discord_id) { match = pl; matchType = 'global_name_vs_player_name'; confidence = 'medium'; }
+    }
+    // 4. Nick match vs registered user username → find linked player
+    if (!match && nick) {
+      const usr = usersByUsername.get(nick.toLowerCase());
+      if (usr && !usr.discord_id) {
+        const pl = players.find(p => p.user_id === usr.id);
+        if (pl) { match = pl; matchType = 'nick_vs_user_username'; confidence = 'high'; }
+      }
+    }
+    // 5. Discord username match vs registered user username → find linked player
+    if (!match && discordUsername) {
+      const usr = usersByUsername.get(discordUsername.toLowerCase());
+      if (usr && !usr.discord_id && !usersByDiscordId.has(discordId)) {
+        const pl = players.find(p => p.user_id === usr.id);
+        if (pl) { match = pl; matchType = 'username_vs_user_username'; confidence = 'medium'; }
+      }
+    }
+
+    if (match) {
+      proposals.push({
+        player_id: match.id,
+        player_name: match.name,
+        discord_id: discordId,
+        discord_username: discordUsername,
+        nick,
+        match_type: matchType,
+        confidence,
+      });
+    }
+  }
+
+  res.json({ proposals, total_members: members.length });
+});
+
+// POST /api/admin/discord-apply-links
+// Accepts an array of { player_id, discord_id, discord } and writes to DB.
+app.post('/api/admin/discord-apply-links', requireOwner, async (req, res) => {
+  const links = req.body;
+  if (!Array.isArray(links)) return res.status(400).json({ error: 'Expected array of link objects' });
+  let applied = 0;
+  for (const link of links) {
+    const { player_id, discord_id, discord } = link;
+    if (!player_id || !discord_id) continue;
+    await db.prepare('UPDATE players SET discord_id = ?, discord = COALESCE(NULLIF(?, \'\'), discord) WHERE id = ?')
+      .run(String(discord_id), discord || '', Number(player_id));
+    // Also update linked user record if applicable
+    const player = await db.prepare('SELECT user_id FROM players WHERE id = ?').get(Number(player_id));
+    if (player && player.user_id) {
+      await db.prepare('UPDATE users SET discord_id = ?, discord = COALESCE(NULLIF(?, \'\'), discord) WHERE id = ? AND (discord_id IS NULL OR discord_id = \'\')')
+        .run(String(discord_id), discord || '', player.user_id);
+    }
+    applied++;
+  }
+  res.json({ ok: true, applied });
+});
+
+// ── MSO Roster Import ──────────────────────────────────────────────────────
+
+// POST /api/admin/import-mso-roster
+// Fetches the MSO team page, parses the Roster tab, and adds players to season_rosters.
+app.post('/api/admin/import-mso-roster', requireOwner, async (req, res) => {
+  const { season_id, team_id, mso_url, mso_league_id, mso_season_id, mso_team_id } = req.body;
+  if (!season_id || !team_id) return res.status(400).json({ error: 'season_id and team_id are required' });
+
+  let url = mso_url;
+  if (!url) {
+    if (!mso_league_id || !mso_season_id || !mso_team_id) {
+      return res.status(400).json({ error: 'Provide mso_url OR mso_league_id + mso_season_id + mso_team_id' });
+    }
+    url = `https://www.mystatsonline.com/hockey/visitor/league/stats/team_hockey.aspx?IDLeague=${mso_league_id}&IDSeason=${mso_season_id}&IDTeam=${mso_team_id}`;
+  }
+
+  const season = await db.prepare('SELECT id FROM seasons WHERE id = ?').get(Number(season_id));
+  if (!season) return res.status(404).json({ error: 'Season not found' });
+  const team = await db.prepare('SELECT id, name FROM teams WHERE id = ?').get(Number(team_id));
+  if (!team) return res.status(404).json({ error: 'Team not found' });
+
+  let fetchResult;
+  try {
+    fetchResult = await _mso_fetchUrl(url);
+  } catch (e) {
+    return res.status(400).json({ error: `Failed to fetch MSO page: ${e.message}` });
+  }
+  if (fetchResult.status !== 200) {
+    return res.status(400).json({ error: `MSO page returned HTTP ${fetchResult.status}` });
+  }
+
+  const rosterPlayers = _mso_parseRosterHtml(fetchResult.body);
+  if (rosterPlayers.length === 0) {
+    return res.status(400).json({ error: 'No roster data found on the MSO page. Make sure the URL points to a team page with a Roster tab.' });
+  }
+
+  let matched = 0, created = 0, skipped = 0;
+  const details = [];
+
+  for (const msoPlayer of rosterPlayers) {
+    const nameLower = msoPlayer.name.toLowerCase().trim();
+
+    // Check if already in this season's roster
+    const existing = await db.prepare(`
+      SELECT sr.id FROM season_rosters sr
+      JOIN players p ON sr.player_id = p.id
+      WHERE sr.season_id = ? AND LOWER(p.name) = ?
+    `).get(Number(season_id), nameLower);
+    if (existing) { skipped++; details.push({ name: msoPlayer.name, status: 'skipped', reason: 'already in roster' }); continue; }
+
+    // Find or create player
+    const existingPlayer = await db.prepare("SELECT id FROM players WHERE LOWER(name) = ?").get(nameLower);
+    let playerId;
+    if (existingPlayer) {
+      playerId = existingPlayer.id;
+      matched++;
+    } else {
+      const pr = await db.prepare('INSERT INTO players (name, is_rostered, position) VALUES (?, 0, ?)').run(msoPlayer.name.trim(), msoPlayer.position || null);
+      playerId = pr.lastInsertRowid;
+      created++;
+    }
+
+    await db.prepare(`
+      INSERT INTO season_rosters (season_id, team_id, player_id, position)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT (season_id, player_id) DO UPDATE SET team_id = EXCLUDED.team_id, position = EXCLUDED.position
+    `).run(Number(season_id), Number(team_id), playerId, msoPlayer.position || null);
+
+    // Ensure team is enrolled in the season
+    await db.prepare('INSERT INTO season_teams (season_id, team_id) VALUES (?, ?) ON CONFLICT DO NOTHING').run(Number(season_id), Number(team_id));
+
+    details.push({ name: msoPlayer.name, status: existingPlayer ? 'matched' : 'created', player_id: playerId });
+  }
+
+  res.json({ ok: true, summary: { matched, created, skipped, total: rosterPlayers.length }, details });
+});
+
 // ── Global error handler ───────────────────────────────────────────────────
 // Catches multer errors (file too large, wrong type) and returns JSON so the
 // browser never sees a connection-reset "network error".
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
   if (err && err.code === 'LIMIT_FILE_SIZE') {
-    return res.status(413).json({ error: 'File too large. Maximum allowed size is 20 MB.' });
   }
   if (err && (err.message === 'Only image files are allowed' ||
               err.message === 'Only Excel files (.xlsx / .xls) are allowed')) {
