@@ -421,6 +421,29 @@ async function initSchema() {
       division   TEXT NOT NULL DEFAULT '',
       UNIQUE(season_id, team_id)
     )`,
+    `CREATE TABLE IF NOT EXISTS season_teams (
+      id        SERIAL PRIMARY KEY,
+      season_id INTEGER NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+      team_id   INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+      UNIQUE(season_id, team_id)
+    )`,
+    `CREATE TABLE IF NOT EXISTS season_rosters (
+      id        SERIAL PRIMARY KEY,
+      season_id INTEGER NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+      team_id   INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+      player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+      position  TEXT,
+      number    INTEGER,
+      UNIQUE(season_id, player_id)
+    )`,
+    `CREATE TABLE IF NOT EXISTS playoff_line_overrides (
+      id               SERIAL PRIMARY KEY,
+      season_id        INTEGER NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+      scope            TEXT NOT NULL DEFAULT 'league',
+      scope_value      TEXT NOT NULL DEFAULT '',
+      cutoff_position  INTEGER NOT NULL,
+      UNIQUE(season_id, scope, scope_value)
+    )`,
   ];
 
   for (const sql of tables) {
@@ -548,6 +571,15 @@ async function initSchema() {
   } catch (err) {
     if (!err.message || !err.message.includes('already exists')) {
       console.warn('[db] Migration warning (game_player_stats poke_check_saves):', err.message);
+    }
+  }
+
+  // Add is_disabled to seasons (for soft-hiding seasons from public view)
+  try {
+    await pool.query('ALTER TABLE seasons ADD COLUMN is_disabled INTEGER DEFAULT 0');
+  } catch (err) {
+    if (!err.message || !err.message.includes('already exists')) {
+      console.warn('[db] Migration warning (seasons is_disabled):', err.message);
     }
   }
 

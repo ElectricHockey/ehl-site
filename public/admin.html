@@ -131,6 +131,20 @@
                 Set as active season
               </label>
             </div>
+            <div class="form-group" style="flex-direction:column;">
+              <label for="season-copy-from">Copy from season <span style="color:#8b949e;font-size:0.8rem;">(optional)</span></label>
+              <select id="season-copy-from" style="background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.35rem 0.6rem;min-width:220px;" onchange="onCopyFromChange()">
+                <option value="">— None (fresh season) —</option>
+              </select>
+            </div>
+            <div id="season-copy-options" style="display:none;margin-left:0.5rem;border-left:2px solid #30363d;padding-left:1rem;margin-top:0.5rem;">
+              <p style="color:#8b949e;font-size:0.82rem;margin-bottom:0.5rem;">Select teams to include in the new season:</p>
+              <div id="season-copy-teams-list" style="display:flex;flex-direction:column;gap:0.25rem;margin-bottom:0.5rem;"></div>
+              <label style="display:flex;align-items:center;gap:0.4rem;cursor:pointer;font-size:0.88rem;">
+                <input type="checkbox" id="season-copy-rosters" />
+                Also copy rosters
+              </label>
+            </div>
             <button type="submit">Create Season</button>
           </form>
         </div>
@@ -274,6 +288,37 @@
             </div>
             <button class="btn-danger" onclick="mergePlayers()" style="white-space:nowrap;">Merge Players</button>
           </div>
+        </div>
+
+        <div class="form-section" style="margin-top:1.5rem;border-top:1px solid #30363d;padding-top:1rem;">
+          <h3 style="margin-bottom:0.75rem;">🔗 Discord Nickname Sync</h3>
+          <p style="color:#8b949e;font-size:0.85rem;margin-bottom:0.75rem;">
+            Fetch all guild members from the configured Discord server and automatically propose Discord ID links for players based on their server nicknames and usernames.
+            Requires <code>DISCORD_BOT_TOKEN</code> and <code>DISCORD_GUILD_ID</code> environment variables.
+          </p>
+          <button onclick="discordSyncNicknames()" id="discord-sync-btn">🔍 Fetch Discord Members &amp; Propose Links</button>
+          <div id="discord-sync-result" style="margin-top:1rem;display:none;">
+            <p style="font-size:0.85rem;color:#8b949e;margin-bottom:0.5rem;">Proposed links — uncheck any you do not want to apply:</p>
+            <div style="overflow-x:auto;">
+              <table id="discord-sync-table" style="width:100%;border-collapse:collapse;font-size:0.83rem;">
+                <thead><tr style="color:#8b949e;">
+                  <th style="padding:0.3rem 0.5rem;text-align:left;">Apply</th>
+                  <th style="padding:0.3rem 0.5rem;text-align:left;">Player</th>
+                  <th style="padding:0.3rem 0.5rem;text-align:left;">Discord Username</th>
+                  <th style="padding:0.3rem 0.5rem;text-align:left;">Server Nick</th>
+                  <th style="padding:0.3rem 0.5rem;text-align:left;">Discord ID</th>
+                  <th style="padding:0.3rem 0.5rem;text-align:left;">Match Type</th>
+                  <th style="padding:0.3rem 0.5rem;text-align:left;">Confidence</th>
+                </tr></thead>
+                <tbody id="discord-sync-tbody"></tbody>
+              </table>
+            </div>
+            <div style="margin-top:0.75rem;display:flex;align-items:center;gap:0.75rem;">
+              <button onclick="discordApplyLinks()" id="discord-apply-btn">✅ Apply Selected Links</button>
+              <span id="discord-apply-msg" style="font-size:0.85rem;"></span>
+            </div>
+          </div>
+          <div id="discord-sync-status" style="margin-top:0.5rem;font-size:0.85rem;"></div>
         </div>
       </div>
 
@@ -650,6 +695,40 @@
         </div>
 
         <div id="xl-import-status" style="display:none;padding:0.75rem 1rem;border-radius:6px;font-size:0.88rem;max-width:560px;margin-bottom:1rem;white-space:pre-wrap;"></div>
+
+        <!-- ── MSO Roster Import ───────────────────────────────── -->
+        <hr style="border:none;border-top:1px solid #30363d;margin:1.75rem 0;" />
+        <h2 style="margin-bottom:0.5rem;">Import Roster from MSO Team Page</h2>
+        <p style="color:#8b949e;font-size:0.9rem;max-width:680px;margin-bottom:1.25rem;">
+          Fetch a team's roster directly from a <strong>mystatsonline.com</strong> team page URL and add the players to a season's roster.
+          Players not yet in the database will be created automatically.
+        </p>
+
+        <div class="form-section" style="max-width:580px;margin-bottom:1.25rem;">
+          <div class="form-group" style="flex-direction:column;margin-bottom:0.75rem;">
+            <label for="mso-roster-season">Season *</label>
+            <select id="mso-roster-season"
+              style="background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.4rem 0.7rem;font-size:0.9rem;max-width:360px;">
+              <option value="">— Select Season —</option>
+            </select>
+          </div>
+          <div class="form-group" style="flex-direction:column;margin-bottom:0.75rem;">
+            <label for="mso-roster-team">Team *</label>
+            <select id="mso-roster-team"
+              style="background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.4rem 0.7rem;font-size:0.9rem;max-width:360px;">
+              <option value="">— Select Team —</option>
+            </select>
+          </div>
+          <div class="form-group" style="flex-direction:column;margin-bottom:0.75rem;">
+            <label for="mso-roster-url">MSO Team Page URL *</label>
+            <input type="url" id="mso-roster-url"
+              placeholder="https://www.mystatsonline.com/hockey/visitor/league/stats/team_hockey.aspx?IDLeague=…&IDSeason=…&IDTeam=…"
+              style="background:#21262d;border:1px solid #30363d;border-radius:6px;padding:0.4rem 0.7rem;color:#e6edf3;font-size:0.88rem;width:100%;box-sizing:border-box;" />
+            <span style="color:#8b949e;font-size:0.78rem;margin-top:0.2rem;">Paste the URL of the team page on mystatsonline.com that has the Roster tab.</span>
+          </div>
+          <button onclick="runMsoRosterImport()">📋 Import Roster from MSO</button>
+        </div>
+        <div id="mso-roster-status" style="display:none;padding:0.75rem 1rem;border-radius:6px;font-size:0.88rem;max-width:560px;margin-bottom:1rem;white-space:pre-wrap;"></div>
       </div>
 
       <!-- ── Edit Player Modal (shared, not inside any tab) ─── -->
@@ -762,5 +841,22 @@
   <script src="game-stats-editor.js"></script>
   <script src="admin.js"></script>
   <script src="nav.js"></script>
+
+  <!-- ── Playoff Lines Modal ───────────────────────────────────────── -->
+  <div id="playoff-lines-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:9999;align-items:center;justify-content:center;">
+    <div style="background:#161b22;border:1px solid #30363d;border-radius:10px;padding:1.5rem 2rem;min-width:340px;max-width:520px;width:90%;max-height:80vh;overflow-y:auto;">
+      <h3 id="playoff-lines-title" style="margin:0 0 0.75rem;">Playoff Lines</h3>
+      <p style="color:#8b949e;font-size:0.83rem;margin-bottom:1rem;">
+        Set a cutoff position (1-based rank) after which the playoff line appears in standings.
+        Leave blank or set 0 to remove the override.
+      </p>
+      <div id="playoff-lines-form"></div>
+      <div style="display:flex;gap:0.5rem;margin-top:1.25rem;">
+        <button onclick="savePlayoffLines()">Save</button>
+        <button class="btn-secondary" onclick="closePlayoffLinesModal()">Cancel</button>
+      </div>
+      <span id="playoff-lines-msg" style="display:block;margin-top:0.5rem;font-size:0.83rem;"></span>
+    </div>
+  </div>
 </body>
 </html>

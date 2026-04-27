@@ -155,6 +155,7 @@ function buildStandingsHtml(data) {
   if (!data) return '<p style="color:#8b949e">Select a season above to view standings.</p>';
   const teams = data.teams || data;   // handle both {teams,playoff_cutoff} and bare array
   const cutoff = data.playoff_cutoff ?? null;
+  const playoffLines = data.playoff_lines || null;
 
   if (!teams || teams.length === 0) return '<p style="color:#8b949e">No standings data for this season yet.</p>';
 
@@ -170,10 +171,12 @@ function buildStandingsHtml(data) {
     const sorted = _sortCol === 'rank'
       ? [...globalOrder]
       : sortTeams(teams, _sortCol, _sortDir);
+    // Effective league cutoff: use playoff_lines['league'] override if present, else playoff_cutoff
+    const effectiveCutoff = (playoffLines && playoffLines['league'] != null) ? playoffLines['league'] : cutoff;
     let rows = '';
     sorted.forEach((t, i) => {
       // Insert playoff line AFTER the last in-playoff team (between rank N and N+1)
-      if (cutoff && i === cutoff) rows += PLAYOFF_LINE_ROW;
+      if (effectiveCutoff && i === effectiveCutoff) rows += PLAYOFF_LINE_ROW;
       rows += makeRow(t, globalRank[t.id]);
     });
     return `<div style="overflow-x:auto;"><table>${thead}<tbody>${rows}</tbody></table></div>${clinchLegend(teams)}`;
@@ -199,15 +202,23 @@ function buildStandingsHtml(data) {
         : sortTeams(conferences[conf][div], _sortCol, _sortDir);
       html += `<div style="overflow-x:auto;"><table>${thead}<tbody>`;
       let cutoffInserted = false;
+      // Determine effective cutoff for this sub-table:
+      // prefer division-scope override → conference-scope → league-scope → global playoff_cutoff
+      const divKey  = div  ? `division:${div}`   : null;
+      const confKey = conf !== 'Unassigned' ? `conference:${conf}` : null;
+      const localOverride = (playoffLines && divKey  && playoffLines[divKey]  != null) ? playoffLines[divKey]
+                          : (playoffLines && confKey && playoffLines[confKey] != null) ? playoffLines[confKey]
+                          : null;
       group.forEach((t, i) => {
-        // Insert playoff line between the last in-playoff team and the first out-of-playoff team
-        // Use overall global rank to determine the cutoff position within this group
-        if (cutoff && !cutoffInserted) {
-          const prevIn = i > 0 && globalRank[group[i - 1].id] <= cutoff;
-          const currOut = globalRank[t.id] > cutoff;
-          if ((i === 0 && currOut) || (prevIn && currOut)) {
-            html += PLAYOFF_LINE_ROW;
-            cutoffInserted = true;
+        if (!cutoffInserted) {
+          if (localOverride != null) {
+            // Local override: draw line at position N within this sub-table (1-based → after index N-1)
+            if (i === localOverride) { html += PLAYOFF_LINE_ROW; cutoffInserted = true; }
+          } else if (cutoff) {
+            // Fall back to global rank
+            const prevIn = i > 0 && globalRank[group[i - 1].id] <= cutoff;
+            const currOut = globalRank[t.id] > cutoff;
+            if ((i === 0 && currOut) || (prevIn && currOut)) { html += PLAYOFF_LINE_ROW; cutoffInserted = true; }
           }
         }
         html += makeRow(t, globalRank[t.id]);
