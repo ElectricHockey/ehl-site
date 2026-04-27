@@ -296,7 +296,11 @@
             Fetch all guild members from the configured Discord server and automatically propose Discord ID links for players based on their server nicknames and usernames.
             Requires <code>DISCORD_BOT_TOKEN</code> and <code>DISCORD_GUILD_ID</code> environment variables.
           </p>
-          <button onclick="discordSyncNicknames()" id="discord-sync-btn">🔍 Fetch Discord Members &amp; Propose Links</button>
+          <div style="display:flex;gap:0.75rem;flex-wrap:wrap;align-items:center;">
+            <button onclick="discordSyncNicknames()" id="discord-sync-btn">🔍 Fetch &amp; Propose Links</button>
+            <button onclick="discordAutoLink()" id="discord-auto-link-btn" style="background:#238636;border-color:#2ea043;" title="Immediately apply all links where a Discord server nickname exactly matches a player name">⚡ Auto-Link by Nickname</button>
+          </div>
+          <div id="discord-auto-link-status" style="margin-top:0.5rem;font-size:0.85rem;display:none;"></div>
           <div id="discord-sync-result" style="margin-top:1rem;display:none;">
             <p style="font-size:0.85rem;color:#8b949e;margin-bottom:0.5rem;">Proposed links — uncheck any you do not want to apply:</p>
             <div style="overflow-x:auto;">
