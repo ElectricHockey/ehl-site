@@ -2063,7 +2063,7 @@ async function savePlayoffLines() {
 }
 
 // Close playoff lines modal on overlay click
-document.getElementById('playoff-lines-overlay').addEventListener('click', e => {
+document.getElementById('playoff-lines-overlay')?.addEventListener('click', e => {
   if (e.target === document.getElementById('playoff-lines-overlay')) closePlayoffLinesModal();
 });
 
