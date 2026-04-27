@@ -2115,7 +2115,38 @@ async function discordSyncNicknames() {
   }
 }
 
-async function discordApplyLinks() {
+async function discordAutoLink() {
+  const btn = document.getElementById('discord-auto-link-btn');
+  const statusEl = document.getElementById('discord-auto-link-status');
+  if (btn) btn.disabled = true;
+  statusEl.style.display = '';
+  statusEl.style.color = '#8b949e';
+  statusEl.textContent = '⏳ Fetching Discord members and applying nickname matches…';
+  try {
+    const res = await fetch(`${API}/admin/discord-auto-link`, { method: 'POST', headers: adminJsonHeaders() });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      statusEl.style.color = '#f85149';
+      statusEl.textContent = `❌ ${data.error || 'Request failed'}`;
+      return;
+    }
+    if (data.applied === 0) {
+      statusEl.style.color = '#e3b341';
+      statusEl.textContent = `⚠ No new matches found among ${data.total_members} Discord members. All nickname-matched players may already be linked.`;
+    } else {
+      statusEl.style.color = '#3fb950';
+      const names = data.links.map(l => `${l.player_name} → ${l.nick || l.discord_username}`).join(', ');
+      statusEl.textContent = `✅ Auto-linked ${data.applied} player(s) out of ${data.total_members} Discord members: ${names}`;
+    }
+  } catch (e) {
+    statusEl.style.color = '#f85149';
+    statusEl.textContent = `❌ Network error: ${e.message}`;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+
   const checks = document.querySelectorAll('#discord-sync-tbody input[type="checkbox"]:checked');
   const links = Array.from(checks).map(c => _discordProposals[Number(c.dataset.idx)]).filter(Boolean).map(p => ({
     player_id: p.player_id,

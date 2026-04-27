@@ -4928,6 +4928,75 @@ app.post('/api/admin/discord-apply-links', requireOwner, async (req, res) => {
   res.json({ ok: true, applied });
 });
 
+// POST /api/admin/discord-auto-link
+// Fetches all guild members and immediately applies links for every player whose
+// name exactly matches a Discord member's server nickname (case-insensitive).
+// Does not require any user to be logged in — links are written directly to the
+// players (and associated users) table.
+app.post('/api/admin/discord-auto-link', requireOwner, async (req, res) => {
+  if (!DISCORD_BOT_TOKEN || !DISCORD_GUILD_ID) {
+    return res.status(400).json({ error: 'DISCORD_BOT_TOKEN and DISCORD_GUILD_ID must be configured in environment variables' });
+  }
+
+  // Paginate through all guild members
+  const members = [];
+  let after = '0';
+  const limit = 1000;
+  while (true) {
+    const url = `https://discord.com/api/v10/guilds/${DISCORD_GUILD_ID}/members?limit=${limit}&after=${after}`;
+    let discordRes;
+    try {
+      discordRes = await fetch(url, {
+        headers: { 'Authorization': `Bot ${DISCORD_BOT_TOKEN}`, 'Content-Type': 'application/json' },
+      });
+    } catch (e) {
+      return res.status(500).json({ error: `Discord API request failed: ${e.message}` });
+    }
+    if (!discordRes.ok) {
+      const errBody = await discordRes.text().catch(() => 'unknown');
+      return res.status(500).json({ error: `Discord API error: ${discordRes.status} ${errBody}` });
+    }
+    const batch = await discordRes.json();
+    if (!Array.isArray(batch) || batch.length === 0) break;
+    members.push(...batch);
+    if (batch.length < limit) break;
+    after = batch[batch.length - 1].user.id;
+  }
+
+  // Load all unlinked players (no discord_id yet)
+  const players = await db.prepare('SELECT id, name, discord_id, user_id FROM players WHERE discord_id IS NULL OR discord_id = \'\'').all();
+  const playersByName = new Map(players.map(p => [p.name.toLowerCase(), p]));
+
+  const applied = [];
+
+  for (const member of members) {
+    const discordId = member.user?.id;
+    if (!discordId) continue;
+    const nick = (member.nick || '').trim();
+    if (!nick) continue;
+
+    const player = playersByName.get(nick.toLowerCase());
+    if (!player) continue;
+
+    // Apply the link
+    await db.prepare('UPDATE players SET discord_id = ?, discord = COALESCE(NULLIF(?, \'\'), discord) WHERE id = ?')
+      .run(String(discordId), member.user.username || nick, player.id);
+
+    // Also link the user account if the player is tied to one and the user has no discord_id yet
+    if (player.user_id) {
+      await db.prepare('UPDATE users SET discord_id = ?, discord = COALESCE(NULLIF(?, \'\'), discord) WHERE id = ? AND (discord_id IS NULL OR discord_id = \'\')')
+        .run(String(discordId), member.user.username || nick, player.user_id);
+    }
+
+    applied.push({ player_id: player.id, player_name: player.name, discord_id: discordId, discord_username: member.user.username || '', nick });
+
+    // Remove from map so duplicate Discord members don't double-link
+    playersByName.delete(nick.toLowerCase());
+  }
+
+  res.json({ ok: true, applied: applied.length, total_members: members.length, links: applied });
+});
+
 // ── MSO Roster Import ──────────────────────────────────────────────────────
 
 // POST /api/admin/import-mso-roster
