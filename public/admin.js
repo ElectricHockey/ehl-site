@@ -82,11 +82,24 @@ function previewLogo(input, previewId) {
 // Try the cached admin token first; if stale, exchange the player session for
 // an admin token. If the player has no admin access, show the denied message.
 async function checkAuth() {
+  // Fetch with a hard timeout so a slow/hung server never leaves the page
+  // stuck on "Checking access…" forever.
+  async function timedFetch(url, opts, ms = 10000) {
+    const ctrl = new AbortController();
+    const id = setTimeout(() => ctrl.abort(), ms);
+    try {
+      return await fetch(url, { ...opts, signal: ctrl.signal });
+    } finally {
+      clearTimeout(id);
+    }
+  }
+
   // 1. Validate existing admin token
   const adminToken = getAdminToken();
   if (adminToken) {
     try {
-      const res = await fetch(`${API}/auth/status`, { headers: { 'X-Admin-Token': adminToken } });
+      const res = await timedFetch(`${API}/auth/status`, { headers: { 'X-Admin-Token': adminToken } });
+      if (res.status >= 500) { showCheckError(); return; }
       const data = await res.json();
       if (data.loggedIn) {
         localStorage.setItem('ehl_admin_role', data.role);
@@ -94,7 +107,10 @@ async function checkAuth() {
         showAdminPanel(data.role, data.username);
         return;
       }
-    } catch { /* fall through */ }
+    } catch (err) {
+      if (err && err.name === 'AbortError') { showCheckError(); return; }
+      // Other network errors – fall through and try the player token
+    }
     // Token is invalid – clear it and try player session below
     localStorage.removeItem('ehl_admin_token');
     localStorage.removeItem('ehl_admin_role');
@@ -105,10 +121,11 @@ async function checkAuth() {
   const playerToken = getPlayerToken();
   if (playerToken) {
     try {
-      const res = await fetch(`${API}/auth/login`, {
+      const res = await timedFetch(`${API}/auth/login`, {
         method: 'POST',
         headers: { 'X-Player-Token': playerToken },
       });
+      if (res.status >= 500) { showCheckError(); return; }
       if (res.ok) {
         const data = await res.json();
         localStorage.setItem('ehl_admin_token', data.token);
@@ -117,11 +134,26 @@ async function checkAuth() {
         showAdminPanel(data.role, data.username);
         return;
       }
-    } catch { /* fall through */ }
+    } catch (err) {
+      if (err && err.name === 'AbortError') { showCheckError(); return; }
+      showCheckError(); return; // Network error or other failure
+    }
   }
 
   // 3. No valid session found – show access-denied message
   showLoginForm();
+}
+
+function showCheckError() {
+  document.getElementById('login-section').style.display = '';
+  document.getElementById('admin-panel').style.display = 'none';
+  const checking = document.getElementById('access-checking');
+  if (checking) {
+    checking.style.display = '';
+    checking.innerHTML = '<span style="color:#f85149;">⚠️ Server unavailable.</span> <button onclick="location.reload()" style="background:none;border:none;color:#58a6ff;cursor:pointer;text-decoration:underline;font-size:inherit;padding:0;">Retry</button>';
+  }
+  const denied = document.getElementById('access-denied');
+  if (denied) denied.style.display = 'none';
 }
 
 function showLoginForm() {
@@ -1408,7 +1440,9 @@ document.getElementById('playoff-form').addEventListener('submit', async e => {
 
 // ── Init ──────────────────────────────────────────────────────────────────
 
-checkAuth();
+// Safety net: if checkAuth() rejects due to an unexpected error, fall back to
+// showing the login/denied form so the page never stays stuck on "Checking access…".
+checkAuth().catch(() => showLoginForm());
 
 // ── Site Logo ─────────────────────────────────────────────────────────────
 
@@ -2147,6 +2181,7 @@ async function discordAutoLink() {
 }
 
 
+async function discordApplyLinks() {
   const checks = document.querySelectorAll('#discord-sync-tbody input[type="checkbox"]:checked');
   const links = Array.from(checks).map(c => _discordProposals[Number(c.dataset.idx)]).filter(Boolean).map(p => ({
     player_id: p.player_id,
