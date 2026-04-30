@@ -159,25 +159,35 @@ if (!process.env.VERCEL) {
 // Store the promise so we can gate incoming requests until it resolves.
 // If init fails, every request gets 503 so the error is visible.
 // Retry once on failure to handle transient Vercel cold-start connection issues.
+// A hard 15 s timeout prevents the promise from hanging forever when the DB
+// accepts the TCP connection but then stalls on a DDL lock (common with
+// Supabase's Supavisor transaction-mode pooler).  Without this timeout every
+// API request would hang indefinitely, leaving the admin panel stuck on
+// "Checking access…" with no way to recover.
 let initError = null;
-const dbReady = (async () => {
-  try {
-    await db.initSchema();
-    await db.seedTeams();
-    console.log('[db] init: schema + seed OK');
-  } catch (firstErr) {
-    console.warn('[db] init attempt 1 failed, retrying in 500ms:', firstErr.message);
-    await new Promise(r => setTimeout(r, 500));
+const dbReady = Promise.race([
+  (async () => {
     try {
       await db.initSchema();
       await db.seedTeams();
-      console.log('[db] init: schema + seed OK (retry)');
-    } catch (retryErr) {
-      console.error('[db] init permanently failed:', retryErr.message);
-      throw retryErr;
+      console.log('[db] init: schema + seed OK');
+    } catch (firstErr) {
+      console.warn('[db] init attempt 1 failed, retrying in 500ms:', firstErr.message);
+      await new Promise(r => setTimeout(r, 500));
+      try {
+        await db.initSchema();
+        await db.seedTeams();
+        console.log('[db] init: schema + seed OK (retry)');
+      } catch (retryErr) {
+        console.error('[db] init permanently failed:', retryErr.message);
+        throw retryErr;
+      }
     }
-  }
-})().catch(err => {
+  })(),
+  new Promise((_, reject) =>
+    setTimeout(() => reject(new Error('DB init timed out after 15s')), 15000)
+  ),
+]).catch(err => {
   initError = err;
 });
 
