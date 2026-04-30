@@ -138,6 +138,15 @@ const excelUpload = multer({
 
 const apiLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 300, standardHeaders: true, legacyHeaders: false, validate: { ip: false } });
 
+// ── HTTP cache helper ──────────────────────────────────────────────────────
+// Adds Cache-Control so Vercel's edge CDN caches read-only API responses,
+// serving subsequent requests without cold-starting the serverless function.
+// s-maxage controls the CDN TTL; stale-while-revalidate lets the CDN serve a
+// briefly stale response while the cache refreshes in the background.
+function setPublicCache(res, seconds = 60) {
+  res.set('Cache-Control', `public, max-age=${seconds}, s-maxage=${seconds}, stale-while-revalidate=${seconds * 5}`);
+}
+
 app.set('trust proxy', 1); // trust first proxy so req.ip reflects real client IP
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
@@ -556,6 +565,7 @@ app.get('/api/seasons', async (req, res) => {
   }
   parts.push('ORDER BY s.sort_order ASC, s.id ASC');
   const seasons = await db.prepare(parts.join(' ')).all(...params);
+  if (!adminSession) setPublicCache(res, 60);
   res.json(seasons);
 });
 
@@ -732,6 +742,7 @@ app.post('/api/seasons/:id/reorder', requireOwner, async (req, res) => {
 // Optional query param: ?type=threes|sixes to get the league-specific logo
 // Falls back to the main site logo if no league-specific one is set.
 app.get('/api/site-logo', async (req, res) => {
+  res.set('Cache-Control', 'public, max-age=3600, s-maxage=3600, stale-while-revalidate=86400');
   const lt = req.query.type; // 'threes', 'sixes', or undefined
   if (lt === 'threes' || lt === 'sixes') {
     const key = `site_logo_url_${lt}`;
@@ -768,6 +779,7 @@ app.post('/api/admin/site-logo', requireOwner, logoUpload.single('logo'), async 
 // ── Teams ──────────────────────────────────────────────────────────────────
 
 app.get('/api/teams', async (_req, res) => {
+  setPublicCache(res, 300);
   res.json(await db.prepare('SELECT * FROM teams ORDER BY name').all());
 });
 
@@ -1444,6 +1456,7 @@ app.get('/api/teams/:id/stats', async (req, res) => {
     ORDER BY g.date ASC LIMIT 5
   `).all(req.params.id, req.params.id);
 
+  setPublicCache(res, 60);
   res.json({ team, roster, skaterStats, goalieStats, recentGames, staff, record, transactions, upcoming });
 });
 
@@ -1458,6 +1471,7 @@ app.get('/api/teams/:id/seasons', async (req, res) => {
     WHERE g.home_team_id = ? OR g.away_team_id = ?
     ORDER BY s.sort_order ASC, s.id ASC
   `).all(req.params.id, req.params.id);
+  setPublicCache(res, 300);
   res.json(seasons);
 });
 
@@ -1521,6 +1535,7 @@ app.get('/api/teams/:id/records', async (req, res) => {
     goalie_wins: await singleSeasonRecord('goalie_wins', "SUM(gps.goalie_wins)",          'G', 'DESC'),
   };
 
+  setPublicCache(res, 120);
   res.json({ career, single });
 });
 
@@ -1740,6 +1755,7 @@ app.get('/api/records', async (req, res) => {
     singleGame.sh_goals = null;
   }
 
+  setPublicCache(res, 120);
   res.json({ career, seasonal, singleGame, goalieSeasonMinGP });
 });
 
@@ -1997,6 +2013,7 @@ app.get('/api/players/records/:name', async (req, res) => {
     }
   }
 
+  setPublicCache(res, 120);
   res.json({ holdings });
 });
 
@@ -2008,6 +2025,7 @@ app.get('/api/players', async (_req, res) => {
     FROM players p LEFT JOIN teams t ON p.team_id = t.id LEFT JOIN users u ON p.user_id = u.id
     ORDER BY t.name, p.name
   `).all();
+  setPublicCache(res, 60);
   res.json(players);
 });
 
@@ -2136,6 +2154,7 @@ app.get('/api/players/profile/:name', async (req, res) => {
     return res.status(404).json({ error: 'Player not found' });
   }
 
+  setPublicCache(res, 60);
   res.json({ player: player || null, isGoalie, skaterStats, goalieStats, seasonTeamStats, lastGames });
 });
 
@@ -2232,6 +2251,7 @@ app.get('/api/games', async (req, res) => {
     LEFT JOIN playoff_series ps ON g.playoff_series_id = ps.id
     ${where} ORDER BY g.date ASC ${limitClause}
   `).all(...params);
+  setPublicCache(res, 60);
   res.json(games);
 });
 
@@ -2355,6 +2375,7 @@ app.get('/api/games/:id/stats', async (req, res) => {
   `).get(req.params.id);
   if (!game) return res.status(404).json({ error: 'Game not found' });
   const stats = await db.prepare('SELECT * FROM game_player_stats WHERE game_id = ? ORDER BY position, goals DESC').all(req.params.id);
+  setPublicCache(res, 120);
   res.json({
     game: {
       id: game.id, date: game.date, status: game.status, season_id: game.season_id, is_overtime: game.is_overtime,
@@ -2371,6 +2392,7 @@ app.get('/api/games/:id/stats', async (req, res) => {
 // ── League stats leaders ───────────────────────────────────────────────────
 
 app.get('/api/stats/leaders', async (req, res) => {
+  setPublicCache(res, 60);
   const seasonId = req.query.season_id ? Number(req.query.season_id) : null;
   const leagueType = req.query.league_type || null;
   const isPlayoff = req.query.is_playoff; // '0' = regular only, '1' = playoff only
@@ -2602,6 +2624,7 @@ app.get('/api/stats/leaders', async (req, res) => {
     return res.json({ skaters: histSkaters, goalies: histGoalies });
   }
 
+  setPublicCache(res, 60);
   res.json({ skaters, goalies });
 });
 
@@ -2836,6 +2859,7 @@ app.get('/api/standings', async (req, res) => {
   const teams = await calcStandings(seasonId);
   let playoff_cutoff = null;
   let playoff_lines = null;
+  setPublicCache(res, 60);
   if (seasonId) {
     const pc = await db.prepare('SELECT teams_qualify FROM playoffs WHERE season_id = ?').get(seasonId);
     if (pc) playoff_cutoff = Math.min(pc.teams_qualify, teams.length);
@@ -2938,6 +2962,7 @@ app.delete('/api/seasons/:id/teams/:teamId/roster/:playerId', requireOwner, asyn
 // GET /api/seasons/:id/playoff-lines – get playoff line overrides for a season
 app.get('/api/seasons/:id/playoff-lines', async (req, res) => {
   const overrides = await db.prepare('SELECT * FROM playoff_line_overrides WHERE season_id = ? ORDER BY scope, scope_value').all(Number(req.params.id));
+  setPublicCache(res, 60);
   res.json(overrides);
 });
 
@@ -3010,6 +3035,7 @@ app.get('/api/transactions', async (req, res) => {
      ORDER BY tx.created_at DESC
      LIMIT ?
   `).all(limit);
+  setPublicCache(res, 60);
   res.json(rows);
 });
 
@@ -3055,6 +3081,7 @@ app.get('/api/playoffs/by-season/:seasonId', async (req, res) => {
   if (!playoff) return res.status(404).json({ error: 'No playoff found for this season' });
   const bracket = await getPlayoffBracket(playoff.id);
   if (!bracket) return res.status(404).json({ error: 'Playoff data not found' });
+  setPublicCache(res, 60);
   res.json(bracket);
 });
 
@@ -3065,6 +3092,7 @@ app.get('/api/playoffs/by-playoff-season/:playoffSeasonId', async (req, res) => 
   if (!playoff) return res.status(404).json({ error: 'No playoff found for this playoff season' });
   const bracket = await getPlayoffBracket(playoff.id);
   if (!bracket) return res.status(404).json({ error: 'Playoff data not found' });
+  setPublicCache(res, 60);
   res.json(bracket);
 });
 
@@ -3293,6 +3321,7 @@ app.get('/api/playoff-series/:id/games', async (req, res) => {
     WHERE g.playoff_series_id = ?
     ORDER BY g.date, g.id
   `).all(req.params.id);
+  setPublicCache(res, 60);
   res.json(games);
 });
 
@@ -3757,6 +3786,7 @@ app.get('/api/stats/historical', async (req, res) => {
     ORDER BY sps.save_pct DESC
   `).all(...params);
 
+  setPublicCache(res, 60);
   res.json({ skaters, goalies });
 });
 
