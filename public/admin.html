@@ -131,6 +131,22 @@
                 Set as active season
               </label>
             </div>
+            <div class="form-group" style="flex-direction:column;gap:0.4rem;">
+              <label for="season-copy-from" style="color:#8b949e;font-size:0.85rem;">Copy from season (optional)</label>
+              <select id="season-copy-from" style="background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.3rem 0.6rem;font-size:0.85rem;">
+                <option value="">— None —</option>
+              </select>
+              <div id="season-copy-options" style="display:none;margin-top:0.4rem;display:flex;gap:1rem;flex-wrap:wrap;">
+                <label style="display:flex;align-items:center;gap:0.4rem;cursor:pointer;font-size:0.85rem;">
+                  <input type="checkbox" id="season-copy-teams" checked />
+                  Copy teams &amp; conf/div assignments
+                </label>
+                <label style="display:flex;align-items:center;gap:0.4rem;cursor:pointer;font-size:0.85rem;">
+                  <input type="checkbox" id="season-copy-rosters" checked />
+                  Copy rosters
+                </label>
+              </div>
+            </div>
             <button type="submit">Create Season</button>
           </form>
         </div>

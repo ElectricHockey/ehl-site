@@ -57,7 +57,7 @@ function recordPts(r) {
 }
 
 // ── Sort state ────────────────────────────────────────────────────────────
-let _standingsData = null;   // { teams, playoff_cutoff }
+let _standingsData = null;   // { teams, playoff_cutoff, conf_cutoffs, div_cutoffs }
 let _sortCol = 'pts';
 let _sortDir = 'desc';
 
@@ -68,6 +68,10 @@ function sortTeams(teams, col, dir) {
     let va, vb;
     if (col === 'diff') {
       va = a.gf - a.ga; vb = b.gf - b.ga;
+    } else if (col === 'rw') {
+      va = (a.w || 0) - (a.otw || 0); vb = (b.w || 0) - (b.otw || 0);
+    } else if (col === 'pct') {
+      va = a.gp > 0 ? a.pts / (a.gp * 2) : 0; vb = b.gp > 0 ? b.pts / (b.gp * 2) : 0;
     } else if (col === 'name') {
       va = (a.name || '').toLowerCase(); vb = (b.name || '').toLowerCase();
       return dir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
@@ -93,7 +97,7 @@ function thSortable(col, label, title) {
   return `<th style="cursor:pointer;user-select:none;white-space:nowrap;${active ? 'color:#58a6ff;' : ''}"${titleAttr} onclick="handleSortClick('${col}')">${label}${arrow}</th>`;
 }
 
-// Column order: #, Team, GP, W, L, OTL, OTW, PTS, GF, GA, DIFF, STK, L10, HOME, AWAY
+// Column order: #, Team, GP, W, L, OTL, PTS, P%, GF, GA, DIFF, STK, RW, L10, HOME, AWAY
 function buildThead() {
   return `<thead><tr>
     ${thSortable('rank', '#', 'Rank')}
@@ -102,12 +106,13 @@ function buildThead() {
     ${thSortable('w', 'W', 'Wins')}
     ${thSortable('l', 'L', 'Losses')}
     ${thSortable('otl', 'OTL', 'Overtime Losses')}
-    ${thSortable('otw', 'OTW', 'Overtime wins (included in W)')}
     ${thSortable('pts', 'PTS', 'Points')}
+    ${thSortable('pct', 'P%', 'Point Percentage (PTS / (GP × 2))')}
     ${thSortable('gf', 'GF', 'Goals For')}
     ${thSortable('ga', 'GA', 'Goals Against')}
     ${thSortable('diff', 'DIFF', 'Goal Differential')}
     ${thSortable('streak', 'STK', 'Current Streak')}
+    ${thSortable('rw', 'RW', 'Regulation Wins')}
     ${thSortable('l10', 'L10', 'Last 10 Games Record (W-L-OTL)')}
     ${thSortable('home_record', 'HOME', 'Home Record')}
     ${thSortable('away_record', 'AWAY', 'Away Record')}
@@ -116,18 +121,21 @@ function buildThead() {
 
 function makeRow(t, rank) {
   const diff = t.gf - t.ga;
+  const rw = (t.w || 0) - (t.otw || 0);
+  const pct = t.gp > 0 ? ((t.pts / (t.gp * 2)) * 100).toFixed(1) + '%' : '—';
   return `<tr${teamRowAttrs(t)}>
     <td style="color:#8b949e;font-size:0.82rem;font-weight:600;min-width:24px;">${rank}</td>
     <td>${logoHtml(t)}<a href="team.html?id=${t.id}" class="team-link">${t.name}</a>${clinchBadge(t)}</td>
     <td>${t.gp}</td>
     <td>${t.w}</td>
     <td>${t.l}</td>
-    <td style="color:#8b949e;">${t.otl || 0}</td>
-    <td style="color:#8b949e;">${t.otw || 0}</td>
+    <td>${t.otl || 0}</td>
     <td><strong>${t.pts}</strong></td>
+    <td style="color:#8b949e;font-size:0.82rem;">${pct}</td>
     <td>${t.gf}</td><td>${t.ga}</td>
     <td>${diff >= 0 ? '+' : ''}${diff}</td>
     <td style="${streakStyle(t.streak)}">${t.streak || '—'}</td>
+    <td style="color:#8b949e;">${rw}</td>
     <td style="color:#8b949e;font-size:0.82rem;">${t.l10 || '0-0-0'}</td>
     <td style="color:#8b949e;font-size:0.82rem;">${t.home_record || '0-0-0'}</td>
     <td style="color:#8b949e;font-size:0.82rem;">${t.away_record || '0-0-0'}</td>
@@ -135,7 +143,7 @@ function makeRow(t, rank) {
 }
 
 // A horizontal separator row spanning all columns (playoff cutoff line, no label)
-const PLAYOFF_LINE_ROW = `<tr class="playoff-cutoff-row"><td colspan="15" style="padding:0;height:2px;border-top:2px solid #58a6ff;"></td></tr>`;
+const PLAYOFF_LINE_ROW = `<tr class="playoff-cutoff-row"><td colspan="16" style="padding:0;height:2px;border-top:2px solid #58a6ff;"></td></tr>`;
 
 function clinchLegend(teams) {
   const present = new Set(teams.map(t => t.clinch).filter(Boolean));
@@ -155,6 +163,8 @@ function buildStandingsHtml(data) {
   if (!data) return '<p style="color:#8b949e">Select a season above to view standings.</p>';
   const teams = data.teams || data;   // handle both {teams,playoff_cutoff} and bare array
   const cutoff = data.playoff_cutoff ?? null;
+  const confCutoffs = data.conf_cutoffs || {};
+  const divCutoffs = data.div_cutoffs || {};
 
   if (!teams || teams.length === 0) return '<p style="color:#8b949e">No standings data for this season yet.</p>';
 
@@ -199,19 +209,53 @@ function buildStandingsHtml(data) {
         : sortTeams(conferences[conf][div], _sortCol, _sortDir);
       html += `<div style="overflow-x:auto;"><table>${thead}<tbody>`;
       let cutoffInserted = false;
-      group.forEach((t, i) => {
-        // Insert playoff line between the last in-playoff team and the first out-of-playoff team
-        // Use overall global rank to determine the cutoff position within this group
-        if (cutoff && !cutoffInserted) {
-          const prevIn = i > 0 && globalRank[group[i - 1].id] <= cutoff;
-          const currOut = globalRank[t.id] > cutoff;
-          if ((i === 0 && currOut) || (prevIn && currOut)) {
-            html += PLAYOFF_LINE_ROW;
-            cutoffInserted = true;
+
+      // Determine the effective cutoff for this group
+      // Priority: division cutoff > conference cutoff > global cutoff (by global rank)
+      const divCut = div ? (divCutoffs[div] ?? null) : null;
+      const confCut = conf !== 'Unassigned' ? (confCutoffs[conf] ?? null) : null;
+
+      if (divCut != null) {
+        // Use per-division position: insert line after divCut teams in this division
+        group.forEach((t, i) => {
+          if (i === divCut) html += PLAYOFF_LINE_ROW;
+          html += makeRow(t, globalRank[t.id]);
+        });
+      } else if (confCut != null) {
+        // Use per-conference position: count how many from this conf are already in playoffs
+        // Sort entire conference by pts to determine per-conf rank
+        const allConfTeams = sortTeams(
+          Object.values(conferences[conf]).flat(),
+          'pts', 'desc'
+        );
+        const confRank = {};
+        allConfTeams.forEach((t, i) => { confRank[t.id] = i + 1; });
+        group.forEach((t, i) => {
+          if (!cutoffInserted) {
+            const prevIn = i > 0 && confRank[group[i - 1].id] <= confCut;
+            const currOut = confRank[t.id] > confCut;
+            if ((i === 0 && currOut) || (prevIn && currOut)) {
+              html += PLAYOFF_LINE_ROW;
+              cutoffInserted = true;
+            }
           }
-        }
-        html += makeRow(t, globalRank[t.id]);
-      });
+          html += makeRow(t, globalRank[t.id]);
+        });
+      } else {
+        // Fall back to global rank cutoff
+        group.forEach((t, i) => {
+          if (cutoff && !cutoffInserted) {
+            const prevIn = i > 0 && globalRank[group[i - 1].id] <= cutoff;
+            const currOut = globalRank[t.id] > cutoff;
+            if ((i === 0 && currOut) || (prevIn && currOut)) {
+              html += PLAYOFF_LINE_ROW;
+              cutoffInserted = true;
+            }
+          }
+          html += makeRow(t, globalRank[t.id]);
+        });
+      }
+
       html += '</tbody></table></div>';
       if (div) html += '</div>';
     }

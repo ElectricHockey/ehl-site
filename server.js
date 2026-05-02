@@ -521,14 +521,18 @@ app.patch('/api/users/:id', requireOwner, async (req, res) => {
 
 app.get('/api/seasons', async (req, res) => {
   const { type } = req.query;
+  // Check if requester is an admin (can see disabled seasons)
+  const adminToken = req.headers['x-admin-token'];
+  const isAdmin = !!(adminToken && _verifyAdminToken(adminToken));
+  const disabledFilter = isAdmin ? '' : 'AND (s.is_disabled IS NULL OR s.is_disabled = 0)';
   const seasons = type
-    ? await db.prepare('SELECT s.*, p.season_id AS parent_season_id FROM seasons s LEFT JOIN playoffs p ON s.id = p.playoff_season_id WHERE s.league_type = ? ORDER BY s.sort_order ASC, s.id ASC').all(type)
-    : await db.prepare('SELECT s.*, p.season_id AS parent_season_id FROM seasons s LEFT JOIN playoffs p ON s.id = p.playoff_season_id ORDER BY s.sort_order ASC, s.id ASC').all();
+    ? await db.prepare(`SELECT s.*, p.season_id AS parent_season_id FROM seasons s LEFT JOIN playoffs p ON s.id = p.playoff_season_id WHERE s.league_type = ? ${disabledFilter} ORDER BY s.sort_order ASC, s.id ASC`).all(type)
+    : await db.prepare(`SELECT s.*, p.season_id AS parent_season_id FROM seasons s LEFT JOIN playoffs p ON s.id = p.playoff_season_id WHERE 1=1 ${disabledFilter} ORDER BY s.sort_order ASC, s.id ASC`).all();
   res.json(seasons);
 });
 
 app.post('/api/seasons', requireOwner, async (req, res) => {
-  const { name, make_active, league_type } = req.body;
+  const { name, make_active, league_type, copy_from_season_id, copy_teams, copy_rosters } = req.body;
   if (!name || !name.trim()) return res.status(400).json({ error: 'Season name is required' });
   if (make_active) await db.prepare('UPDATE seasons SET is_active = 0').run();
   const lt = league_type || '';
@@ -536,7 +540,38 @@ app.post('/api/seasons', requireOwner, async (req, res) => {
   const maxOrder = await db.prepare('SELECT COALESCE(MAX(sort_order), 0) AS m FROM seasons').get();
   const nextOrder = maxOrder.m + 1;
   const result = await db.prepare('INSERT INTO seasons (name, is_active, league_type, sort_order) VALUES (?, ?, ?, ?)').run(name.trim(), make_active ? 1 : 0, lt, nextOrder);
-  res.status(201).json({ id: result.lastInsertRowid, name: name.trim(), is_active: make_active ? 1 : 0, league_type: lt, sort_order: nextOrder });
+  const newSeasonId = result.lastInsertRowid;
+
+  // Optionally copy teams (conference/division assignments) from another season
+  if (copy_from_season_id && copy_teams) {
+    const sourceConfs = await db.prepare('SELECT team_id, conference, division FROM season_team_conf WHERE season_id = ?').all(copy_from_season_id);
+    for (const sc of sourceConfs) {
+      await db.prepare('INSERT INTO season_team_conf (season_id, team_id, conference, division) VALUES (?, ?, ?, ?) ON CONFLICT (season_id, team_id) DO UPDATE SET conference = EXCLUDED.conference, division = EXCLUDED.division')
+        .run(newSeasonId, sc.team_id, sc.conference, sc.division);
+    }
+    // Also copy playoff cutoffs
+    const sourceCutoffs = await db.prepare('SELECT scope, scope_name, cutoff FROM season_cutoffs WHERE season_id = ?').all(copy_from_season_id);
+    for (const cut of sourceCutoffs) {
+      await db.prepare('INSERT INTO season_cutoffs (season_id, scope, scope_name, cutoff) VALUES (?, ?, ?, ?) ON CONFLICT (season_id, scope, scope_name) DO UPDATE SET cutoff = EXCLUDED.cutoff')
+        .run(newSeasonId, cut.scope, cut.scope_name, cut.cutoff);
+    }
+    // Copy the league-level playoff_cutoff
+    const srcSeason = await db.prepare('SELECT playoff_cutoff FROM seasons WHERE id = ?').get(copy_from_season_id);
+    if (srcSeason && srcSeason.playoff_cutoff != null) {
+      await db.prepare('UPDATE seasons SET playoff_cutoff = ? WHERE id = ?').run(srcSeason.playoff_cutoff, newSeasonId);
+    }
+  }
+
+  // Optionally copy rosters (player-team assignments) from another season
+  if (copy_from_season_id && copy_rosters) {
+    const sourceRosters = await db.prepare('SELECT player_id, team_id FROM season_rosters WHERE season_id = ?').all(copy_from_season_id);
+    for (const sr of sourceRosters) {
+      await db.prepare('INSERT INTO season_rosters (season_id, player_id, team_id) VALUES (?, ?, ?) ON CONFLICT (season_id, player_id) DO UPDATE SET team_id = EXCLUDED.team_id')
+        .run(newSeasonId, sr.player_id, sr.team_id);
+    }
+  }
+
+  res.status(201).json({ id: newSeasonId, name: name.trim(), is_active: make_active ? 1 : 0, league_type: lt, sort_order: nextOrder });
 });
 
 app.patch('/api/seasons/:id', requireOwner, async (req, res) => {
@@ -546,7 +581,13 @@ app.patch('/api/seasons/:id', requireOwner, async (req, res) => {
   const league_type = req.body.league_type !== undefined ? req.body.league_type : (season.league_type || '');
   if (req.body.is_active) await db.prepare('UPDATE seasons SET is_active = 0').run();
   const is_active = req.body.is_active ? 1 : (req.body.is_active === false ? 0 : season.is_active);
-  await db.prepare('UPDATE seasons SET name = ?, is_active = ?, league_type = ? WHERE id = ?').run(name, is_active, league_type, req.params.id);
+  const is_disabled = req.body.is_disabled !== undefined
+    ? (req.body.is_disabled ? 1 : 0)
+    : (season.is_disabled || 0);
+  const playoff_cutoff = req.body.playoff_cutoff !== undefined
+    ? (req.body.playoff_cutoff === null || req.body.playoff_cutoff === '' ? null : Number(req.body.playoff_cutoff))
+    : (season.playoff_cutoff ?? null);
+  await db.prepare('UPDATE seasons SET name = ?, is_active = ?, league_type = ?, is_disabled = ?, playoff_cutoff = ? WHERE id = ?').run(name, is_active, league_type, is_disabled, playoff_cutoff, req.params.id);
   res.json({ updated: true });
 });
 
@@ -576,6 +617,8 @@ app.delete('/api/seasons/:id', requireOwner, async (req, res) => {
       await tx.prepare('DELETE FROM games WHERE season_id = ?').run(seasonId);
       await tx.prepare('DELETE FROM season_player_stats WHERE season_id = ?').run(seasonId);
       await tx.prepare('DELETE FROM season_team_conf WHERE season_id = ?').run(seasonId);
+      await tx.prepare('DELETE FROM season_cutoffs WHERE season_id = ?').run(seasonId);
+      await tx.prepare('DELETE FROM season_rosters WHERE season_id = ?').run(seasonId);
       await tx.prepare('DELETE FROM seasons WHERE id = ?').run(seasonId);
     }
 
@@ -603,6 +646,8 @@ app.delete('/api/seasons/:id', requireOwner, async (req, res) => {
     await tx.prepare('DELETE FROM games WHERE season_id = ?').run(req.params.id);
     await tx.prepare('DELETE FROM season_player_stats WHERE season_id = ?').run(req.params.id);
     await tx.prepare('DELETE FROM season_team_conf WHERE season_id = ?').run(req.params.id);
+    await tx.prepare('DELETE FROM season_cutoffs WHERE season_id = ?').run(req.params.id);
+    await tx.prepare('DELETE FROM season_rosters WHERE season_id = ?').run(req.params.id);
     await tx.prepare('DELETE FROM seasons WHERE id = ?').run(req.params.id);
   });
 
@@ -2683,11 +2728,13 @@ async function calcStandings(seasonId) {
   const sorted = Object.values(stats).sort(cmpTeams);
 
   // ── NHL-style clinch indicators ────────────────────────────────────────
-  // Only compute if a playoff bracket is configured for this season
+  // Compute if a playoff bracket or season playoff_cutoff is configured
   if (seasonId && sorted.length > 0) {
     const pc = await db.prepare('SELECT teams_qualify FROM playoffs WHERE season_id = ?').get(seasonId);
-    if (pc) {
-      const N = Math.min(pc.teams_qualify, sorted.length);
+    const seasonRow = await db.prepare('SELECT playoff_cutoff FROM seasons WHERE id = ?').get(seasonId);
+    const rawN = pc ? pc.teams_qualify : (seasonRow && seasonRow.playoff_cutoff != null ? seasonRow.playoff_cutoff : null);
+    if (rawN != null) {
+      const N = Math.min(rawN, sorted.length);
 
       // Helper: can opponent 'o' surpass team 't' given remaining games?
       // Uses the full tiebreaker chain. Returns true if there is any possible
@@ -2764,11 +2811,25 @@ app.get('/api/standings', async (req, res) => {
   const seasonId = req.query.season_id ? Number(req.query.season_id) : null;
   const teams = await calcStandings(seasonId);
   let playoff_cutoff = null;
+  let conf_cutoffs = {};
+  let div_cutoffs = {};
   if (seasonId) {
+    // Bracket-based cutoff takes precedence over manual cutoff
     const pc = await db.prepare('SELECT teams_qualify FROM playoffs WHERE season_id = ?').get(seasonId);
-    if (pc) playoff_cutoff = Math.min(pc.teams_qualify, teams.length);
+    const seasonRow = await db.prepare('SELECT playoff_cutoff FROM seasons WHERE id = ?').get(seasonId);
+    if (pc) {
+      playoff_cutoff = Math.min(pc.teams_qualify, teams.length);
+    } else if (seasonRow && seasonRow.playoff_cutoff != null) {
+      playoff_cutoff = Math.min(seasonRow.playoff_cutoff, teams.length);
+    }
+    // Load per-scope cutoffs from season_cutoffs table
+    const cutoffRows = await db.prepare('SELECT scope, scope_name, cutoff FROM season_cutoffs WHERE season_id = ?').all(seasonId);
+    for (const row of cutoffRows) {
+      if (row.scope === 'conference') conf_cutoffs[row.scope_name] = row.cutoff;
+      else if (row.scope === 'division') div_cutoffs[row.scope_name] = row.cutoff;
+    }
   }
-  res.json({ teams, playoff_cutoff });
+  res.json({ teams, playoff_cutoff, conf_cutoffs, div_cutoffs });
 });
 
 // GET /api/seasons/:id/teams – return teams that have at least one game in this season
@@ -2821,6 +2882,67 @@ app.post('/api/seasons/:id/team-conf', requireOwner, async (req, res) => {
     await db.prepare('INSERT INTO season_team_conf (season_id, team_id, conference, division) VALUES (?, ?, ?, ?)')
       .run(req.params.id, Number(a.team_id), a.conference || '', a.division || '');
   }
+  res.json({ ok: true });
+});
+
+// GET /api/seasons/:id/cutoffs – return playoff line cutoffs for this season
+app.get('/api/seasons/:id/cutoffs', requireAdmin, async (req, res) => {
+  const season = await db.prepare('SELECT id, playoff_cutoff FROM seasons WHERE id = ?').get(req.params.id);
+  if (!season) return res.status(404).json({ error: 'Season not found' });
+  const rows = await db.prepare('SELECT scope, scope_name, cutoff FROM season_cutoffs WHERE season_id = ?').all(req.params.id);
+  res.json({ league_cutoff: season.playoff_cutoff ?? null, cutoffs: rows });
+});
+
+// POST /api/seasons/:id/cutoffs – bulk upsert playoff line cutoffs
+app.post('/api/seasons/:id/cutoffs', requireOwner, async (req, res) => {
+  const { league_cutoff, cutoffs } = req.body;
+  const season = await db.prepare('SELECT id FROM seasons WHERE id = ?').get(req.params.id);
+  if (!season) return res.status(404).json({ error: 'Season not found' });
+  // Update league-wide cutoff on the season row
+  const lcVal = league_cutoff === null || league_cutoff === '' ? null : Number(league_cutoff) || null;
+  await db.prepare('UPDATE seasons SET playoff_cutoff = ? WHERE id = ?').run(lcVal, req.params.id);
+  // Replace per-scope cutoffs
+  await db.prepare('DELETE FROM season_cutoffs WHERE season_id = ?').run(req.params.id);
+  if (Array.isArray(cutoffs)) {
+    for (const c of cutoffs) {
+      if (!c.scope || c.cutoff == null) continue;
+      await db.prepare('INSERT INTO season_cutoffs (season_id, scope, scope_name, cutoff) VALUES (?, ?, ?, ?) ON CONFLICT (season_id, scope, scope_name) DO UPDATE SET cutoff = EXCLUDED.cutoff')
+        .run(req.params.id, c.scope, c.scope_name || '', Number(c.cutoff));
+    }
+  }
+  res.json({ ok: true });
+});
+
+// GET /api/seasons/:id/season-roster – return season-specific player-team assignments
+app.get('/api/seasons/:id/season-roster', requireAdmin, async (req, res) => {
+  const season = await db.prepare('SELECT id FROM seasons WHERE id = ?').get(req.params.id);
+  if (!season) return res.status(404).json({ error: 'Season not found' });
+  const rows = await db.prepare(`
+    SELECT sr.player_id, sr.team_id, p.name AS player_name, p.position, p.number, t.name AS team_name
+    FROM season_rosters sr
+    JOIN players p ON sr.player_id = p.id
+    LEFT JOIN teams t ON sr.team_id = t.id
+    WHERE sr.season_id = ?
+    ORDER BY t.name, p.name
+  `).all(req.params.id);
+  res.json(rows);
+});
+
+// POST /api/seasons/:id/season-roster – upsert a player's team assignment for this season
+app.post('/api/seasons/:id/season-roster', requireOwner, async (req, res) => {
+  const { player_id, team_id } = req.body;
+  if (!player_id) return res.status(400).json({ error: 'player_id required' });
+  const season = await db.prepare('SELECT id FROM seasons WHERE id = ?').get(req.params.id);
+  if (!season) return res.status(404).json({ error: 'Season not found' });
+  const tid = team_id ? Number(team_id) : null;
+  await db.prepare('INSERT INTO season_rosters (season_id, player_id, team_id) VALUES (?, ?, ?) ON CONFLICT (season_id, player_id) DO UPDATE SET team_id = EXCLUDED.team_id')
+    .run(req.params.id, Number(player_id), tid);
+  res.json({ ok: true });
+});
+
+// DELETE /api/seasons/:id/season-roster/:playerId – remove a player from season roster
+app.delete('/api/seasons/:id/season-roster/:playerId', requireOwner, async (req, res) => {
+  await db.prepare('DELETE FROM season_rosters WHERE season_id = ? AND player_id = ?').run(req.params.id, req.params.playerId);
   res.json({ ok: true });
 });
 
