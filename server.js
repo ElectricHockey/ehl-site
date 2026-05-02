@@ -3317,9 +3317,7 @@ function _processEAMatches(raw, game) {
   }).filter(Boolean);
 }
 
-// GET: returns game info + the EA URL for the client to fetch directly.
-// The EA API blocks requests from datacenter IPs (Vercel), so the browser
-// must call it and POST the raw response back via the endpoint below.
+// GET: fetches EA Pro Clubs API server-side and returns processed match data.
 app.get('/api/games/:id/ea-matches', async (req, res) => {
   const game = await db.prepare(`
     SELECT g.*, ht.name AS home_team_name, ht.ea_club_id AS home_ea_club_id,
@@ -3329,10 +3327,15 @@ app.get('/api/games/:id/ea-matches', async (req, res) => {
   `).get(req.params.id);
   if (!game) return res.status(404).json({ error: 'Game not found' });
   if (!game.home_ea_club_id) return res.status(400).json({ error: 'Home team has no EA club ID configured' });
-  res.json({
-    game: _eaGameInfo(game),
-    eaUrl: `https://proclubs.ea.com/api/nhl/clubs/matches?matchType=club_private&platform=common-gen5&clubIds=${game.home_ea_club_id}`,
-  });
+  const eaUrl = `https://proclubs.ea.com/api/nhl/clubs/matches?matchType=club_private&platform=common-gen5&clubIds=${game.home_ea_club_id}`;
+  let raw;
+  try {
+    raw = await fetchEA(eaUrl);
+  } catch (err) {
+    return res.status(502).json({ error: 'EA Pro Clubs API is currently unreachable', details: err.message });
+  }
+  const matches = _processEAMatches(raw, game);
+  res.json({ game: _eaGameInfo(game), matches });
 });
 
 // POST: client fetches the EA URL above from the browser and sends the raw

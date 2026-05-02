@@ -543,7 +543,7 @@ async function openPicker(gameId) {
   picker.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
   try {
-    // Step 1: get game info + EA URL from the server (no server-side EA fetch).
+    // Fetch EA match data via the server-side proxy (avoids browser CORS restrictions).
     const infoRes = await fetch(`${API}/games/${gameId}/ea-matches`, {
       headers: { 'X-Admin-Token': getAdminToken() },
     });
@@ -554,43 +554,14 @@ async function openPicker(gameId) {
           <p class="picker-empty">Set the home team's EA Club ID in the <a href="admin.html">Admin Panel</a>.</p>`;
       } else {
         const detail = err.details ? ` (${err.details})` : '';
-        body.innerHTML = `<p class="picker-error">⚠️ Failed to fetch EA data${detail} — please enter stats manually.</p>
+        body.innerHTML = `<p class="picker-error">⚠️ EA Pro Clubs API is currently unreachable${detail} — please enter stats manually.</p>
           <p style="text-align:center;margin:0.5rem 0;">
             <button onclick="closePickerAndEditManually(${gameId})" style="padding:0.35rem 0.9rem;background:#238636;border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:0.85rem;">✏️ Enter Stats Manually</button>
           </p>`;
       }
       return;
     }
-    const info = await infoRes.json();
-
-    // Step 2: fetch EA API directly from the browser (bypasses datacenter IP block).
-    let eaRaw;
-    try {
-      const eaRes = await fetch(info.eaUrl);
-      if (!eaRes.ok) throw new Error(`EA API responded with ${eaRes.status} ${eaRes.statusText}`);
-      eaRaw = await eaRes.json();
-    } catch (eaErr) {
-      body.innerHTML = `<p class="picker-error">⚠️ EA Pro Clubs API is currently unreachable (${eaErr.message}). Please enter stats manually.</p>
-        <p style="text-align:center;margin:0.5rem 0;">
-          <button onclick="closePickerAndEditManually(${gameId})" style="padding:0.35rem 0.9rem;background:#238636;border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:0.85rem;">✏️ Enter Stats Manually</button>
-        </p>`;
-      return;
-    }
-
-    // Step 3: POST raw EA data to the server for processing.
-    const processRes = await fetch(`${API}/games/${gameId}/ea-matches`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Admin-Token': getAdminToken() },
-      body: JSON.stringify(eaRaw),
-    });
-    if (!processRes.ok) {
-      body.innerHTML = `<p class="picker-error">⚠️ Failed to process EA data — please enter stats manually.</p>
-        <p style="text-align:center;margin:0.5rem 0;">
-          <button onclick="closePickerAndEditManually(${gameId})" style="padding:0.35rem 0.9rem;background:#238636;border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:0.85rem;">✏️ Enter Stats Manually</button>
-        </p>`;
-      return;
-    }
-    const data = await processRes.json();
+    const data = await infoRes.json();
     renderPickerMatches(data, gameId);
   } catch (err) {
     body.innerHTML = `<p class="picker-error">Failed to reach the server: ${err.message}</p>`;
