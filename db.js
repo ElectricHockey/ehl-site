@@ -421,6 +421,21 @@ async function initSchema() {
       division   TEXT NOT NULL DEFAULT '',
       UNIQUE(season_id, team_id)
     )`,
+    `CREATE TABLE IF NOT EXISTS season_cutoffs (
+      id         SERIAL PRIMARY KEY,
+      season_id  INTEGER NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+      scope      TEXT NOT NULL DEFAULT 'league',
+      scope_name TEXT NOT NULL DEFAULT '',
+      cutoff     INTEGER NOT NULL DEFAULT 0,
+      UNIQUE(season_id, scope, scope_name)
+    )`,
+    `CREATE TABLE IF NOT EXISTS season_rosters (
+      id        SERIAL PRIMARY KEY,
+      season_id INTEGER NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+      player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+      team_id   INTEGER REFERENCES teams(id) ON DELETE SET NULL,
+      UNIQUE(season_id, player_id)
+    )`,
   ];
 
   for (const sql of tables) {
@@ -548,6 +563,24 @@ async function initSchema() {
   } catch (err) {
     if (!err.message || !err.message.includes('already exists')) {
       console.warn('[db] Migration warning (game_player_stats poke_check_saves):', err.message);
+    }
+  }
+
+  // Add is_disabled to seasons (admin can hide a season from public)
+  try {
+    await pool.query('ALTER TABLE seasons ADD COLUMN is_disabled INTEGER DEFAULT 0');
+  } catch (err) {
+    if (!err.message || !err.message.includes('already exists')) {
+      console.warn('[db] Migration warning (seasons is_disabled):', err.message);
+    }
+  }
+
+  // Add playoff_cutoff to seasons (manual league-wide playoff line without a bracket)
+  try {
+    await pool.query('ALTER TABLE seasons ADD COLUMN playoff_cutoff INTEGER DEFAULT NULL');
+  } catch (err) {
+    if (!err.message || !err.message.includes('already exists')) {
+      console.warn('[db] Migration warning (seasons playoff_cutoff):', err.message);
     }
   }
 

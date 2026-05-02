@@ -289,7 +289,7 @@ async function demoteGameAdmin(userId, username) {
 let allSeasons = [];
 
 async function loadSeasons() {
-  const res = await fetch(`${API}/seasons`);
+  const res = await fetch(`${API}/seasons`, { headers: adminHeaders() });
   allSeasons = await res.json();
   _wireGseAdmin(); // keep GSE season list in sync
 
@@ -322,10 +322,14 @@ async function loadSeasons() {
       const riPos      = regularIdxs.indexOf(idx);
       const upDisabled = (!s.is_playoff && riPos <= 0) ? ' disabled' : '';
       const downDisabled = (!s.is_playoff && riPos >= regularIdxs.length - 1) ? ' disabled' : '';
+      const disabledBadge = s.is_disabled
+        ? '<span style="background:#3d2020;color:#f85149;border:1px solid #f85149;border-radius:10px;padding:0.1rem 0.45rem;font-size:0.72rem;margin-right:0.25rem;" aria-label="Hidden from public"><span aria-hidden="true">🔒</span> Hidden</span>'
+        : '';
       return `
       <div class="season-item">
         ${s.is_active ? '<span class="season-active-badge">★ Active</span>' : ''}
         ${s.is_playoff ? '<span style="background:#2d1b00;color:#e3b341;border:1px solid #9e6a03;border-radius:10px;padding:0.1rem 0.45rem;font-size:0.72rem;margin-right:0.25rem;">🏆 Playoffs</span>' : ''}
+        ${disabledBadge}
         <strong style="flex:1;">${s.name}</strong>
         <span style="color:#8b949e;font-size:0.8rem;">${typeLabel(s.league_type)}</span>
         ${!s.is_playoff ? `
@@ -334,6 +338,8 @@ async function loadSeasons() {
         ` : ''}
         ${!s.is_active && !s.is_playoff ? `<button class="btn-secondary" style="font-size:0.8rem;padding:0.25rem 0.6rem;" onclick="setActiveSeason(${s.id})">Set Active</button>` : ''}
         ${!s.is_playoff ? `<button class="btn-secondary" style="font-size:0.8rem;padding:0.25rem 0.6rem;" data-manage-conf="${s.id}">Conf/Div</button>` : ''}
+        ${!s.is_playoff ? `<button class="btn-secondary" style="font-size:0.8rem;padding:0.25rem 0.6rem;" onclick="managePlayoffLines(${s.id},'${escAttr(s.name)}')">Playoff Lines</button>` : ''}
+        <button class="btn-secondary" style="font-size:0.8rem;padding:0.25rem 0.6rem;${s.is_disabled ? 'border-color:#3fb950;color:#3fb950;' : 'border-color:#e3b341;color:#e3b341;'}" onclick="toggleSeasonDisabled(${s.id},${s.is_disabled ? 1 : 0})">${s.is_disabled ? 'Enable' : 'Disable'}</button>
         <button class="btn-danger" style="font-size:0.8rem;padding:0.25rem 0.6rem;" onclick="deleteSeason(${s.id}, ${s.is_playoff ? 'true' : 'false'})">Delete</button>
       </div>`;
     }).join('');
@@ -371,6 +377,14 @@ async function loadSeasons() {
     msoSeasonSelect.innerHTML = '<option value="">– Create new season –</option>' +
       allRegular.map(s => `<option value="${s.id}">${s.name} (${typeLabel(s.league_type)})${s.is_active ? ' ★' : ''}</option>`).join('');
   }
+
+  // Populate the "Copy from season" dropdown in the create form
+  const copyFromSel = document.getElementById('season-copy-from');
+  if (copyFromSel) {
+    const allRegular = allSeasons.filter(s => !s.is_playoff);
+    copyFromSel.innerHTML = '<option value="">— None —</option>' +
+      allRegular.map(s => `<option value="${s.id}">${s.name} (${typeLabel(s.league_type)})</option>`).join('');
+  }
 }
 
 document.getElementById('season-form').addEventListener('submit', async e => {
@@ -378,15 +392,41 @@ document.getElementById('season-form').addEventListener('submit', async e => {
   const name = document.getElementById('season-name').value.trim();
   const make_active = document.getElementById('season-active').checked;
   const league_type = document.getElementById('season-type').value;
+  const copyFromSel = document.getElementById('season-copy-from');
+  const copy_from_season_id = copyFromSel && copyFromSel.value ? Number(copyFromSel.value) : null;
+  const copy_teams = copy_from_season_id ? document.getElementById('season-copy-teams').checked : false;
+  const copy_rosters = copy_from_season_id ? document.getElementById('season-copy-rosters').checked : false;
   const res = await fetch(`${API}/seasons`, {
     method: 'POST', headers: adminJsonHeaders(),
-    body: JSON.stringify({ name, make_active, league_type }),
+    body: JSON.stringify({ name, make_active, league_type, copy_from_season_id, copy_teams, copy_rosters }),
   });
-  if (res.ok) { e.target.reset(); await loadSeasons(); await loadGames(); }
+  if (res.ok) { e.target.reset(); _updateCopyOptions(); await loadSeasons(); await loadGames(); }
+});
+
+// Show/hide copy checkboxes when a source season is selected
+function _updateCopyOptions() {
+  const copyFromSel = document.getElementById('season-copy-from');
+  const copyOpts = document.getElementById('season-copy-options');
+  if (copyOpts) {
+    const show = !!(copyFromSel && copyFromSel.value);
+    copyOpts.style.display = show ? 'flex' : 'none';
+  }
+}
+document.addEventListener('DOMContentLoaded', () => {
+  const copyFromSel = document.getElementById('season-copy-from');
+  if (copyFromSel) copyFromSel.addEventListener('change', _updateCopyOptions);
 });
 
 async function setActiveSeason(id) {
   await fetch(`${API}/seasons/${id}`, { method: 'PATCH', headers: adminJsonHeaders(), body: JSON.stringify({ is_active: true }) });
+  await loadSeasons();
+}
+
+async function toggleSeasonDisabled(id, currentlyDisabled) {
+  const newState = currentlyDisabled ? 0 : 1;
+  const label = newState ? 'hide this season from public view' : 're-enable this season for public view';
+  if (!confirm(`Are you sure you want to ${label}?`)) return;
+  await fetch(`${API}/seasons/${id}`, { method: 'PATCH', headers: adminJsonHeaders(), body: JSON.stringify({ is_disabled: newState }) });
   await loadSeasons();
 }
 
@@ -397,6 +437,117 @@ async function deleteSeason(id, isPlayoff) {
   if (!confirm(msg)) return;
   await fetch(`${API}/seasons/${id}`, { method: 'DELETE', headers: adminHeaders() });
   await loadSeasons(); await loadGames();
+}
+
+async function managePlayoffLines(seasonId, seasonName) {
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:999;display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:2rem 1rem;';
+  overlay.innerHTML = `
+    <div style="background:#161b22;border:1px solid #30363d;border-radius:10px;padding:1.5rem 2rem;min-width:480px;max-width:680px;width:100%;margin:auto;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;">
+        <h3 style="margin:0;color:#e6edf3;">Playoff Lines — ${seasonName}</h3>
+        <button id="_pl-close" style="background:none;border:none;color:#8b949e;font-size:1.2rem;cursor:pointer;">✕</button>
+      </div>
+      <p style="color:#8b949e;font-size:0.82rem;margin-bottom:1rem;">
+        Set the playoff cutoff line for the standings. Leave blank to remove. These settings allow clinching to work without a playoff bracket.
+      </p>
+      <div id="_pl-body"><p style="color:#8b949e;">Loading…</p></div>
+      <div style="display:flex;gap:0.5rem;margin-top:1.25rem;">
+        <button id="_pl-save" style="flex:1;padding:0.5rem;background:#238636;border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:0.9rem;">Save</button>
+        <button id="_pl-cancel" style="flex:1;padding:0.5rem;background:#21262d;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;cursor:pointer;font-size:0.9rem;">Cancel</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  const close = () => document.body.removeChild(overlay);
+  document.getElementById('_pl-close').addEventListener('click', close);
+  document.getElementById('_pl-cancel').addEventListener('click', close);
+  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+
+  // Load existing cutoffs
+  let existing = { league_cutoff: null, cutoffs: [] };
+  try {
+    const r = await fetch(`${API}/seasons/${seasonId}/cutoffs`, { headers: adminHeaders() });
+    if (r.ok) existing = await r.json();
+  } catch { /* ignore */ }
+
+  // Load team conf to know conferences and divisions
+  let teamConfs = [];
+  try {
+    const r2 = await fetch(`${API}/seasons/${seasonId}/team-conf`, { headers: adminHeaders() });
+    if (r2.ok) teamConfs = await r2.json();
+  } catch { /* ignore */ }
+
+  const conferences = [...new Set(teamConfs.map(t => t.conference).filter(Boolean))].sort();
+  const divisions   = [...new Set(teamConfs.map(t => t.division).filter(Boolean))].sort();
+
+  const getCut = (scope, name) => {
+    const row = existing.cutoffs.find(c => c.scope === scope && c.scope_name === name);
+    return row ? row.cutoff : '';
+  };
+
+  let confRows = conferences.map(c => `
+    <tr>
+      <td style="padding:0.35rem 0.5rem;white-space:nowrap;color:#c9d1d9;">${c}</td>
+      <td style="padding:0.35rem 0.5rem;">
+        <input type="number" min="1" value="${getCut('conference', c)}"
+          data-scope="conference" data-name="${escAttr(c)}"
+          placeholder="e.g. 4"
+          style="width:80px;background:#0d1117;border:1px solid #30363d;color:#e6edf3;border-radius:4px;padding:0.25rem 0.4rem;font-size:0.83rem;" />
+      </td>
+    </tr>`).join('');
+
+  let divRows = divisions.map(d => `
+    <tr>
+      <td style="padding:0.35rem 0.5rem;white-space:nowrap;color:#c9d1d9;">${d}</td>
+      <td style="padding:0.35rem 0.5rem;">
+        <input type="number" min="1" value="${getCut('division', d)}"
+          data-scope="division" data-name="${escAttr(d)}"
+          placeholder="e.g. 2"
+          style="width:80px;background:#0d1117;border:1px solid #30363d;color:#e6edf3;border-radius:4px;padding:0.25rem 0.4rem;font-size:0.83rem;" />
+      </td>
+    </tr>`).join('');
+
+  document.getElementById('_pl-body').innerHTML = `
+    <table style="width:100%;border-collapse:collapse;">
+      <tbody>
+        <tr>
+          <td style="padding:0.5rem 0.5rem;font-weight:600;color:#e6edf3;">🏒 League (overall top N)</td>
+          <td style="padding:0.5rem 0.5rem;">
+            <input type="number" min="1" id="_pl-league-cutoff" value="${existing.league_cutoff ?? ''}"
+              placeholder="e.g. 8"
+              style="width:80px;background:#0d1117;border:1px solid #30363d;color:#e6edf3;border-radius:4px;padding:0.25rem 0.4rem;font-size:0.83rem;" />
+            <span style="color:#8b949e;font-size:0.78rem;margin-left:0.5rem;">teams qualify</span>
+          </td>
+        </tr>
+        ${conferences.length > 0 ? `
+        <tr><td colspan="2" style="padding-top:1rem;font-weight:600;color:#58a6ff;font-size:0.85rem;">Per Conference</td></tr>
+        ${confRows}` : ''}
+        ${divisions.length > 0 ? `
+        <tr><td colspan="2" style="padding-top:1rem;font-weight:600;color:#3fb950;font-size:0.85rem;">Per Division</td></tr>
+        ${divRows}` : ''}
+      </tbody>
+    </table>
+    <p style="color:#8b949e;font-size:0.78rem;margin-top:0.75rem;">
+      Priority: Division cutoff &gt; Conference cutoff &gt; League cutoff. Leave blank to not draw a line for that scope.
+    </p>`;
+
+  document.getElementById('_pl-save').addEventListener('click', async () => {
+    const leagueVal = document.getElementById('_pl-league-cutoff').value.trim();
+    const league_cutoff = leagueVal === '' ? null : Number(leagueVal);
+    const cutoffInputs = overlay.querySelectorAll('input[data-scope]');
+    const cutoffs = [];
+    cutoffInputs.forEach(inp => {
+      const val = inp.value.trim();
+      if (val !== '') cutoffs.push({ scope: inp.dataset.scope, scope_name: inp.dataset.name, cutoff: Number(val) });
+    });
+    const r = await fetch(`${API}/seasons/${seasonId}/cutoffs`, {
+      method: 'POST', headers: adminJsonHeaders(),
+      body: JSON.stringify({ league_cutoff, cutoffs }),
+    });
+    if (!r.ok) { alert('Failed to save playoff lines'); return; }
+    close();
+  });
 }
 
 async function moveSeasonUp(id) {
@@ -576,6 +727,12 @@ async function loadRoster() {
   const res = await fetch(`${API}/players`);
   const allPlayers = await res.json();
 
+  // If a season filter is active, show the season-specific roster for this team
+  if (adminSeasonFilter) {
+    await loadSeasonRoster(teamId, allPlayers, body);
+    return;
+  }
+
   const rostered  = allPlayers.filter(p => String(p.team_id) === String(teamId) && p.is_rostered);
   const available = allPlayers.filter(p => !p.is_rostered || String(p.team_id) !== String(teamId));
 
@@ -607,6 +764,72 @@ async function loadRoster() {
       <select id="roster-add-select" style="background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.35rem 0.6rem;min-width:220px;">${addOpts}</select>
       <button class="btn-primary" onclick="rosterAdd()">Add to Roster</button>
     </div>`;
+}
+
+// Season-aware roster management
+async function loadSeasonRoster(teamId, allPlayers, body) {
+  const seasonId = adminSeasonFilter;
+  let seasonRoster = [];
+  try {
+    const r = await fetch(`${API}/seasons/${seasonId}/season-roster`, { headers: adminHeaders() });
+    if (r.ok) seasonRoster = await r.json();
+  } catch { /* ignore */ }
+
+  const teamRoster = seasonRoster.filter(p => String(p.team_id) === String(teamId));
+  const rosteredIds = new Set(teamRoster.map(p => p.player_id));
+  const available = allPlayers.filter(p => !rosteredIds.has(p.id));
+  const seasonName = (allSeasons.find(s => s.id === adminSeasonFilter) || {}).name || `Season #${seasonId}`;
+
+  const rosterRows = teamRoster.length === 0
+    ? '<tr><td colspan="4" style="color:#8b949e;">No players on season roster.</td></tr>'
+    : teamRoster.map(p => `<tr>
+        <td>${p.number ?? '–'}</td>
+        <td>${p.player_name}</td>
+        <td>${p.position ?? '–'}</td>
+        <td><button class="btn-danger" onclick="seasonRosterRemove(${p.player_id})">Remove</button></td>
+      </tr>`).join('');
+
+  const addOpts = available.length === 0
+    ? '<option value="">No available players</option>'
+    : '<option value="">— Pick a player —</option>' + available.map(p => {
+        const teamInfo = p.team_name ? `, ${p.team_name}` : '';
+        return `<option value="${p.id}">${p.name}${teamInfo}</option>`;
+      }).join('');
+
+  body.innerHTML = `
+    <p style="color:#58a6ff;font-size:0.85rem;margin-bottom:0.75rem;">📅 Showing season roster for: <strong>${seasonName}</strong></p>
+    <h3 style="margin-top:0;">Season Roster <span style="font-size:0.8rem;color:#8b949e;font-weight:400;">(${teamRoster.length} players)</span></h3>
+    <table style="margin-bottom:1.5rem;">
+      <thead><tr><th>#</th><th>Name</th><th>Pos</th><th>Action</th></tr></thead>
+      <tbody>${rosterRows}</tbody>
+    </table>
+    <h3>Add Player to Season Roster</h3>
+    <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
+      <select id="roster-add-select" style="background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.35rem 0.6rem;min-width:220px;">${addOpts}</select>
+      <button class="btn-primary" onclick="seasonRosterAdd()">Add to Season Roster</button>
+    </div>`;
+}
+
+async function seasonRosterAdd() {
+  const teamId   = document.getElementById('roster-team-select').value;
+  const playerId = document.getElementById('roster-add-select').value;
+  if (!teamId || !playerId) { alert('Select a player to add.'); return; }
+  const res = await fetch(`${API}/seasons/${adminSeasonFilter}/season-roster`, {
+    method: 'POST',
+    headers: adminJsonHeaders(),
+    body: JSON.stringify({ player_id: Number(playerId), team_id: Number(teamId) }),
+  });
+  if (!res.ok) { const e = await res.json().catch(() => ({})); alert(e.error || 'Failed to add player'); return; }
+  await loadRoster();
+}
+
+async function seasonRosterRemove(playerId) {
+  if (!confirm('Remove this player from the season roster?')) return;
+  const res = await fetch(`${API}/seasons/${adminSeasonFilter}/season-roster/${playerId}`, {
+    method: 'DELETE', headers: adminHeaders(),
+  });
+  if (!res.ok) { const e = await res.json().catch(() => ({})); alert(e.error || 'Failed to remove player'); return; }
+  await loadRoster();
 }
 
 async function rosterAdd() {
