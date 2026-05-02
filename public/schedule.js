@@ -578,7 +578,14 @@ function renderPickerMatches(data, gameId) {
   currentPickerMatches = matches;
 
   if (matches.length === 0) {
-    body.innerHTML = `<p class="picker-empty">No recent EA private matches found for <strong>${game.home_team.name}</strong>. Check that the EA Club ID is correct in the Admin Panel, or enter stats manually.</p>`;
+    if (data.eaError) {
+      body.innerHTML = `<p class="picker-error">⚠️ EA Pro Clubs API is currently unreachable from the server (${data.eaError}). Please enter stats manually.</p>
+        <p style="text-align:center;margin:0.5rem 0;">
+          <button onclick="closePickerAndEditManually(${gameId})" style="padding:0.35rem 0.9rem;background:#238636;border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:0.85rem;">✏️ Enter Stats Manually</button>
+        </p>`;
+    } else {
+      body.innerHTML = `<p class="picker-empty">No recent EA private matches found for <strong>${game.home_team.name}</strong>. Check that the EA Club ID is correct in the Admin Panel, or enter stats manually.</p>`;
+    }
     return;
   }
 

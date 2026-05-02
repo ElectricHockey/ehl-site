@@ -1175,27 +1175,36 @@ function mapEAPlayer(p) {
 }
 
 async function fetchEA(url) {
-  const res = await fetch(url, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
-      Accept: 'application/json, text/plain, */*',
-      'Accept-Language': 'en-US,en;q=0.9',
-      'Accept-Encoding': 'gzip, deflate, br',
-      Origin: 'https://proclubs.ea.com',
-      Referer: 'https://proclubs.ea.com/',
-      'Sec-Fetch-Dest': 'empty',
-      'Sec-Fetch-Mode': 'cors',
-      'Sec-Fetch-Site': 'same-origin',
-      'Sec-Ch-Ua': '"Chromium";v="136", "Google Chrome";v="136", "Not.A/Brand";v="99"',
-      'Sec-Ch-Ua-Mobile': '?0',
-      'Sec-Ch-Ua-Platform': '"Windows"',
-      Connection: 'keep-alive',
-      'Cache-Control': 'no-cache',
-      Pragma: 'no-cache',
-    },
-  });
-  if (!res.ok) throw new Error(`EA API responded with ${res.status}`);
-  return res.json();
+  // Use an 8-second timeout so our catch block can respond before Vercel's
+  // 10-second serverless function limit kills the process and returns its own 502.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
+        Accept: 'application/json, text/plain, */*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        Origin: 'https://proclubs.ea.com',
+        Referer: 'https://proclubs.ea.com/',
+        'Sec-Fetch-Dest': 'empty',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Site': 'same-origin',
+        'Sec-Ch-Ua': '"Chromium";v="136", "Google Chrome";v="136", "Not.A/Brand";v="99"',
+        'Sec-Ch-Ua-Mobile': '?0',
+        'Sec-Ch-Ua-Platform': '"Windows"',
+        Connection: 'keep-alive',
+        'Cache-Control': 'no-cache',
+        Pragma: 'no-cache',
+      },
+    });
+    if (!res.ok) throw new Error(`EA API responded with ${res.status}`);
+    return res.json();
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // ── Shared stat SQL fragments ──────────────────────────────────────────────
@@ -3286,10 +3295,15 @@ app.get('/api/games/:id/ea-matches', async (req, res) => {
   `).get(req.params.id);
   if (!game) return res.status(404).json({ error: 'Game not found' });
   if (!game.home_ea_club_id) return res.status(400).json({ error: 'Home team has no EA club ID configured' });
+  // Try to fetch private club matches from EA; if unreachable (e.g. datacenter IP
+  // blocked by Cloudflare), return 200 with empty matches so the browser console
+  // stays clean and the picker can show a manual-entry prompt instead of a 502.
+  let matches = null;
+  let eaError = null;
   try {
     const raw = await fetchEA(`https://proclubs.ea.com/api/nhl/clubs/matches?matchType=club_private&platform=common-gen5&clubIds=${game.home_ea_club_id}`);
     const matchArray = Array.isArray(raw) ? raw : (raw.raw || []);
-    const matches = matchArray.map(m => {
+    matches = matchArray.map(m => {
       const myClub = m.clubs && m.clubs[String(game.home_ea_club_id)];
       if (!myClub) return null;
       const oppId = String(myClub.opponentClubId);
@@ -3305,17 +3319,20 @@ app.get('/api/games/:id/ea-matches', async (req, res) => {
         opponentClubId: oppId, opponentClubName: oppName, isScheduledOpponent, players, awayPlayers,
       };
     }).filter(Boolean);
-    res.json({
-      game: { id: game.id, date: game.date, status: game.status, is_overtime: game.is_overtime,
-        home_team: { id: game.home_team_id, name: game.home_team_name, ea_club_id: game.home_ea_club_id },
-        away_team: { id: game.away_team_id, name: game.away_team_name, ea_club_id: game.away_ea_club_id },
-        home_score: game.home_score, away_score: game.away_score, ea_match_id: game.ea_match_id || null,
-      },
-      matches,
-    });
   } catch (err) {
-    res.status(502).json({ error: 'Failed to fetch EA match data.', details: err.message });
+    eaError = err.message;
+    matches = [];
   }
+  res.json({
+    game: {
+      id: game.id, date: game.date, status: game.status, is_overtime: game.is_overtime,
+      home_team: { id: game.home_team_id, name: game.home_team_name, ea_club_id: game.home_ea_club_id },
+      away_team: { id: game.away_team_id, name: game.away_team_name, ea_club_id: game.away_ea_club_id },
+      home_score: game.home_score, away_score: game.away_score, ea_match_id: game.ea_match_id || null,
+    },
+    matches,
+    ...(eaError ? { eaError } : {}),
+  });
 });
 
 // ── Discord OAuth2 routes ──────────────────────────────────────────────────
