@@ -1,7 +1,6 @@
 node_modules/
 *.db
 .env
-.env.*
 # Uploaded team logos (keep the directory via .gitkeep)
 public/uploads/*
 !public/uploads/.gitkeep
