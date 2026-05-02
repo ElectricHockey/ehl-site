@@ -323,7 +323,7 @@ async function loadSeasons() {
       const upDisabled = (!s.is_playoff && riPos <= 0) ? ' disabled' : '';
       const downDisabled = (!s.is_playoff && riPos >= regularIdxs.length - 1) ? ' disabled' : '';
       const disabledBadge = s.is_disabled
-        ? '<span style="background:#3d2020;color:#f85149;border:1px solid #f85149;border-radius:10px;padding:0.1rem 0.45rem;font-size:0.72rem;margin-right:0.25rem;">🔒 Hidden</span>'
+        ? '<span style="background:#3d2020;color:#f85149;border:1px solid #f85149;border-radius:10px;padding:0.1rem 0.45rem;font-size:0.72rem;margin-right:0.25rem;" aria-label="Hidden from public"><span aria-hidden="true">🔒</span> Hidden</span>'
         : '';
       return `
       <div class="season-item">
@@ -407,7 +407,10 @@ document.getElementById('season-form').addEventListener('submit', async e => {
 function _updateCopyOptions() {
   const copyFromSel = document.getElementById('season-copy-from');
   const copyOpts = document.getElementById('season-copy-options');
-  if (copyOpts) copyOpts.style.display = copyFromSel && copyFromSel.value ? 'flex' : 'none';
+  if (copyOpts) {
+    const show = !!(copyFromSel && copyFromSel.value);
+    copyOpts.style.display = show ? 'flex' : 'none';
+  }
 }
 document.addEventListener('DOMContentLoaded', () => {
   const copyFromSel = document.getElementById('season-copy-from');
