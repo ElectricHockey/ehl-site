@@ -421,29 +421,6 @@ async function initSchema() {
       division   TEXT NOT NULL DEFAULT '',
       UNIQUE(season_id, team_id)
     )`,
-    `CREATE TABLE IF NOT EXISTS season_teams (
-      id        SERIAL PRIMARY KEY,
-      season_id INTEGER NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
-      team_id   INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
-      UNIQUE(season_id, team_id)
-    )`,
-    `CREATE TABLE IF NOT EXISTS season_rosters (
-      id        SERIAL PRIMARY KEY,
-      season_id INTEGER NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
-      team_id   INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
-      player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
-      position  TEXT,
-      number    INTEGER,
-      UNIQUE(season_id, player_id)
-    )`,
-    `CREATE TABLE IF NOT EXISTS playoff_line_overrides (
-      id               SERIAL PRIMARY KEY,
-      season_id        INTEGER NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
-      scope            TEXT NOT NULL DEFAULT 'league',
-      scope_value      TEXT NOT NULL DEFAULT '',
-      cutoff_position  INTEGER NOT NULL,
-      UNIQUE(season_id, scope, scope_value)
-    )`,
   ];
 
   for (const sql of tables) {
@@ -475,59 +452,104 @@ async function initSchema() {
     'CREATE INDEX IF NOT EXISTS idx_transactions_created ON transactions(created_at DESC)',
   ];
 
-  await Promise.all(indexes.map(sql =>
-    pool.query(sql).catch(err => console.warn('[db] Index warning:', err.message))
-  ));
+  for (const sql of indexes) {
+    try { await pool.query(sql); } catch (err) {
+      console.warn('[db] Index warning:', err.message);
+    }
+  }
 
   // ── 4. Migrations ───────────────────────────────────────────────────
   // Make password_hash nullable (Discord-only auth, no password needed)
-  // ── 4. Migrations (run in parallel — all are independent ALTER TABLE ops) ──
-  await Promise.all([
-    pool.query('ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL').catch(err => {
-      if (err.message && !err.message.includes('does not exist'))
-        console.warn('[db] Migration warning (password_hash nullable):', err.message);
-    }),
-    pool.query('ALTER TABLE seasons ADD COLUMN sort_order INTEGER DEFAULT 0').catch(err => {
-      if (!err.message || !err.message.includes('already exists'))
-        console.warn('[db] Migration warning (seasons sort_order):', err.message);
-    }),
-    pool.query('ALTER TABLE games ADD COLUMN game_time TEXT DEFAULT NULL').catch(err => {
-      if (!err.message || !err.message.includes('already exists'))
-        console.warn('[db] Migration warning (games game_time):', err.message);
-    }),
-    pool.query('ALTER TABLE users ADD COLUMN secondary_position TEXT DEFAULT NULL').catch(err => {
-      if (!err.message || !err.message.includes('already exists'))
-        console.warn('[db] Migration warning (users secondary_position):', err.message);
-    }),
-    pool.query('ALTER TABLE players ADD COLUMN secondary_position TEXT DEFAULT NULL').catch(err => {
-      if (!err.message || !err.message.includes('already exists'))
-        console.warn('[db] Migration warning (players secondary_position):', err.message);
-    }),
-    pool.query("ALTER TABLE teams ADD COLUMN abbreviation TEXT DEFAULT ''").catch(err => {
-      if (!err.message || !err.message.includes('already exists'))
-        console.warn('[db] Migration warning (teams abbreviation):', err.message);
-    }),
-    pool.query('ALTER TABLE game_player_stats ADD COLUMN saucer_passes INTEGER DEFAULT 0').catch(err => {
-      if (!err.message || !err.message.includes('already exists'))
-        console.warn('[db] Migration warning (game_player_stats saucer_passes):', err.message);
-    }),
-    pool.query('ALTER TABLE game_player_stats ADD COLUMN pk_clears INTEGER DEFAULT 0').catch(err => {
-      if (!err.message || !err.message.includes('already exists'))
-        console.warn('[db] Migration warning (game_player_stats pk_clears):', err.message);
-    }),
-    pool.query('ALTER TABLE game_player_stats ADD COLUMN desperation_saves INTEGER DEFAULT 0').catch(err => {
-      if (!err.message || !err.message.includes('already exists'))
-        console.warn('[db] Migration warning (game_player_stats desperation_saves):', err.message);
-    }),
-    pool.query('ALTER TABLE game_player_stats ADD COLUMN poke_check_saves INTEGER DEFAULT 0').catch(err => {
-      if (!err.message || !err.message.includes('already exists'))
-        console.warn('[db] Migration warning (game_player_stats poke_check_saves):', err.message);
-    }),
-    pool.query('ALTER TABLE seasons ADD COLUMN is_disabled INTEGER DEFAULT 0').catch(err => {
-      if (!err.message || !err.message.includes('already exists'))
-        console.warn('[db] Migration warning (seasons is_disabled):', err.message);
-    }),
-  ]);
+  try {
+    await pool.query('ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL');
+  } catch (err) {
+    // Ignore if already nullable or column doesn't exist
+    if (err.message && !err.message.includes('does not exist')) {
+      console.warn('[db] Migration warning (password_hash nullable):', err.message);
+    }
+  }
+
+  // Add sort_order column to seasons (for reordering)
+  try {
+    await pool.query('ALTER TABLE seasons ADD COLUMN sort_order INTEGER DEFAULT 0');
+  } catch (err) {
+    // Ignore if column already exists
+    if (!err.message || !err.message.includes('already exists')) {
+      console.warn('[db] Migration warning (seasons sort_order):', err.message);
+    }
+  }
+
+  // Add game_time column to games (UTC time string HH:MM)
+  try {
+    await pool.query("ALTER TABLE games ADD COLUMN game_time TEXT DEFAULT NULL");
+  } catch (err) {
+    if (!err.message || !err.message.includes('already exists')) {
+      console.warn('[db] Migration warning (games game_time):', err.message);
+    }
+  }
+
+  // Add secondary_position to users
+  try {
+    await pool.query("ALTER TABLE users ADD COLUMN secondary_position TEXT DEFAULT NULL");
+  } catch (err) {
+    if (!err.message || !err.message.includes('already exists')) {
+      console.warn('[db] Migration warning (users secondary_position):', err.message);
+    }
+  }
+
+  // Add secondary_position to players
+  try {
+    await pool.query("ALTER TABLE players ADD COLUMN secondary_position TEXT DEFAULT NULL");
+  } catch (err) {
+    if (!err.message || !err.message.includes('already exists')) {
+      console.warn('[db] Migration warning (players secondary_position):', err.message);
+    }
+  }
+
+  // Add abbreviation to teams
+  try {
+    await pool.query("ALTER TABLE teams ADD COLUMN abbreviation TEXT DEFAULT ''");
+  } catch (err) {
+    if (!err.message || !err.message.includes('already exists')) {
+      console.warn('[db] Migration warning (teams abbreviation):', err.message);
+    }
+  }
+
+  // Add saucer_passes to game_player_stats
+  try {
+    await pool.query('ALTER TABLE game_player_stats ADD COLUMN saucer_passes INTEGER DEFAULT 0');
+  } catch (err) {
+    if (!err.message || !err.message.includes('already exists')) {
+      console.warn('[db] Migration warning (game_player_stats saucer_passes):', err.message);
+    }
+  }
+
+  // Add pk_clears to game_player_stats
+  try {
+    await pool.query('ALTER TABLE game_player_stats ADD COLUMN pk_clears INTEGER DEFAULT 0');
+  } catch (err) {
+    if (!err.message || !err.message.includes('already exists')) {
+      console.warn('[db] Migration warning (game_player_stats pk_clears):', err.message);
+    }
+  }
+
+  // Add desperation_saves to game_player_stats
+  try {
+    await pool.query('ALTER TABLE game_player_stats ADD COLUMN desperation_saves INTEGER DEFAULT 0');
+  } catch (err) {
+    if (!err.message || !err.message.includes('already exists')) {
+      console.warn('[db] Migration warning (game_player_stats desperation_saves):', err.message);
+    }
+  }
+
+  // Add poke_check_saves to game_player_stats
+  try {
+    await pool.query('ALTER TABLE game_player_stats ADD COLUMN poke_check_saves INTEGER DEFAULT 0');
+  } catch (err) {
+    if (!err.message || !err.message.includes('already exists')) {
+      console.warn('[db] Migration warning (game_player_stats poke_check_saves):', err.message);
+    }
+  }
 
   console.log('[db] Schema initialised.');
 }
