@@ -543,17 +543,14 @@ async function openPicker(gameId) {
   picker.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
   try {
-    const res = await fetch(`${API}/games/${gameId}/ea-matches`, {
+    // Step 1: get game info + EA URL from the server (no server-side EA fetch).
+    const infoRes = await fetch(`${API}/games/${gameId}/ea-matches`, {
       headers: { 'X-Admin-Token': getAdminToken() },
     });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      // Show a short, actionable message for EA API failures rather than
-      // the full server-side error string.
-      let msg;
+    if (!infoRes.ok) {
+      const err = await infoRes.json().catch(() => ({}));
       if (err.error && err.error.toLowerCase().includes('ea club id')) {
-        msg = `⚠️ ${err.error}`;
-        body.innerHTML = `<p class="picker-error">${msg}</p>
+        body.innerHTML = `<p class="picker-error">⚠️ ${err.error}</p>
           <p class="picker-empty">Set the home team's EA Club ID in the <a href="admin.html">Admin Panel</a>.</p>`;
       } else {
         const detail = err.details ? ` (${err.details})` : '';
@@ -564,7 +561,36 @@ async function openPicker(gameId) {
       }
       return;
     }
-    const data = await res.json();
+    const info = await infoRes.json();
+
+    // Step 2: fetch EA API directly from the browser (bypasses datacenter IP block).
+    let eaRaw;
+    try {
+      const eaRes = await fetch(info.eaUrl);
+      if (!eaRes.ok) throw new Error(`EA API responded with ${eaRes.status} ${eaRes.statusText}`);
+      eaRaw = await eaRes.json();
+    } catch (eaErr) {
+      body.innerHTML = `<p class="picker-error">⚠️ EA Pro Clubs API is currently unreachable (${eaErr.message}). Please enter stats manually.</p>
+        <p style="text-align:center;margin:0.5rem 0;">
+          <button onclick="closePickerAndEditManually(${gameId})" style="padding:0.35rem 0.9rem;background:#238636;border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:0.85rem;">✏️ Enter Stats Manually</button>
+        </p>`;
+      return;
+    }
+
+    // Step 3: POST raw EA data to the server for processing.
+    const processRes = await fetch(`${API}/games/${gameId}/ea-matches`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Token': getAdminToken() },
+      body: JSON.stringify(eaRaw),
+    });
+    if (!processRes.ok) {
+      body.innerHTML = `<p class="picker-error">⚠️ Failed to process EA data — please enter stats manually.</p>
+        <p style="text-align:center;margin:0.5rem 0;">
+          <button onclick="closePickerAndEditManually(${gameId})" style="padding:0.35rem 0.9rem;background:#238636;border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:0.85rem;">✏️ Enter Stats Manually</button>
+        </p>`;
+      return;
+    }
+    const data = await processRes.json();
     renderPickerMatches(data, gameId);
   } catch (err) {
     body.innerHTML = `<p class="picker-error">Failed to reach the server: ${err.message}</p>`;
@@ -578,14 +604,7 @@ function renderPickerMatches(data, gameId) {
   currentPickerMatches = matches;
 
   if (matches.length === 0) {
-    if (data.eaError) {
-      body.innerHTML = `<p class="picker-error">⚠️ EA Pro Clubs API is currently unreachable from the server (${data.eaError}). Please enter stats manually.</p>
-        <p style="text-align:center;margin:0.5rem 0;">
-          <button onclick="closePickerAndEditManually(${gameId})" style="padding:0.35rem 0.9rem;background:#238636;border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:0.85rem;">✏️ Enter Stats Manually</button>
-        </p>`;
-    } else {
-      body.innerHTML = `<p class="picker-empty">No recent EA private matches found for <strong>${game.home_team.name}</strong>. Check that the EA Club ID is correct in the Admin Panel, or enter stats manually.</p>`;
-    }
+    body.innerHTML = `<p class="picker-empty">No recent EA private matches found for <strong>${game.home_team.name}</strong>. Check that the EA Club ID is correct in the Admin Panel, or enter stats manually.</p>`;
     return;
   }
 

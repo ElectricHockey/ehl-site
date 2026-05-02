@@ -3286,6 +3286,40 @@ app.delete('/api/playoffs/:id', requireOwner, async (req, res) => {
 
 // ── EA Matches ─────────────────────────────────────────────────────────────
 
+// Helper: build the structured game object used by both EA match endpoints
+function _eaGameInfo(game) {
+  return {
+    id: game.id, date: game.date, status: game.status, is_overtime: game.is_overtime,
+    home_team: { id: game.home_team_id, name: game.home_team_name, ea_club_id: game.home_ea_club_id },
+    away_team: { id: game.away_team_id, name: game.away_team_name, ea_club_id: game.away_ea_club_id },
+    home_score: game.home_score, away_score: game.away_score, ea_match_id: game.ea_match_id || null,
+  };
+}
+
+// Helper: process raw EA match array into the picker-friendly format
+function _processEAMatches(raw, game) {
+  const matchArray = Array.isArray(raw) ? raw : (raw.raw || []);
+  return matchArray.map(m => {
+    const myClub = m.clubs && m.clubs[String(game.home_ea_club_id)];
+    if (!myClub) return null;
+    const oppId = String(myClub.opponentClubId);
+    const oppClub = m.clubs && m.clubs[oppId];
+    const oppName = (oppClub && oppClub.details && oppClub.details.name) || `Club ${oppId}`;
+    const isScheduledOpponent = !!game.away_ea_club_id && String(game.away_ea_club_id) === oppId;
+    const players = Object.values((m.players && m.players[String(game.home_ea_club_id)]) || {}).map(mapEAPlayer);
+    const awayPlayers = Object.values((m.players && m.players[oppId]) || {}).map(mapEAPlayer);
+    return {
+      matchId: m.matchId, timestamp: m.timestamp || 0,
+      date: m.timestamp ? new Date(m.timestamp * 1000).toISOString().split('T')[0] : null,
+      result: mapResult(myClub.result), homeScore: Number(myClub.score) || 0, awayScore: Number(myClub.opponentScore) || 0,
+      opponentClubId: oppId, opponentClubName: oppName, isScheduledOpponent, players, awayPlayers,
+    };
+  }).filter(Boolean);
+}
+
+// GET: returns game info + the EA URL for the client to fetch directly.
+// The EA API blocks requests from datacenter IPs (Vercel), so the browser
+// must call it and POST the raw response back via the endpoint below.
 app.get('/api/games/:id/ea-matches', async (req, res) => {
   const game = await db.prepare(`
     SELECT g.*, ht.name AS home_team_name, ht.ea_club_id AS home_ea_club_id,
@@ -3295,44 +3329,29 @@ app.get('/api/games/:id/ea-matches', async (req, res) => {
   `).get(req.params.id);
   if (!game) return res.status(404).json({ error: 'Game not found' });
   if (!game.home_ea_club_id) return res.status(400).json({ error: 'Home team has no EA club ID configured' });
-  // Try to fetch private club matches from EA; if unreachable (e.g. datacenter IP
-  // blocked by Cloudflare), return 200 with empty matches so the browser console
-  // stays clean and the picker can show a manual-entry prompt instead of a 502.
-  let matches = null;
-  let eaError = null;
-  try {
-    const raw = await fetchEA(`https://proclubs.ea.com/api/nhl/clubs/matches?matchType=club_private&platform=common-gen5&clubIds=${game.home_ea_club_id}`);
-    const matchArray = Array.isArray(raw) ? raw : (raw.raw || []);
-    matches = matchArray.map(m => {
-      const myClub = m.clubs && m.clubs[String(game.home_ea_club_id)];
-      if (!myClub) return null;
-      const oppId = String(myClub.opponentClubId);
-      const oppClub = m.clubs && m.clubs[oppId];
-      const oppName = (oppClub && oppClub.details && oppClub.details.name) || `Club ${oppId}`;
-      const isScheduledOpponent = !!game.away_ea_club_id && String(game.away_ea_club_id) === oppId;
-      const players = Object.values((m.players && m.players[String(game.home_ea_club_id)]) || {}).map(mapEAPlayer);
-      const awayPlayers = Object.values((m.players && m.players[oppId]) || {}).map(mapEAPlayer);
-      return {
-        matchId: m.matchId, timestamp: m.timestamp || 0,
-        date: m.timestamp ? new Date(m.timestamp * 1000).toISOString().split('T')[0] : null,
-        result: mapResult(myClub.result), homeScore: Number(myClub.score) || 0, awayScore: Number(myClub.opponentScore) || 0,
-        opponentClubId: oppId, opponentClubName: oppName, isScheduledOpponent, players, awayPlayers,
-      };
-    }).filter(Boolean);
-  } catch (err) {
-    eaError = err.message;
-    matches = [];
-  }
   res.json({
-    game: {
-      id: game.id, date: game.date, status: game.status, is_overtime: game.is_overtime,
-      home_team: { id: game.home_team_id, name: game.home_team_name, ea_club_id: game.home_ea_club_id },
-      away_team: { id: game.away_team_id, name: game.away_team_name, ea_club_id: game.away_ea_club_id },
-      home_score: game.home_score, away_score: game.away_score, ea_match_id: game.ea_match_id || null,
-    },
-    matches,
-    ...(eaError ? { eaError } : {}),
+    game: _eaGameInfo(game),
+    eaUrl: `https://proclubs.ea.com/api/nhl/clubs/matches?matchType=club_private&platform=common-gen5&clubIds=${game.home_ea_club_id}`,
   });
+});
+
+// POST: client fetches the EA URL above from the browser and sends the raw
+// response body here for server-side processing into the picker format.
+app.post('/api/games/:id/ea-matches', async (req, res) => {
+  const game = await db.prepare(`
+    SELECT g.*, ht.name AS home_team_name, ht.ea_club_id AS home_ea_club_id,
+      at.name AS away_team_name, at.ea_club_id AS away_ea_club_id
+    FROM games g JOIN teams ht ON g.home_team_id = ht.id JOIN teams at ON g.away_team_id = at.id
+    WHERE g.id = ?
+  `).get(req.params.id);
+  if (!game) return res.status(404).json({ error: 'Game not found' });
+  if (!game.home_ea_club_id) return res.status(400).json({ error: 'Home team has no EA club ID configured' });
+  const raw = req.body;
+  if (!raw || (typeof raw !== 'object' && !Array.isArray(raw))) {
+    return res.status(400).json({ error: 'Request body must be the raw EA JSON response' });
+  }
+  const matches = _processEAMatches(raw, game);
+  res.json({ game: _eaGameInfo(game), matches });
 });
 
 // ── Discord OAuth2 routes ──────────────────────────────────────────────────
