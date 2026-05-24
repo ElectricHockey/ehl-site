@@ -3332,7 +3332,7 @@ app.get('/api/games/:id/ea-matches', async (req, res) => {
   try {
     raw = await fetchEA(eaUrl);
   } catch (err) {
-    return res.status(502).json({ error: 'EA Pro Clubs API is currently unreachable', details: err.message });
+    return res.status(502).json({ error: 'EA Pro Clubs API is currently unreachable', details: err.message, ea_url: eaUrl, game: _eaGameInfo(game) });
   }
   const matches = _processEAMatches(raw, game);
   res.json({ game: _eaGameInfo(game), matches });

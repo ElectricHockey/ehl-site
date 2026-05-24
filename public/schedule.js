@@ -552,13 +552,38 @@ async function openPicker(gameId) {
       if (err.error && err.error.toLowerCase().includes('ea club id')) {
         body.innerHTML = `<p class="picker-error">⚠️ ${err.error}</p>
           <p class="picker-empty">Set the home team's EA Club ID in the <a href="admin.html">Admin Panel</a>.</p>`;
-      } else {
-        const detail = err.details ? ` (${err.details})` : '';
-        body.innerHTML = `<p class="picker-error">⚠️ EA Pro Clubs API is currently unreachable${detail} — please enter stats manually.</p>
-          <p style="text-align:center;margin:0.5rem 0;">
-            <button onclick="closePickerAndEditManually(${gameId})" style="padding:0.35rem 0.9rem;background:#238636;border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:0.85rem;">✏️ Enter Stats Manually</button>
-          </p>`;
+        return;
       }
+      // Server-side fetch was blocked (502). If the server returned the EA URL,
+      // try fetching it directly from the browser and posting the raw body back.
+      if (infoRes.status === 502 && err.ea_url) {
+        body.innerHTML = `<p class="picker-empty">Server proxy blocked — fetching EA data directly from browser…</p>`;
+        try {
+          const eaRes = await fetch(err.ea_url);
+          if (!eaRes.ok) throw new Error(`EA API responded with ${eaRes.status}`);
+          const rawEa = await eaRes.json();
+          const postRes = await fetch(`${API}/games/${gameId}/ea-matches`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Admin-Token': getAdminToken() },
+            body: JSON.stringify(rawEa),
+          });
+          if (!postRes.ok) throw new Error(`Server returned ${postRes.status}`);
+          const data = await postRes.json();
+          renderPickerMatches(data, gameId);
+          return;
+        } catch (browserErr) {
+          body.innerHTML = `<p class="picker-error">⚠️ EA Pro Clubs API is unreachable (${browserErr.message}) — please enter stats manually.</p>
+            <p style="text-align:center;margin:0.5rem 0;">
+              <button onclick="closePickerAndEditManually(${gameId})" style="padding:0.35rem 0.9rem;background:#238636;border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:0.85rem;">✏️ Enter Stats Manually</button>
+            </p>`;
+          return;
+        }
+      }
+      const detail = err.details ? ` (${err.details})` : '';
+      body.innerHTML = `<p class="picker-error">⚠️ EA Pro Clubs API is currently unreachable${detail} — please enter stats manually.</p>
+        <p style="text-align:center;margin:0.5rem 0;">
+          <button onclick="closePickerAndEditManually(${gameId})" style="padding:0.35rem 0.9rem;background:#238636;border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:0.85rem;">✏️ Enter Stats Manually</button>
+        </p>`;
       return;
     }
     const data = await infoRes.json();
