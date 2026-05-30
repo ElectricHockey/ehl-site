@@ -26,6 +26,33 @@
     .tab-btn:hover:not(.active) { background: #21262d; }
     .tab-section { display: none; }
     .tab-section.active { display: block; }
+
+    /* Sticky rank (#) column */
+    #skaters-table th:nth-child(1), #skaters-table td:nth-child(1),
+    #goalies-table th:nth-child(1), #goalies-table td:nth-child(1) {
+      position: sticky;
+      left: 0;
+      z-index: 2;
+      width: 2.5rem;
+      min-width: 2.5rem;
+      max-width: 2.5rem;
+    }
+    /* Sticky player name column */
+    #skaters-table th:nth-child(2), #skaters-table td:nth-child(2),
+    #goalies-table th:nth-child(2), #goalies-table td:nth-child(2) {
+      position: sticky;
+      left: 2.5rem;
+      z-index: 2;
+      box-shadow: 3px 0 5px rgba(0,0,0,0.45);
+    }
+    /* thead sticky backgrounds */
+    #skaters-table thead th:nth-child(-n+2),
+    #goalies-table thead th:nth-child(-n+2) { background: #161b22; }
+    /* tbody sticky backgrounds – match alternating row colours */
+    #skaters-table tbody td:nth-child(-n+2),
+    #goalies-table tbody td:nth-child(-n+2) { background: #0d1117; }
+    #skaters-table tbody tr:nth-child(even) td:nth-child(-n+2),
+    #goalies-table tbody tr:nth-child(even) td:nth-child(-n+2) { background: #161b22; }
   </style>
 </head>
 <body>
