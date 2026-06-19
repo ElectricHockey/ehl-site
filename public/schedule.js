@@ -515,6 +515,55 @@ function closePickerAndEditManually(gameId) {
   editGameStats(gameId);
 }
 
+// ── Paste EA JSON fallback ─────────────────────────────────────────────────
+// Generates the "Paste EA JSON" UI block used when the EA API is unreachable.
+function pasteEAJsonUI(gameId) {
+  return `
+    <details style="margin-top:1rem;padding:0.75rem 1rem;background:#0d1117;border:1px solid #30363d;border-radius:8px;">
+      <summary style="cursor:pointer;color:#58a6ff;font-size:0.85rem;font-weight:600;">📋 Paste EA JSON manually</summary>
+      <p style="color:#8b949e;font-size:0.8rem;margin:0.5rem 0 0.4rem;">
+        Open <a href="https://proclubs.ea.com/api/nhl/clubs/matches?matchType=club_private&platform=common-gen5&clubIds=YOUR_CLUB_ID" target="_blank" style="color:#58a6ff;">this EA API link</a> in your browser (replace YOUR_CLUB_ID), copy the entire JSON response, and paste it below.
+      </p>
+      <textarea id="paste-ea-json" rows="5" placeholder="Paste the EA API JSON response here…" style="width:100%;background:#161b22;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.5rem;font-size:0.8rem;font-family:monospace;resize:vertical;"></textarea>
+      <div style="margin-top:0.5rem;display:flex;gap:0.5rem;align-items:center;">
+        <button onclick="submitPastedEAJson(${gameId})" style="padding:0.35rem 0.9rem;background:#1f6feb;border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:0.85rem;">🔄 Process JSON</button>
+        <span id="paste-ea-error" style="color:#f85149;font-size:0.8rem;display:none;"></span>
+      </div>
+    </details>`;
+}
+
+async function submitPastedEAJson(gameId) {
+  const textarea = document.getElementById('paste-ea-json');
+  const errSpan = document.getElementById('paste-ea-error');
+  if (!textarea || !textarea.value.trim()) {
+    if (errSpan) { errSpan.textContent = 'Please paste the EA JSON first.'; errSpan.style.display = ''; }
+    return;
+  }
+  let rawEa;
+  try {
+    rawEa = JSON.parse(textarea.value.trim());
+  } catch (e) {
+    if (errSpan) { errSpan.textContent = 'Invalid JSON — please paste the full response.'; errSpan.style.display = ''; }
+    return;
+  }
+  if (errSpan) errSpan.style.display = 'none';
+  try {
+    const postRes = await fetch(`${API}/games/${gameId}/ea-matches`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Token': getAdminToken() },
+      body: JSON.stringify(rawEa),
+    });
+    if (!postRes.ok) {
+      const err = await postRes.json().catch(() => ({}));
+      throw new Error(err.error || `Server returned ${postRes.status}`);
+    }
+    const data = await postRes.json();
+    renderPickerMatches(data, gameId);
+  } catch (err) {
+    if (errSpan) { errSpan.textContent = `Error: ${err.message}`; errSpan.style.display = ''; }
+  }
+}
+
 async function openPicker(gameId) {
   activePickerGameId = gameId;
   const game = allGames.find(g => g.id === gameId);
@@ -575,24 +624,27 @@ async function openPicker(gameId) {
           renderPickerMatches(data, gameId);
           return;
         } catch (browserErr) {
-          body.innerHTML = `<p class="picker-error">⚠️ EA Pro Clubs API is unreachable (${browserErr.message}) — please enter stats manually.</p>
+          body.innerHTML = `<p class="picker-error">⚠️ EA Pro Clubs API is unreachable (${browserErr.message}) — please enter stats manually or paste the EA JSON below.</p>
             <p style="text-align:center;margin:0.5rem 0;">
               <button onclick="closePickerAndEditManually(${gameId})" style="padding:0.35rem 0.9rem;background:#238636;border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:0.85rem;">✏️ Enter Stats Manually</button>
-            </p>`;
+            </p>
+            ${pasteEAJsonUI(gameId)}`;
           return;
         }
       }
       const detail = err.details ? ` (${err.details})` : '';
-      body.innerHTML = `<p class="picker-error">⚠️ EA Pro Clubs API is currently unreachable${detail} — please enter stats manually.</p>
+      body.innerHTML = `<p class="picker-error">⚠️ EA Pro Clubs API is currently unreachable${detail} — please enter stats manually or paste the EA JSON below.</p>
         <p style="text-align:center;margin:0.5rem 0;">
           <button onclick="closePickerAndEditManually(${gameId})" style="padding:0.35rem 0.9rem;background:#238636;border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:0.85rem;">✏️ Enter Stats Manually</button>
-        </p>`;
+        </p>
+        ${pasteEAJsonUI(gameId)}`;
       return;
     }
     const data = await infoRes.json();
     renderPickerMatches(data, gameId);
   } catch (err) {
-    body.innerHTML = `<p class="picker-error">Failed to reach the server: ${err.message}</p>`;
+    body.innerHTML = `<p class="picker-error">Failed to reach the server: ${err.message}</p>
+      ${pasteEAJsonUI(gameId)}`;
   }
 }
 
