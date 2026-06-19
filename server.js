@@ -2250,6 +2250,8 @@ app.patch('/api/games/:id', requireAdmin, async (req, res) => {
   const is_forfeit  = req.body.is_forfeit  !== undefined ? (req.body.is_forfeit  ? 1 : 0) : (game.is_forfeit  || 0);
   const date = req.body.date !== undefined ? req.body.date : game.date;
   const game_time = req.body.game_time !== undefined ? parseGameTime(req.body.game_time) : game.game_time;
+  const home_shots = req.body.home_shots !== undefined ? (req.body.home_shots != null ? parseInt(req.body.home_shots, 10) : null) : (game.home_shots ?? null);
+  const away_shots = req.body.away_shots !== undefined ? (req.body.away_shots != null ? parseInt(req.body.away_shots, 10) : null) : (game.away_shots ?? null);
   if (req.body.home_score !== undefined) {
     home_score = parseInt(req.body.home_score, 10);
     if (isNaN(home_score) || home_score < 0 || home_score > 99) return res.status(400).json({ error: 'home_score must be 0–99' });
@@ -2258,8 +2260,8 @@ app.patch('/api/games/:id', requireAdmin, async (req, res) => {
     away_score = parseInt(req.body.away_score, 10);
     if (isNaN(away_score) || away_score < 0 || away_score > 99) return res.status(400).json({ error: 'away_score must be 0–99' });
   }
-  await db.prepare('UPDATE games SET home_score=?, away_score=?, ea_match_id=?, status=?, season_id=?, is_overtime=?, is_forfeit=?, date=?, game_time=? WHERE id=?')
-    .run(home_score, away_score, ea_match_id, status, season_id, is_overtime, is_forfeit, date, game_time, req.params.id);
+  await db.prepare('UPDATE games SET home_score=?, away_score=?, ea_match_id=?, status=?, season_id=?, is_overtime=?, is_forfeit=?, date=?, game_time=?, home_shots=?, away_shots=? WHERE id=?')
+    .run(home_score, away_score, ea_match_id, status, season_id, is_overtime, is_forfeit, date, game_time, home_shots, away_shots, req.params.id);
 
   // Auto-update the playoff series bracket whenever a playoff game is completed or updated
   const effectiveSeries = req.body.playoff_series_id !== undefined
@@ -2368,6 +2370,7 @@ app.get('/api/games/:id/stats', async (req, res) => {
       home_team: { id: game.home_team_id, name: game.home_team_name, logo_url: game.home_logo, color1: game.home_color1 || null, color2: game.home_color2 || null },
       away_team: { id: game.away_team_id, name: game.away_team_name, logo_url: game.away_logo, color1: game.away_color1 || null, color2: game.away_color2 || null },
       home_score: game.home_score, away_score: game.away_score, ea_match_id: game.ea_match_id,
+      home_shots: game.home_shots ?? null, away_shots: game.away_shots ?? null,
     },
     home_players: stats.filter(s => s.team_id === game.home_team_id),
     away_players: stats.filter(s => s.team_id === game.away_team_id),
@@ -3336,6 +3339,8 @@ function _processEAMatches(raw, game) {
       matchId: m.matchId, timestamp: m.timestamp || 0,
       date: m.timestamp ? new Date(m.timestamp * 1000).toISOString().split('T')[0] : null,
       result: mapResult(myClub.result), homeScore: Number(myClub.score) || 0, awayScore: Number(myClub.opponentScore) || 0,
+      homeShots: myClub.shots != null ? Number(myClub.shots) : null,
+      awayShots: oppClub && oppClub.shots != null ? Number(oppClub.shots) : null,
       opponentClubId: oppId, opponentClubName: oppName, isScheduledOpponent, players, awayPlayers,
     };
   }).filter(Boolean);

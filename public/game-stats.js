@@ -247,18 +247,17 @@
 
   // ── Possession pie chart (CSS conic-gradient, by position) ──────────────
 
-  function renderPossessionPie(normalized, title, teamColor) {
-    // Shade each position segment relative to the team's primary color so
-    // the pie clearly belongs to that team while still distinguishing positions.
-    const baseColor = teamColor || '#58a6ff';
+  // Fixed distinct colours per position – always the same regardless of team
+  const POSITION_COLORS = {
+    LW: '#f85149',  // red
+    C:  '#58a6ff',  // blue
+    RW: '#3fb950',  // green
+    LD: '#d2a8ff',  // purple
+    RD: '#e3b341',  // gold
+  };
+
+  function renderPossessionPie(normalized, title) {
     const posOrder  = ['LW', 'C', 'RW', 'LD', 'RD'];
-    // Generate shades: lightest for first position, darkest for last
-    const shades = posOrder.map((_, i) => {
-      const ratio = posOrder.length <= 1 ? 0.5 : i / (posOrder.length - 1);
-      return blendColor(baseColor, ratio);
-    });
-    const posColors = {};
-    posOrder.forEach((pos, i) => { posColors[pos] = shades[i]; });
 
     const totals = {};
     let total = 0;
@@ -279,22 +278,30 @@
 
     let gradParts = [];
     let prev = 0;
+    const pctByPos = {};
     posOrder.forEach(pos => {
       if (totals[pos] > 0) {
         const pct = totals[pos] / total * 100;
-        gradParts.push(`${posColors[pos] || '#484f58'} ${prev.toFixed(1)}% ${(prev + pct).toFixed(1)}%`);
+        pctByPos[pos] = Math.round(pct * 10) / 10;
+        gradParts.push(`${POSITION_COLORS[pos] || '#484f58'} ${prev.toFixed(1)}% ${(prev + pct).toFixed(1)}%`);
         prev += pct;
       }
     });
 
+    // Build tooltip text showing each position's %
+    const tooltipLines = posOrder
+      .filter(pos => totals[pos] > 0)
+      .map(pos => `${pos}: ${pctByPos[pos]}%`)
+      .join('&#10;');
+
     const legend = posOrder
       .filter(pos => totals[pos] > 0)
       .map(pos =>
-        `<span class="gs-pie-item"><span class="gs-pie-dot" style="background:${posColors[pos]};"></span>${pos}</span>`
+        `<span class="gs-pie-item"><span class="gs-pie-dot" style="background:${POSITION_COLORS[pos]};"></span>${pos}</span>`
       ).join('');
 
     return `<div class="gs-pie-wrap">
-      <div class="gs-pie" style="background: conic-gradient(${gradParts.join(', ')});"></div>
+      <div class="gs-pie" style="background: conic-gradient(${gradParts.join(', ')});" title="${tooltipLines}"></div>
       <div class="gs-pie-title">${title}</div>
       <div class="gs-pie-legend">${legend}</div>
     </div>`;
@@ -322,11 +329,15 @@
     const h = computeTeamTotals(homeNorm);
     const a = computeTeamTotals(awayNorm);
 
+    // Use EA team-level shots when available, fall back to player sum
+    const homeShots = (game.home_shots != null) ? game.home_shots : h.shots;
+    const awayShots = (game.away_shots != null) ? game.away_shots : a.shots;
+
     const hc = (game.home_team && game.home_team.color1) || '#c9162b';
     const ac = (game.away_team && game.away_team.color1) || '#d1d5db';
 
     const donuts = `<div class="gs-donuts-row">
-      ${renderDonutChart(h.shots,           a.shots,           'Shots',    hc, ac)}
+      ${renderDonutChart(homeShots,           awayShots,           'Shots',    hc, ac)}
       ${renderDonutChart(h.possession_secs, a.possession_secs, 'TOA',      hc, ac)}
       ${renderDonutChart(h.faceoff_wins,    a.faceoff_wins,    'Faceoffs', hc, ac)}
     </div>`;
@@ -361,7 +372,7 @@
 
     const stats = `<table class="gs-comparison-table">
       ${statRow(game.home_score, 'Goals',         game.away_score)}
-      ${statRow(h.shots,         'Total Shots',   a.shots)}
+      ${statRow(homeShots,       'Total Shots',   awayShots)}
       ${statRow(h.hits,          'Hits',          a.hits)}
       ${fmtStatRow(h.possession_secs, 'Time on Attack', a.possession_secs, formatToi, formatToi)}
       ${fmtStatRow(h.pass_pct, 'Passing%', a.pass_pct,
@@ -379,8 +390,8 @@
     </table>`;
 
     const pies = `<div class="gs-pies-row">
-      ${renderPossessionPie(homeNorm, 'Puck Possession', hc)}
-      ${renderPossessionPie(awayNorm, 'Puck Possession', ac)}
+      ${renderPossessionPie(homeNorm, 'Puck Possession')}
+      ${renderPossessionPie(awayNorm, 'Puck Possession')}
     </div>`;
 
     return `<div class="gs-comparison-panel">
