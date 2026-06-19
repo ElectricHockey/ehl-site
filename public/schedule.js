@@ -547,6 +547,9 @@ async function openPicker(gameId) {
     const infoRes = await fetch(`${API}/games/${gameId}/ea-matches`, {
       headers: { 'X-Admin-Token': getAdminToken() },
     });
+    // #region agent log
+    fetch('http://127.0.0.1:7370/ingest/09eeda4e-053a-4a95-a317-63a92e5d9089',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a43d81'},body:JSON.stringify({sessionId:'a43d81',location:'schedule.js:openPicker',message:'ea_matches_fetch_result',data:{gameId,status:infoRes.status,ok:infoRes.ok,hasAdminToken:!!getAdminToken()},timestamp:Date.now(),hypothesisId:'B/C'})}).catch(()=>{});
+    // #endregion
     if (!infoRes.ok) {
       const err = await infoRes.json().catch(() => ({}));
       if (err.error && err.error.toLowerCase().includes('ea club id')) {
@@ -682,6 +685,9 @@ document.getElementById('ea-picker').addEventListener('click', e => {
 
 async function assignMatch(gameId, matchId, homeScore, awayScore, homePlayers, awayPlayers) {
   try {
+    // #region agent log
+    fetch('http://127.0.0.1:7370/ingest/09eeda4e-053a-4a95-a317-63a92e5d9089',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a43d81'},body:JSON.stringify({sessionId:'a43d81',location:'schedule.js:assignMatch',message:'assign_match_start',data:{gameId,matchId,homeScore,awayScore,homePlayerCount:(homePlayers||[]).length,awayPlayerCount:(awayPlayers||[]).length,hasAdminToken:!!getAdminToken()},timestamp:Date.now(),hypothesisId:'C/D'})}).catch(()=>{});
+    // #endregion
     const res = await fetch(`${API}/games/${gameId}`, {
       method: 'PATCH',
       headers: adminHeaders(),
@@ -694,8 +700,16 @@ async function assignMatch(gameId, matchId, homeScore, awayScore, homePlayers, a
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
+      // #region agent log
+      fetch('http://127.0.0.1:7370/ingest/09eeda4e-053a-4a95-a317-63a92e5d9089',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a43d81'},body:JSON.stringify({sessionId:'a43d81',location:'schedule.js:assignMatch',message:'assign_match_failed',data:{gameId,status:res.status,error:err.error||null},timestamp:Date.now(),hypothesisId:'C'})}).catch(()=>{});
+      // #endregion
       throw new Error(err.error || `HTTP ${res.status}`);
     }
+    const statsRes = await fetch(`${API}/games/${gameId}/stats`);
+    const statsData = statsRes.ok ? await statsRes.json().catch(() => null) : null;
+    // #region agent log
+    fetch('http://127.0.0.1:7370/ingest/09eeda4e-053a-4a95-a317-63a92e5d9089',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a43d81'},body:JSON.stringify({sessionId:'a43d81',location:'schedule.js:assignMatch',message:'assign_match_after_stats_fetch',data:{gameId,hasStats:!!statsData?.has_stats,homePlayers:statsData?.home_players?.length||0,awayPlayers:statsData?.away_players?.length||0},timestamp:Date.now(),hypothesisId:'A/D'})}).catch(()=>{});
+    // #endregion
     await refreshGame(gameId);
     closePicker(); // close picker so detail is the focus
     await openGameDetail(gameId);
