@@ -78,6 +78,109 @@ document.addEventListener('click', e => {
   refreshAdminAccess();
 }());
 
+// ── Instant page navigation ─────────────────────────────────────────────────
+// This is a multi-page site: every nav link triggers a full page load, so each
+// screen feels slow because the browser only starts fetching the HTML, scripts
+// and data *after* the click. To make navigation feel instant we speculatively
+// load the destination page as soon as the user shows intent (hover / focus /
+// touch), so it is ready the moment they actually click.
+//
+//   • Modern browsers (Chrome/Edge): use the Speculation Rules API to *prerender*
+//     the page in the background – scripts run and data is fetched ahead of time,
+//     giving a truly instant transition.
+//   • Other browsers (Safari/Firefox): fall back to <link rel="prefetch"> (or a
+//     low-priority fetch) to warm the HTTP cache so the next load skips the
+//     network round-trips.
+(function () {
+  // Respect the user's data preferences and avoid wasting bandwidth on slow
+  // connections.
+  const conn = navigator.connection;
+  if (conn) {
+    if (conn.saveData) return;
+    if (/(^|-)2g$/.test(conn.effectiveType || '')) return;
+  }
+
+  const scriptSupportsType = t =>
+    typeof HTMLScriptElement !== 'undefined' &&
+    HTMLScriptElement.supports &&
+    HTMLScriptElement.supports(t);
+
+  // ── Path A: Speculation Rules (prerender) ─────────────────────────────────
+  if (scriptSupportsType('speculationrules')) {
+    const rules = {
+      prerender: [{
+        source: 'document',
+        // Same-origin navigations only; never speculate API calls or downloads.
+        where: {
+          and: [
+            { href_matches: '/*' },
+            { not: { href_matches: '/api/*' } },
+            { not: { selector_matches: '[download]' } },
+            { not: { selector_matches: '[target="_blank"]' } },
+          ],
+        },
+        // "moderate" speculates on hover / pointer-down, keeping resource use low.
+        eagerness: 'moderate',
+      }],
+    };
+    const tag = document.createElement('script');
+    tag.type = 'speculationrules';
+    tag.textContent = JSON.stringify(rules);
+    document.head.appendChild(tag);
+    return; // Speculation Rules cover everything below – no fallback needed.
+  }
+
+  // ── Path B: prefetch fallback (Safari / Firefox) ──────────────────────────
+  const prefetched = new Set();
+  const supportsPrefetch = (() => {
+    const link = document.createElement('link');
+    return !!(link.relList && link.relList.supports && link.relList.supports('prefetch'));
+  })();
+
+  function shouldPrefetch(a) {
+    if (!a || !a.href) return false;
+    let url;
+    try { url = new URL(a.href, location.href); } catch { return false; }
+    if (url.origin !== location.origin) return false;                       // same-origin only
+    if (url.pathname.startsWith('/api/')) return false;                     // never the API
+    if (url.pathname === location.pathname && url.search === location.search) return false; // not current page
+    if (a.hasAttribute('download')) return false;
+    if (a.target && a.target !== '_self') return false;
+    // Only prefetch page navigations (html pages or extension-less paths).
+    if (/\.[a-z0-9]+$/i.test(url.pathname) && !/\.html?$/i.test(url.pathname)) return false;
+    return true;
+  }
+
+  function prefetch(url) {
+    if (prefetched.has(url)) return;
+    prefetched.add(url);
+    if (supportsPrefetch) {
+      const link = document.createElement('link');
+      link.rel = 'prefetch';
+      link.as = 'document';
+      link.href = url;
+      document.head.appendChild(link);
+    } else {
+      // Safari has no <link rel="prefetch">; warm the cache with a GET instead.
+      fetch(url, { credentials: 'same-origin' }).catch(() => {});
+    }
+  }
+
+  function onIntent(e) {
+    const a = e.target.closest && e.target.closest('a');
+    if (!shouldPrefetch(a)) return;
+    const url = new URL(a.href, location.href).href;
+    const run = () => prefetch(url);
+    if ('requestIdleCallback' in window) requestIdleCallback(run, { timeout: 250 });
+    else run();
+  }
+
+  const opts = { passive: true, capture: true };
+  document.addEventListener('mouseover', onIntent, opts);
+  document.addEventListener('focusin', onIntent, opts);
+  document.addEventListener('touchstart', onIntent, opts);
+}());
+
 // ── JS-driven stat-column tooltips ──────────────────────────────────────────
 // Uses position:fixed so tooltips are NEVER clipped by overflow:auto containers.
 
