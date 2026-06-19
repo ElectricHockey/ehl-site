@@ -2287,6 +2287,7 @@ app.patch('/api/games/:id', requireAdmin, async (req, res) => {
     // Goalie W/L/OTW/OTL/SO are derived from the game outcome, not the EA API
     const homeWon = home_score > away_score;
     const awayWon = away_score > home_score;
+    const insertPromises = [];
     const saveList = (players, teamId, teamWon) => {
       for (const p of (players || [])) {
         const isGoalie = (p.position || '').toUpperCase() === 'G';
@@ -2299,29 +2300,42 @@ app.patch('/api/games/:id', requireAdmin, async (req, res) => {
             if (is_overtime) { goalieOtl = 1; } else { goalieLosses = 1; }
           }
         }
-        ins.run(
-          req.params.id, teamId, p.name, p.position,
-          p.overallRating||0, p.offensiveRating||0, p.defensiveRating||0, p.teamPlayRating||0,
-          p.goals||0, p.assists||0, p.shots||0, p.shotAttempts||0, p.hits||0, p.plusMinus||0, p.pim||0,
-          p.blockedShots||0, p.takeaways||0, p.giveaways||0,
-          p.possessionSecs||0, p.passAttempts||0, p.passCompletions||0, p.passPct||null,
-          p.faceoffWins||0, p.faceoffLosses||0,
-          p.ppGoals||0, p.shGoals||0, p.gwg||0, p.penaltiesDrawn||0,
-          p.deflections||0, p.interceptions||0, p.hatTricks||0, p.toi||0,
-          p.saves||0, p.savesPct||null, p.goalsAgainst||0, p.shotsAgainst||0,
-          goalieWins, goalieLosses, goalieOtw, goalieOtl,
-          shutouts, p.penaltyShotAttempts||0, p.penaltyShotGa||0,
-          p.breakawayShots||0, p.breakawaySaves||0,
-          p.saucerPasses||0, p.pkClears||0, p.desperationSaves||0, p.pokeCheckSaves||0
+        insertPromises.push(
+          ins.run(
+            req.params.id, teamId, p.name, p.position,
+            p.overallRating||0, p.offensiveRating||0, p.defensiveRating||0, p.teamPlayRating||0,
+            p.goals||0, p.assists||0, p.shots||0, p.shotAttempts||0, p.hits||0, p.plusMinus||0, p.pim||0,
+            p.blockedShots||0, p.takeaways||0, p.giveaways||0,
+            p.possessionSecs||0, p.passAttempts||0, p.passCompletions||0, p.passPct||null,
+            p.faceoffWins||0, p.faceoffLosses||0,
+            p.ppGoals||0, p.shGoals||0, p.gwg||0, p.penaltiesDrawn||0,
+            p.deflections||0, p.interceptions||0, p.hatTricks||0, p.toi||0,
+            p.saves||0, p.savesPct||null, p.goalsAgainst||0, p.shotsAgainst||0,
+            goalieWins, goalieLosses, goalieOtw, goalieOtl,
+            shutouts, p.penaltyShotAttempts||0, p.penaltyShotGa||0,
+            p.breakawayShots||0, p.breakawaySaves||0,
+            p.saucerPasses||0, p.pkClears||0, p.desperationSaves||0, p.pokeCheckSaves||0
+          ).then(r => ({ ok: true, changes: r.changes })).catch(e => ({ ok: false, err: e.message }))
         );
       }
     };
     saveList(home_players, game.home_team_id, homeWon);
     saveList(away_players, game.away_team_id, awayWon);
+    // #region agent log
+    fetch('http://127.0.0.1:7370/ingest/09eeda4e-053a-4a95-a317-63a92e5d9089',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a43d81'},body:JSON.stringify({sessionId:'a43d81',location:'server.js:PATCH:player_stats',message:'player_stats_save_started',data:{gameId:req.params.id,homeCount:(home_players||[]).length,awayCount:(away_players||[]).length,pendingInserts:insertPromises.length,eaMatchId:ea_match_id},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
+    Promise.all(insertPromises).then(results => {
+      fetch('http://127.0.0.1:7370/ingest/09eeda4e-053a-4a95-a317-63a92e5d9089',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a43d81'},body:JSON.stringify({sessionId:'a43d81',location:'server.js:PATCH:player_stats',message:'player_stats_inserts_done',data:{gameId:req.params.id,successCount:results.filter(r=>r.ok).length,failCount:results.filter(r=>!r.ok).length,errors:results.filter(r=>!r.ok).map(r=>r.err)},timestamp:Date.now(),hypothesisId:'A/E'})}).catch(()=>{});
+    }).catch(err => {
+      fetch('http://127.0.0.1:7370/ingest/09eeda4e-053a-4a95-a317-63a92e5d9089',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a43d81'},body:JSON.stringify({sessionId:'a43d81',location:'server.js:PATCH:player_stats',message:'player_stats_inserts_failed',data:{gameId:req.params.id,error:err.message},timestamp:Date.now(),hypothesisId:'E'})}).catch(()=>{});
+    });
+    // #endregion
   }
   if (req.body.ea_match_id === null && !req.body.player_stats) {
     await db.prepare('DELETE FROM game_player_stats WHERE game_id = ?').run(req.params.id);
   }
+  // #region agent log
+  fetch('http://127.0.0.1:7370/ingest/09eeda4e-053a-4a95-a317-63a92e5d9089',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a43d81'},body:JSON.stringify({sessionId:'a43d81',location:'server.js:PATCH:response',message:'patch_response_sent',data:{gameId:req.params.id,hadPlayerStats:!!req.body.player_stats,eaMatchId:req.body.ea_match_id},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
+  // #endregion
   res.json({ updated: true });
 });
 
@@ -3335,6 +3349,9 @@ app.get('/api/games/:id/ea-matches', async (req, res) => {
     return res.status(502).json({ error: 'EA Pro Clubs API is currently unreachable', details: err.message, ea_url: eaUrl, game: _eaGameInfo(game) });
   }
   const matches = _processEAMatches(raw, game);
+  // #region agent log
+  fetch('http://127.0.0.1:7370/ingest/09eeda4e-053a-4a95-a317-63a92e5d9089',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a43d81'},body:JSON.stringify({sessionId:'a43d81',location:'server.js:GET:ea-matches',message:'ea_matches_loaded',data:{gameId:req.params.id,matchCount:matches.length,firstMatchPlayers:matches[0]?.players?.length||0,firstMatchAwayPlayers:matches[0]?.awayPlayers?.length||0,homeEaClubId:game.home_ea_club_id},timestamp:Date.now(),hypothesisId:'B/D'})}).catch(()=>{});
+  // #endregion
   res.json({ game: _eaGameInfo(game), matches });
 });
 
