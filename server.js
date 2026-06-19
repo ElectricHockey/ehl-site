@@ -1187,20 +1187,19 @@ async function fetchEA(url) {
         Accept: 'application/json, text/plain, */*',
         'Accept-Language': 'en-US,en;q=0.9',
         'Accept-Encoding': 'gzip, deflate, br',
-        Origin: 'https://proclubs.ea.com',
-        Referer: 'https://proclubs.ea.com/',
-        'Sec-Fetch-Dest': 'empty',
-        'Sec-Fetch-Mode': 'cors',
-        'Sec-Fetch-Site': 'same-origin',
-        'Sec-Ch-Ua': '"Chromium";v="136", "Google Chrome";v="136", "Not.A/Brand";v="99"',
-        'Sec-Ch-Ua-Mobile': '?0',
-        'Sec-Ch-Ua-Platform': '"Windows"',
-        Connection: 'keep-alive',
-        'Cache-Control': 'no-cache',
-        Pragma: 'no-cache',
+        Referer: 'https://www.ea.com/',
+        Origin: 'https://www.ea.com',
+        'Cache-Control': 'no-store',
       },
     });
-    if (!res.ok) throw new Error(`EA API responded with ${res.status}`);
+    if (!res.ok) {
+      // Capture response body for debugging
+      const body = await res.text().catch(() => '');
+      const err = new Error(`EA API responded with ${res.status}`);
+      err.eaStatus = res.status;
+      err.eaBody = body.slice(0, 500);
+      throw err;
+    }
     return res.json();
   } finally {
     clearTimeout(timer);
@@ -3355,7 +3354,7 @@ app.get('/api/games/:id/ea-matches', async (req, res) => {
   try {
     raw = await fetchEA(eaUrl);
   } catch (err) {
-    return res.status(502).json({ error: 'EA Pro Clubs API is currently unreachable', details: err.message, ea_url: eaUrl, game: _eaGameInfo(game) });
+    return res.status(502).json({ error: 'EA Pro Clubs API is currently unreachable', details: err.message, ea_status: err.eaStatus || null, ea_body: err.eaBody || null, ea_url: eaUrl, game: _eaGameInfo(game) });
   }
   const matches = _processEAMatches(raw, game);
   // #region agent log
@@ -3381,6 +3380,28 @@ app.post('/api/games/:id/ea-matches', async (req, res) => {
   }
   const matches = _processEAMatches(raw, game);
   res.json({ game: _eaGameInfo(game), matches });
+});
+
+// ── EA Club Matches proxy ──────────────────────────────────────────────────
+// Standalone proxy endpoint for fetching EA Pro Clubs match data.
+// Usage: GET /api/clubmatches?clubId=6021
+// This allows direct testing of the EA API proxy without needing a game record.
+app.get('/api/clubmatches', async (req, res) => {
+  const clubId = req.query.clubId || req.query.clubIds || '6021';
+  const matchType = req.query.matchType || 'club_private';
+  const platform = req.query.platform || 'common-gen5';
+  const eaUrl = `https://proclubs.ea.com/api/nhl/clubs/matches?matchType=${encodeURIComponent(matchType)}&platform=${encodeURIComponent(platform)}&clubIds=${encodeURIComponent(clubId)}`;
+  try {
+    const data = await fetchEA(eaUrl);
+    res.json(data);
+  } catch (err) {
+    res.status(err.eaStatus || 502).json({
+      error: err.message,
+      ea_status: err.eaStatus || null,
+      ea_body: err.eaBody || null,
+      ea_url: eaUrl,
+    });
+  }
 });
 
 // ── Discord OAuth2 routes ──────────────────────────────────────────────────
