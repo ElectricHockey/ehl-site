@@ -2406,7 +2406,7 @@ app.get('/api/stats/leaders', async (req, res) => {
 
   // Current-team subquery: pick the rostered player record per name (prefer user-linked row, then highest id)
   const rosterSub = `(
-    SELECT DISTINCT ON (name) name, team_id FROM players
+    SELECT DISTINCT ON (name) name, team_id, position FROM players
     WHERE is_rostered = 1
     ORDER BY name, (user_id IS NOT NULL) DESC, id DESC
   ) rp`;
@@ -2419,7 +2419,7 @@ app.get('/api/stats/leaders', async (req, res) => {
       MAX(t.logo_url) AS team_logo,
       MAX(t.color1) AS team_color1,
       MAX(t.color2) AS team_color2,
-      COALESCE(MAX(u.position), MAX(gps.position)) AS position,
+      COALESCE(MAX(rp.position), MAX(u.position), (SELECT gps2.position FROM game_player_stats gps2 WHERE gps2.player_name = gps.player_name AND gps2.position != 'G' GROUP BY gps2.position ORDER BY COUNT(*) DESC LIMIT 1)) AS position,
       COUNT(DISTINCT gps.game_id) AS gp,
       ROUND(AVG(CASE WHEN gps.overall_rating > 0 THEN CAST(gps.overall_rating AS NUMERIC)
                      WHEN GREATEST(gps.offensive_rating, gps.defensive_rating, gps.team_play_rating) > 0
