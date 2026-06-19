@@ -2206,7 +2206,9 @@ app.get('/api/games', async (req, res) => {
   const limitClause = limit ? `LIMIT ${limit}` : '';
   const games = await db.prepare(`
     SELECT g.*, ht.name AS home_team_name, ht.logo_url AS home_logo,
+      ht.ea_club_id AS home_ea_club_id,
       at.name AS away_team_name, at.logo_url AS away_logo,
+      at.ea_club_id AS away_ea_club_id,
       ps.round_number AS playoff_round_number
     FROM games g
     JOIN teams ht ON g.home_team_id = ht.id
@@ -3357,9 +3359,6 @@ app.get('/api/games/:id/ea-matches', async (req, res) => {
     return res.status(502).json({ error: 'EA Pro Clubs API is currently unreachable', details: err.message, ea_status: err.eaStatus || null, ea_body: err.eaBody || null, ea_url: eaUrl, game: _eaGameInfo(game) });
   }
   const matches = _processEAMatches(raw, game);
-  // #region agent log
-  fetch('http://127.0.0.1:7370/ingest/09eeda4e-053a-4a95-a317-63a92e5d9089',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a43d81'},body:JSON.stringify({sessionId:'a43d81',location:'server.js:GET:ea-matches',message:'ea_matches_loaded',data:{gameId:req.params.id,matchCount:matches.length,firstMatchPlayers:matches[0]?.players?.length||0,firstMatchAwayPlayers:matches[0]?.awayPlayers?.length||0,homeEaClubId:game.home_ea_club_id},timestamp:Date.now(),hypothesisId:'B/D'})}).catch(()=>{});
-  // #endregion
   res.json({ game: _eaGameInfo(game), matches });
 });
 
