@@ -287,7 +287,9 @@ async function initSchema() {
       season_id         INTEGER,
       is_overtime       INTEGER DEFAULT 0,
       playoff_series_id INTEGER,
-      is_forfeit        INTEGER DEFAULT 0
+      is_forfeit        INTEGER DEFAULT 0,
+      home_shots        INTEGER DEFAULT NULL,
+      away_shots        INTEGER DEFAULT NULL
     )`,
     `CREATE TABLE IF NOT EXISTS playoffs (
       id                  SERIAL PRIMARY KEY,
@@ -581,6 +583,22 @@ async function initSchema() {
   } catch (err) {
     if (!err.message || !err.message.includes('already exists')) {
       console.warn('[db] Migration warning (seasons playoff_cutoff):', err.message);
+    }
+  }
+
+  // Add home_shots / away_shots to games (EA team-level shot totals)
+  try {
+    await pool.query('ALTER TABLE games ADD COLUMN home_shots INTEGER DEFAULT NULL');
+  } catch (err) {
+    if (!err.message || !err.message.includes('already exists')) {
+      console.warn('[db] Migration warning (games home_shots):', err.message);
+    }
+  }
+  try {
+    await pool.query('ALTER TABLE games ADD COLUMN away_shots INTEGER DEFAULT NULL');
+  } catch (err) {
+    if (!err.message || !err.message.includes('already exists')) {
+      console.warn('[db] Migration warning (games away_shots):', err.message);
     }
   }
 

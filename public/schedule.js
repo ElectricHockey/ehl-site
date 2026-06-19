@@ -727,7 +727,7 @@ document.getElementById('ea-picker').addEventListener('click', e => {
     const idx = parseInt(btn.dataset.matchIdx, 10);
     const gameId = parseInt(btn.dataset.gameId, 10);
     const m = currentPickerMatches[idx];
-    if (m) assignMatch(gameId, m.matchId, m.homeScore, m.awayScore, m.players, m.awayPlayers);
+    if (m) assignMatch(gameId, m.matchId, m.homeScore, m.awayScore, m.players, m.awayPlayers, m.homeShots, m.awayShots);
   } else if (action === 'clear') {
     clearAssignment(parseInt(btn.dataset.gameId, 10));
   } else if (action === 'toggle-stats') {
@@ -737,7 +737,7 @@ document.getElementById('ea-picker').addEventListener('click', e => {
 
 // ── Assign / Clear ─────────────────────────────────────────────────────────
 
-async function assignMatch(gameId, matchId, homeScore, awayScore, homePlayers, awayPlayers) {
+async function assignMatch(gameId, matchId, homeScore, awayScore, homePlayers, awayPlayers, homeShots, awayShots) {
   try {
     // #region agent log
     fetch('http://127.0.0.1:7370/ingest/09eeda4e-053a-4a95-a317-63a92e5d9089',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a43d81'},body:JSON.stringify({sessionId:'a43d81',location:'schedule.js:assignMatch',message:'assign_match_start',data:{gameId,matchId,homeScore,awayScore,homePlayerCount:(homePlayers||[]).length,awayPlayerCount:(awayPlayers||[]).length,hasAdminToken:!!getAdminToken()},timestamp:Date.now(),hypothesisId:'C/D'})}).catch(()=>{});
@@ -749,6 +749,8 @@ async function assignMatch(gameId, matchId, homeScore, awayScore, homePlayers, a
         ea_match_id: matchId,
         home_score: homeScore,
         away_score: awayScore,
+        home_shots: homeShots != null ? homeShots : undefined,
+        away_shots: awayShots != null ? awayShots : undefined,
         player_stats: { home_players: homePlayers, away_players: awayPlayers },
       }),
     });
