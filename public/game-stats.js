@@ -196,6 +196,7 @@
       pass_attempts: 0, pass_completions: 0,
       faceoff_wins: 0, faceoff_losses: 0,
       pim: 0, pp_goals: 0, sh_goals: 0, blocked_shots: 0,
+      penalties_drawn: 0,
     };
     normalized.forEach(p => {
       t.goals           += p.goals;
@@ -210,6 +211,7 @@
       t.pp_goals        += p.pp_goals;
       t.sh_goals        += p.sh_goals;
       t.blocked_shots   += p.blocked_shots;
+      t.penalties_drawn += p.penalties_drawn;
     });
     t.faceoff_total = t.faceoff_wins + t.faceoff_losses;
     t.pass_pct = t.pass_attempts > 0
@@ -235,7 +237,7 @@
     const homePct = Math.round(homeVal / total * 100);
     const awayPct = 100 - homePct;
     return `<div class="gs-donut-wrap">
-      <div class="gs-donut" style="background: conic-gradient(${hc} 0% ${homePct}%, ${ac} ${homePct}% 100%);">
+      <div class="gs-donut" style="background: conic-gradient(${ac} 0% ${awayPct}%, ${hc} ${awayPct}% 100%);">
         <div class="gs-donut-inner">
           <span class="gs-donut-home" style="color:${hc};">${homePct}%</span>
           <span class="gs-donut-away" style="color:${ac};">${awayPct}%</span>
@@ -384,6 +386,7 @@
         <td class="gs-stat-name">Penalty Minutes</td>
         <td class="gs-stat-val${a.pim > h.pim ? ' gs-pim-hi' : ''}">${formatPim(a.pim)}</td>
       </tr>
+      ${statRow(h.penalties_drawn, 'Power Plays',       a.penalties_drawn)}
       ${statRow(h.pp_goals,      'Power Play Goals',  a.pp_goals)}
       ${statRow(h.blocked_shots, 'Blocks',            a.blocked_shots)}
       ${statRow(h.sh_goals,      'Shorthanded Goals', a.sh_goals)}
@@ -450,7 +453,7 @@
   // ── Combined skater + goalie tables (both teams in one table each) ───────
 
   function renderCombinedTables(game, homeNorm, awayNorm) {
-    const SKATER_COLS = 20;
+    const SKATER_COLS = 22;
     const GOALIE_COLS = 11;
 
     const hLogo = game.home_team.logo_url
@@ -481,6 +484,8 @@
         <td class="gs-num">${p.goals}</td>
         <td class="gs-num">${p.assists}</td>
         <td class="gs-num"><strong>${p.points}</strong></td>
+        <td class="gs-num">${p.pp_goals}</td>
+        <td class="gs-num">${p.sh_goals}</td>
         <td class="gs-num">${pm >= 0 ? '+' : ''}${pm}</td>
         <td class="gs-num">${formatToi(p.toi)}</td>
         <td class="gs-num">${formatToi(p.possession_secs)}</td>
@@ -532,7 +537,7 @@
         <thead>
           <tr class="gs-group-header-row">
             <th class="gs-col-player-head"></th>
-            <th colspan="10" class="gs-group-head">Offense</th>
+            <th colspan="12" class="gs-group-head">Offense</th>
             <th colspan="5" class="gs-group-head">Defense</th>
             <th colspan="3" class="gs-group-head">Penalties</th>
           </tr>
@@ -541,6 +546,8 @@
             <th data-tip="Goals">G</th>
             <th data-tip="Assists">A</th>
             <th data-tip="Points">P</th>
+            <th data-tip="Power Play Goals">PPG</th>
+            <th data-tip="Shorthanded Goals">SHG</th>
             <th data-tip="Plus / Minus">+/-</th>
             <th data-tip="Time on Ice">TOI</th>
             <th data-tip="Time with Puck">TwP</th>

@@ -368,6 +368,7 @@ function renderLastGames(lastGames, name, isGoalie) {
         <td>${g.shots_against || 0}</td><td>${g.goals_against || 0}</td>
         <td><strong>${svp}</strong></td>
         <td>${g.shutouts || 0}</td>
+        <td>${g.poke_check_saves || 0}</td><td>${g.desperation_saves || 0}</td>
         <td>${Math.max(0, (g.penalty_shot_attempts || 0) - (g.penalty_shot_ga || 0))}</td><td>${g.penalty_shot_ga || 0}</td>
         <td>${g.breakaway_shots || 0}</td><td>${g.breakaway_saves || 0}</td>
         <td>${bksvp}</td>
@@ -387,14 +388,15 @@ function renderLastGames(lastGames, name, isGoalie) {
         <td>${g.goals || 0}</td><td>${g.assists || 0}</td>
         <td><strong>${(g.goals || 0) + (g.assists || 0)}</strong></td>
         <td>${(g.plus_minus || 0) >= 0 ? '+' : ''}${g.plus_minus || 0}</td>
-        <td>${g.shots || 0}</td><td>${g.shot_attempts || 0}</td><td>${shot_pct}</td>
+        <td>${g.shots || 0}/${g.shot_attempts || 0}</td><td>${shot_pct}</td>
         <td>${g.hits || 0}</td><td>${g.blocked_shots || 0}</td>
         <td>${g.takeaways || 0}</td><td>${g.giveaways || 0}</td>
-        <td>${g.pim || 0}</td><td>${g.penalties_drawn || 0}</td>
+        <td>${g.pim || 0}</td><td>${g.penalties_drawn || 0}</td><td>${g.pk_clears || 0}</td>
         <td>${g.pp_goals || 0}</td><td>${g.sh_goals || 0}</td><td>${g.gwg || 0}</td>
         <td>${g.faceoff_wins || 0}</td><td>${g.faceoff_losses || 0}</td><td>${fow_pct}</td>
         <td>${g.deflections || 0}</td><td>${g.interceptions || 0}</td>
         <td>${g.pass_attempts || 0}</td><td>${g.pass_completions || 0}</td><td>${pass_pct}</td>
+        <td>${g.saucer_passes || 0}</td>
         <td>${g.hat_tricks || 0}</td>
         <td>${formatToi(g.possession_secs)}</td>
         <td>${formatToi(g.toi)}</td>
@@ -406,14 +408,15 @@ function renderLastGames(lastGames, name, isGoalie) {
   const skaterHead = `
     <th data-tip="Goals">G</th><th data-tip="Assists">A</th><th data-tip="Points">PTS</th>
     <th data-tip="Plus / Minus">+/-</th>
-    <th data-tip="Shots on Goal">SOG</th><th data-tip="Shot Attempts">SAT</th><th data-tip="Shooting %">S%</th>
+    <th data-tip="Shots on Goal / Shot Attempts">SOG</th><th data-tip="Shooting %">S%</th>
     <th data-tip="Hits">HIT</th><th data-tip="Blocked Shots">BS</th>
     <th data-tip="Takeaways">TKA</th><th data-tip="Giveaways">GVA</th>
-    <th data-tip="Penalty Minutes">PIM</th><th data-tip="Penalties Drawn">PD</th>
+    <th data-tip="Penalty Minutes">PIM</th><th data-tip="Penalties Drawn">PD</th><th data-tip="PK Clears">PKC</th>
     <th data-tip="Power Play Goals">PPG</th><th data-tip="Short-Hand Goals">SHG</th><th data-tip="Game-Winning Goals">GWG</th>
     <th data-tip="Faceoff Wins">FOW</th><th data-tip="Faceoff Losses">FOL</th><th data-tip="Faceoff Win %">FOW%</th>
     <th data-tip="Deflections">DLF</th><th data-tip="Interceptions">INT</th>
     <th data-tip="Pass Attempts">PA</th><th data-tip="Pass Completions">PC</th><th data-tip="Pass Completion %">PC%</th>
+    <th data-tip="Saucer Passes">SP</th>
     <th data-tip="Hat Tricks">HT</th>
     <th data-tip="Avg Puck Possession">POSS</th>
     <th data-tip="Time on Ice">TOI</th>
@@ -423,6 +426,7 @@ function renderLastGames(lastGames, name, isGoalie) {
     <th data-tip="Goals">G</th><th data-tip="Assists">A</th>
     <th data-tip="Shots Against">SA</th><th data-tip="Goals Against">GA</th>
     <th data-tip="Save Percentage">SV%</th><th data-tip="Shutouts">SO</th>
+    <th data-tip="Poke Check Saves">PCHK</th><th data-tip="Desperation Saves">DSV</th>
     <th data-tip="Penalty Shot Saves">PSS</th><th data-tip="Penalty Shot Goals Against">PSGA</th>
     <th data-tip="Breakaway Shots Against">BKSA</th><th data-tip="Breakaway Saves">BKSV</th>
     <th data-tip="Breakaway Save %">BKS%</th>
