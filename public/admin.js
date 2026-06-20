@@ -174,8 +174,8 @@ function showAdminPanel(role, username) {
     loadNameChangeRequests();
     showAdminTab('seasons');
   } else {
-    // game_admin: land directly on Games
-    showAdminTab('games');
+    // game_admin: games are managed from the Schedule page now
+    window.location.href = 'schedule.html';
   }
 }
 
@@ -349,7 +349,8 @@ async function loadSeasons() {
   const regularSeasons = allSeasons.filter(s => !s.is_playoff && (!s.league_type || s.league_type === adminLeagueFilter));
   const seasonOpts = '<option value="">— No Season —</option>' +
     regularSeasons.map(s => `<option value="${s.id}"${s.is_active ? ' selected' : ''}>${s.name} (${typeLabel(s.league_type)})</option>`).join('');
-  document.getElementById('game-season').innerHTML = seasonOpts;
+  const gameSeasonSel = document.getElementById('game-season');
+  if (gameSeasonSel) gameSeasonSel.innerHTML = seasonOpts;
   // If a season filter is active, keep it selected in the game form
   if (adminSeasonFilter) {
     const gameSeason = document.getElementById('game-season');
@@ -701,8 +702,10 @@ async function loadTeams() {
     } catch { /* fallback to all league teams */ }
   }
   const gOpts = '<option value="">Select team</option>' + dropdownTeams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
-  document.getElementById('game-home').innerHTML = gOpts;
-  document.getElementById('game-away').innerHTML = gOpts;
+  const gameHomeSel = document.getElementById('game-home');
+  const gameAwaySel = document.getElementById('game-away');
+  if (gameHomeSel) gameHomeSel.innerHTML = gOpts;
+  if (gameAwaySel) gameAwaySel.innerHTML = gOpts;
   // Roster tab team selector
   const rSel = document.getElementById('roster-team-select');
   const rPrev = rSel.value;
@@ -1077,6 +1080,8 @@ async function mergePlayers() {
 // ── Games ─────────────────────────────────────────────────────────────────
 
 async function loadGames() {
+  const tbody = document.querySelector('#games-table tbody');
+  if (!tbody) return; // Games tab removed — managed from the Schedule page
   const res = await fetch(`${API}/games`);
   const allGames = await res.json();
   // Filter games by current league using the season's league_type, and by season if selected
@@ -1091,7 +1096,6 @@ async function loadGames() {
     return !lt || lt === adminLeagueFilter;
   });
   const seasonMap = Object.fromEntries(allSeasons.map(s => [s.id, s.name]));
-  const tbody = document.querySelector('#games-table tbody');
   tbody.innerHTML = games.length === 0
     ? '<tr><td colspan="9" style="color:#8b949e">No games yet.</td></tr>'
     : games.map(g => `
@@ -1109,28 +1113,6 @@ async function loadGames() {
           <button class="btn-danger" style="margin-left:0.25rem;" onclick="deleteGame(${g.id})">Delete</button>
         </td>
       </tr>`).join('');
-}
-
-document.getElementById('game-form').addEventListener('submit', async e => {
-  e.preventDefault();
-  const date = document.getElementById('game-date').value;
-  const home_team_id = document.getElementById('game-home').value;
-  const away_team_id = document.getElementById('game-away').value;
-  const home_score = parseInt(document.getElementById('game-home-score').value) || 0;
-  const away_score = parseInt(document.getElementById('game-away-score').value) || 0;
-  const season_id = document.getElementById('game-season').value || null;
-  const status = document.getElementById('game-status-select').value;
-  const is_overtime = document.getElementById('game-overtime').checked ? 1 : 0;
-  const game_time = document.getElementById('game-time') ? document.getElementById('game-time').value || null : null;
-  if (home_team_id === away_team_id) { alert('Home and away teams must differ.'); return; }
-  await fetch(`${API}/games`, { method: 'POST', headers: adminJsonHeaders(), body: JSON.stringify({ date, home_team_id, away_team_id, home_score, away_score, season_id, status, is_overtime, game_time }) });
-  e.target.reset(); await loadGames();
-});
-
-async function deleteGame(id) {
-  if (!confirm('Delete this game?')) return;
-  await fetch(`${API}/games/${id}`, { method: 'DELETE', headers: adminHeaders() });
-  await loadGames();
 }
 
 // ── Game Stats Editor (shared via game-stats-editor.js) ──────────────────────

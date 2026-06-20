@@ -233,6 +233,10 @@ function buildGameRow(g) {
           onclick="togglePicker(${g.id}, event)">
           Pick EA Match
         </button>
+        <button class="btn-danger" style="font-size:0.82rem;padding:0.3rem 0.7rem;margin-left:0.25rem;"
+          onclick="deleteGame(${g.id}, event)">
+          Delete
+        </button>
       </td>` : ''}
     </tr>`;
 }
@@ -814,6 +818,61 @@ async function refreshGame(gameId) {
   } catch { /* ignore */ }
 }
 
+// ── Admin: Add / Delete games ──────────────────────────────────────────────
+
+function showAddGameStatus(msg, ok) {
+  const el = document.getElementById('sg-status-msg');
+  if (!el) return;
+  el.style.display = 'block';
+  el.textContent = msg;
+  el.style.color = ok ? '#3fb950' : '#f85149';
+}
+
+async function populateAddGameTeams() {
+  const homeSel = document.getElementById('sg-home');
+  const awaySel = document.getElementById('sg-away');
+  if (!homeSel || !awaySel) return;
+  let teams = [];
+  try {
+    const res = await fetch(`${API}/teams`);
+    if (res.ok) teams = await res.json();
+  } catch { teams = []; }
+  const league = SeasonSelector.getSelectedLeagueType();
+  const filtered = teams
+    .filter(t => !t.league_type || t.league_type === league)
+    .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  const opts = '<option value="">Select team</option>' +
+    filtered.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+  homeSel.innerHTML = opts;
+  awaySel.innerHTML = opts;
+}
+
+function updateAddGameVisibility() {
+  const box = document.getElementById('admin-add-game');
+  if (!box) return;
+  const sid = SeasonSelector.getSelectedSeasonId();
+  box.style.display = (isAdmin && sid) ? '' : 'none';
+}
+
+async function deleteGame(gameId, event) {
+  if (event) event.stopPropagation();
+  if (!confirm('Delete this game? This cannot be undone.')) return;
+  try {
+    const res = await fetch(`${API}/games/${gameId}`, {
+      method: 'DELETE',
+      headers: adminHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    if (activeGameId === gameId) closeGameDetail();
+    await loadSchedule();
+  } catch (err) {
+    alert(`Failed to delete game: ${err.message}`);
+  }
+}
+
 // ── Init ───────────────────────────────────────────────────────────────────
 
 (async () => {
@@ -836,14 +895,51 @@ async function refreshGame(gameId) {
     await openGameDetail(gameId);
   };
 
+  // Wire up admin "Add Game" form
+  document.getElementById('schedule-game-form')?.addEventListener('submit', async e => {
+    e.preventDefault();
+    const season_id = SeasonSelector.getSelectedSeasonId();
+    if (!season_id) { showAddGameStatus('Select a season first.', false); return; }
+    const date = document.getElementById('sg-date').value;
+    const home_team_id = document.getElementById('sg-home').value;
+    const away_team_id = document.getElementById('sg-away').value;
+    if (!date || !home_team_id || !away_team_id) { showAddGameStatus('Date, home and away teams are required.', false); return; }
+    if (home_team_id === away_team_id) { showAddGameStatus('Home and away teams must differ.', false); return; }
+    const home_score = parseInt(document.getElementById('sg-home-score').value, 10) || 0;
+    const away_score = parseInt(document.getElementById('sg-away-score').value, 10) || 0;
+    const status = document.getElementById('sg-status').value;
+    const is_overtime = document.getElementById('sg-overtime').checked ? 1 : 0;
+    const game_time = document.getElementById('sg-time').value || null;
+    try {
+      const res = await fetch(`${API}/games`, {
+        method: 'POST',
+        headers: adminHeaders(),
+        body: JSON.stringify({ date, home_team_id, away_team_id, home_score, away_score, season_id, status, is_overtime, game_time }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+      e.target.reset();
+      showAddGameStatus('✅ Game added.', true);
+      await loadSchedule();
+    } catch (err) {
+      showAddGameStatus(`Failed to add game: ${err.message}`, false);
+    }
+  });
+
   try {
     await SeasonSelector.init('season-selector-container');
-    SeasonSelector.onSeasonChange(() => {
+    SeasonSelector.onSeasonChange(async () => {
       closePicker();
       closeGameDetail();
-      loadSchedule();
+      await loadSchedule();
+      updateAddGameVisibility();
+      if (isAdmin) await populateAddGameTeams();
     });
     await loadSchedule();
+    updateAddGameVisibility();
+    if (isAdmin) await populateAddGameTeams();
   } catch (err) {
     console.error('[schedule] init error:', err);
     const root = document.getElementById('schedule-root');
