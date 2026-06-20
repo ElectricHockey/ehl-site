@@ -174,8 +174,8 @@ function showAdminPanel(role, username) {
     loadNameChangeRequests();
     showAdminTab('seasons');
   } else {
-    // game_admin: land directly on Games
-    showAdminTab('games');
+    // game_admin: games are managed from the Schedule page now
+    window.location.href = 'schedule.html';
   }
 }
 
@@ -349,7 +349,8 @@ async function loadSeasons() {
   const regularSeasons = allSeasons.filter(s => !s.is_playoff && (!s.league_type || s.league_type === adminLeagueFilter));
   const seasonOpts = '<option value="">— No Season —</option>' +
     regularSeasons.map(s => `<option value="${s.id}"${s.is_active ? ' selected' : ''}>${s.name} (${typeLabel(s.league_type)})</option>`).join('');
-  document.getElementById('game-season').innerHTML = seasonOpts;
+  const gameSeasonSel = document.getElementById('game-season');
+  if (gameSeasonSel) gameSeasonSel.innerHTML = seasonOpts;
   // If a season filter is active, keep it selected in the game form
   if (adminSeasonFilter) {
     const gameSeason = document.getElementById('game-season');
@@ -684,7 +685,8 @@ async function loadTeams() {
 
   // Dropdowns always show ALL teams (for player team assignment)
   const tOpts = '<option value="">— No Team —</option>' + allTeams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
-  document.getElementById('player-team').innerHTML = tOpts;
+  const playerTeamSel = document.getElementById('player-team');
+  if (playerTeamSel) playerTeamSel.innerHTML = tOpts;
   // Game home/away and roster dropdowns: filter by current league, further by season if selected
   const leagueTeams = allTeams.filter(t => !t.league_type || t.league_type === adminLeagueFilter);
   let dropdownTeams = leagueTeams;
@@ -701,8 +703,10 @@ async function loadTeams() {
     } catch { /* fallback to all league teams */ }
   }
   const gOpts = '<option value="">Select team</option>' + dropdownTeams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
-  document.getElementById('game-home').innerHTML = gOpts;
-  document.getElementById('game-away').innerHTML = gOpts;
+  const gameHomeSel = document.getElementById('game-home');
+  const gameAwaySel = document.getElementById('game-away');
+  if (gameHomeSel) gameHomeSel.innerHTML = gOpts;
+  if (gameAwaySel) gameAwaySel.innerHTML = gOpts;
   // Roster tab team selector
   const rSel = document.getElementById('roster-team-select');
   const rPrev = rSel.value;
@@ -767,6 +771,22 @@ async function loadRoster() {
 }
 
 // Season-aware roster management
+let _rosterAddAvailable = [];
+
+function _seasonRoleBadge(role) {
+  if (role === 'owner') return ' <span style="background:#3d2f00;color:#e3b341;border:1px solid #6b5300;border-radius:10px;padding:0.05rem 0.5rem;font-size:0.72rem;font-weight:600;">👑 Owner</span>';
+  if (role === 'gm')    return ' <span style="background:#0d2f3d;color:#58a6ff;border:1px solid #1f5570;border-radius:10px;padding:0.05rem 0.5rem;font-size:0.72rem;font-weight:600;">GM</span>';
+  return '';
+}
+
+function _seasonRoleControls(p) {
+  const btn = (label, role, danger) =>
+    `<button class="${danger ? 'btn-danger' : 'btn-secondary'}" style="font-size:0.75rem;padding:0.15rem 0.5rem;margin-right:0.25rem;" onclick="setSeasonRosterRole(${p.player_id}, ${role === null ? 'null' : `'${role}'`})">${label}</button>`;
+  if (p.role === 'owner') return btn('Remove Owner', null, true);
+  if (p.role === 'gm')    return btn('Remove GM', null, true);
+  return btn('Make Owner', 'owner', false) + btn('Make GM', 'gm', false);
+}
+
 async function loadSeasonRoster(teamId, allPlayers, body) {
   const seasonId = adminSeasonFilter;
   let seasonRoster = [];
@@ -776,38 +796,77 @@ async function loadSeasonRoster(teamId, allPlayers, body) {
   } catch { /* ignore */ }
 
   const teamRoster = seasonRoster.filter(p => String(p.team_id) === String(teamId));
-  const rosteredIds = new Set(teamRoster.map(p => p.player_id));
-  const available = allPlayers.filter(p => !rosteredIds.has(p.id));
+  // A player on ANY team's roster for this season cannot be added to another one.
+  const allRosteredIds = new Set(seasonRoster.map(p => p.player_id));
+  const available = allPlayers
+    .filter(p => !allRosteredIds.has(p.id))
+    .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  _rosterAddAvailable = available;
   const seasonName = (allSeasons.find(s => s.id === adminSeasonFilter) || {}).name || `Season #${seasonId}`;
 
   const rosterRows = teamRoster.length === 0
     ? '<tr><td colspan="4" style="color:#8b949e;">No players on season roster.</td></tr>'
     : teamRoster.map(p => `<tr>
         <td>${p.number ?? '–'}</td>
-        <td>${p.player_name}</td>
+        <td>${p.player_name}${_seasonRoleBadge(p.role)}</td>
         <td>${p.position ?? '–'}</td>
-        <td><button class="btn-danger" onclick="seasonRosterRemove(${p.player_id})">Remove</button></td>
+        <td style="white-space:nowrap;">${_seasonRoleControls(p)}<button class="btn-danger" style="font-size:0.75rem;padding:0.15rem 0.5rem;" onclick="seasonRosterRemove(${p.player_id})">Remove</button></td>
       </tr>`).join('');
 
-  const addOpts = available.length === 0
-    ? '<option value="">No available players</option>'
-    : '<option value="">— Pick a player —</option>' + available.map(p => {
-        const teamInfo = p.team_name ? `, ${p.team_name}` : '';
-        return `<option value="${p.id}">${p.name}${teamInfo}</option>`;
-      }).join('');
+  const addList = available.length === 0
+    ? '<p style="color:#8b949e;font-size:0.85rem;">No available players. (Players already on a roster this season are hidden.)</p>'
+    : available.map(p => `<label class="roster-add-item" data-name="${escAttr((p.name || '').toLowerCase())}" style="display:flex;align-items:center;gap:0.5rem;padding:0.25rem 0.4rem;border-bottom:1px solid #21262d;cursor:pointer;">
+        <input type="checkbox" class="roster-add-cb" value="${p.id}" />
+        <span>${p.name}${p.team_name ? ` <span style="color:#8b949e;font-size:0.82rem;">(${p.team_name})</span>` : ''}</span>
+      </label>`).join('');
 
   body.innerHTML = `
     <p style="color:#58a6ff;font-size:0.85rem;margin-bottom:0.75rem;">📅 Showing season roster for: <strong>${seasonName}</strong></p>
     <h3 style="margin-top:0;">Season Roster <span style="font-size:0.8rem;color:#8b949e;font-weight:400;">(${teamRoster.length} players)</span></h3>
     <table style="margin-bottom:1.5rem;">
-      <thead><tr><th>#</th><th>Name</th><th>Pos</th><th>Action</th></tr></thead>
+      <thead><tr><th>#</th><th>Name</th><th>Pos</th><th>Actions</th></tr></thead>
       <tbody>${rosterRows}</tbody>
     </table>
-    <h3>Add Player to Season Roster</h3>
-    <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
-      <select id="roster-add-select" style="background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.35rem 0.6rem;min-width:220px;">${addOpts}</select>
-      <button class="btn-primary" onclick="seasonRosterAdd()">Add to Season Roster</button>
-    </div>`;
+    <h3>Add Players to Season Roster</h3>
+    <input type="text" id="roster-search" placeholder="🔍 Search players…" oninput="filterRosterAddList()"
+      style="width:100%;max-width:360px;background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.4rem 0.7rem;margin-bottom:0.5rem;" />
+    <div id="roster-add-list" style="max-height:260px;overflow-y:auto;border:1px solid #30363d;border-radius:6px;margin-bottom:0.75rem;">${addList}</div>
+    <button class="btn-primary" onclick="seasonRosterAddSelected()">Add Selected to Season Roster</button>`;
+}
+
+function filterRosterAddList() {
+  const input = document.getElementById('roster-search');
+  const q = (input ? input.value : '').toLowerCase().trim();
+  document.querySelectorAll('#roster-add-list .roster-add-item').forEach(el => {
+    const name = el.dataset.name || '';
+    el.style.display = (!q || name.includes(q)) ? '' : 'none';
+  });
+}
+
+async function seasonRosterAddSelected() {
+  const teamId = document.getElementById('roster-team-select').value;
+  const ids = [...document.querySelectorAll('#roster-add-list .roster-add-cb:checked')].map(cb => Number(cb.value));
+  if (!teamId) { alert('Select a team first.'); return; }
+  if (ids.length === 0) { alert('Select at least one player to add.'); return; }
+  for (const playerId of ids) {
+    const res = await fetch(`${API}/seasons/${adminSeasonFilter}/season-roster`, {
+      method: 'POST',
+      headers: adminJsonHeaders(),
+      body: JSON.stringify({ player_id: playerId, team_id: Number(teamId) }),
+    });
+    if (!res.ok) { const e = await res.json().catch(() => ({})); alert(e.error || 'Failed to add a player'); break; }
+  }
+  await loadRoster();
+}
+
+async function setSeasonRosterRole(playerId, role) {
+  const res = await fetch(`${API}/seasons/${adminSeasonFilter}/season-roster/${playerId}/role`, {
+    method: 'PATCH',
+    headers: adminJsonHeaders(),
+    body: JSON.stringify({ role }),
+  });
+  if (!res.ok) { const e = await res.json().catch(() => ({})); alert(e.error || 'Failed to update role'); return; }
+  await loadRoster();
 }
 
 async function seasonRosterAdd() {
@@ -1041,12 +1100,11 @@ async function loadPlayers() {
 document.getElementById('player-form').addEventListener('submit', async e => {
   e.preventDefault();
   const name = document.getElementById('player-name').value.trim();
-  const team_id = document.getElementById('player-team').value || null;
   const position = document.getElementById('player-position').value.trim() || null;
   const number = document.getElementById('player-number').value || null;
   const discord = document.getElementById('player-discord').value.trim() || null;
   const discord_id = document.getElementById('player-discord-id').value.trim() || null;
-  await fetch(`${API}/players`, { method: 'POST', headers: adminJsonHeaders(), body: JSON.stringify({ name, team_id, position, number, discord, discord_id }) });
+  await fetch(`${API}/players`, { method: 'POST', headers: adminJsonHeaders(), body: JSON.stringify({ name, position, number, discord, discord_id }) });
   e.target.reset(); await loadTeams(); await loadPlayers();
 });
 
@@ -1077,6 +1135,8 @@ async function mergePlayers() {
 // ── Games ─────────────────────────────────────────────────────────────────
 
 async function loadGames() {
+  const tbody = document.querySelector('#games-table tbody');
+  if (!tbody) return; // Games tab removed — managed from the Schedule page
   const res = await fetch(`${API}/games`);
   const allGames = await res.json();
   // Filter games by current league using the season's league_type, and by season if selected
@@ -1091,7 +1151,6 @@ async function loadGames() {
     return !lt || lt === adminLeagueFilter;
   });
   const seasonMap = Object.fromEntries(allSeasons.map(s => [s.id, s.name]));
-  const tbody = document.querySelector('#games-table tbody');
   tbody.innerHTML = games.length === 0
     ? '<tr><td colspan="9" style="color:#8b949e">No games yet.</td></tr>'
     : games.map(g => `
@@ -1109,28 +1168,6 @@ async function loadGames() {
           <button class="btn-danger" style="margin-left:0.25rem;" onclick="deleteGame(${g.id})">Delete</button>
         </td>
       </tr>`).join('');
-}
-
-document.getElementById('game-form').addEventListener('submit', async e => {
-  e.preventDefault();
-  const date = document.getElementById('game-date').value;
-  const home_team_id = document.getElementById('game-home').value;
-  const away_team_id = document.getElementById('game-away').value;
-  const home_score = parseInt(document.getElementById('game-home-score').value) || 0;
-  const away_score = parseInt(document.getElementById('game-away-score').value) || 0;
-  const season_id = document.getElementById('game-season').value || null;
-  const status = document.getElementById('game-status-select').value;
-  const is_overtime = document.getElementById('game-overtime').checked ? 1 : 0;
-  const game_time = document.getElementById('game-time') ? document.getElementById('game-time').value || null : null;
-  if (home_team_id === away_team_id) { alert('Home and away teams must differ.'); return; }
-  await fetch(`${API}/games`, { method: 'POST', headers: adminJsonHeaders(), body: JSON.stringify({ date, home_team_id, away_team_id, home_score, away_score, season_id, status, is_overtime, game_time }) });
-  e.target.reset(); await loadGames();
-});
-
-async function deleteGame(id) {
-  if (!confirm('Delete this game?')) return;
-  await fetch(`${API}/games/${id}`, { method: 'DELETE', headers: adminHeaders() });
-  await loadGames();
 }
 
 // ── Game Stats Editor (shared via game-stats-editor.js) ──────────────────────

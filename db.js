@@ -602,6 +602,15 @@ async function initSchema() {
     }
   }
 
+  // Add role to season_rosters (per-season team Owner / GM designation)
+  try {
+    await pool.query('ALTER TABLE season_rosters ADD COLUMN role TEXT DEFAULT NULL');
+  } catch (err) {
+    if (!err.message || !err.message.includes('already exists')) {
+      console.warn('[db] Migration warning (season_rosters role):', err.message);
+    }
+  }
+
   console.log('[db] Schema initialised.');
 }
 

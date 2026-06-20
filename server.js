@@ -2200,6 +2200,7 @@ app.get('/api/games', async (req, res) => {
   const seasonId = req.query.season_id ? Number(req.query.season_id) : null;
   const status   = req.query.status   || null;
   const limit    = req.query.limit    ? Math.min(Number(req.query.limit), 100) : null;
+  const order    = String(req.query.order || '').toLowerCase() === 'desc' ? 'DESC' : 'ASC';
   const conditions = [];
   const params = [];
   if (seasonId) { conditions.push('g.season_id = ?'); params.push(seasonId); }
@@ -2216,7 +2217,7 @@ app.get('/api/games', async (req, res) => {
     JOIN teams ht ON g.home_team_id = ht.id
     JOIN teams at ON g.away_team_id = at.id
     LEFT JOIN playoff_series ps ON g.playoff_series_id = ps.id
-    ${where} ORDER BY g.date ASC ${limitClause}
+    ${where} ORDER BY g.date ${order}, g.id ${order} ${limitClause}
   `).all(...params);
   res.json(games);
 });
@@ -2956,7 +2957,7 @@ app.get('/api/seasons/:id/season-roster', requireAdmin, async (req, res) => {
   const season = await db.prepare('SELECT id FROM seasons WHERE id = ?').get(req.params.id);
   if (!season) return res.status(404).json({ error: 'Season not found' });
   const rows = await db.prepare(`
-    SELECT sr.player_id, sr.team_id, p.name AS player_name, p.position, p.number, t.name AS team_name
+    SELECT sr.player_id, sr.team_id, sr.role, p.name AS player_name, p.position, p.number, t.name AS team_name
     FROM season_rosters sr
     JOIN players p ON sr.player_id = p.id
     LEFT JOIN teams t ON sr.team_id = t.id
@@ -2973,8 +2974,28 @@ app.post('/api/seasons/:id/season-roster', requireOwner, async (req, res) => {
   const season = await db.prepare('SELECT id FROM seasons WHERE id = ?').get(req.params.id);
   if (!season) return res.status(404).json({ error: 'Season not found' });
   const tid = team_id ? Number(team_id) : null;
+  // A player may only be on one roster per season. Reject moving them to a
+  // different team while they are still rostered elsewhere this season.
+  const existing = await db.prepare('SELECT team_id FROM season_rosters WHERE season_id = ? AND player_id = ?').get(req.params.id, Number(player_id));
+  if (existing && existing.team_id !== tid) {
+    return res.status(409).json({ error: 'Player is already on a roster for this season' });
+  }
   await db.prepare('INSERT INTO season_rosters (season_id, player_id, team_id) VALUES (?, ?, ?) ON CONFLICT (season_id, player_id) DO UPDATE SET team_id = EXCLUDED.team_id')
     .run(req.params.id, Number(player_id), tid);
+  res.json({ ok: true });
+});
+
+// PATCH /api/seasons/:id/season-roster/:playerId/role – set/clear a player's Owner/GM role
+app.patch('/api/seasons/:id/season-roster/:playerId/role', requireOwner, async (req, res) => {
+  const raw = req.body ? req.body.role : null;
+  const role = (raw === 'owner' || raw === 'gm') ? raw : null;
+  const entry = await db.prepare('SELECT team_id FROM season_rosters WHERE season_id = ? AND player_id = ?').get(req.params.id, req.params.playerId);
+  if (!entry) return res.status(404).json({ error: 'Player is not on this season roster' });
+  // Only one Owner per team per season: demote any existing owner on the same team first.
+  if (role === 'owner' && entry.team_id != null) {
+    await db.prepare("UPDATE season_rosters SET role = NULL WHERE season_id = ? AND team_id = ? AND role = 'owner'").run(req.params.id, entry.team_id);
+  }
+  await db.prepare('UPDATE season_rosters SET role = ? WHERE season_id = ? AND player_id = ?').run(role, req.params.id, req.params.playerId);
   res.json({ ok: true });
 });
 
