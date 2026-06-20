@@ -622,6 +622,16 @@ button:hover, .btn:hover { opacity: 0.85; }
 .gs-pie-dot    { width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
 
 /* ── Player cards (top 3 stars) ─────────────────────────────── */
+.gs-stars-title {
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #e6edf3;
+  padding-bottom: 0.4rem;
+  margin-bottom: 0.65rem;
+  border-bottom: 2px solid #30363d;
+}
 .gs-player-cards {
   display: flex;
   gap: 0.65rem;
@@ -636,8 +646,21 @@ button:hover, .btn:hover { opacity: 0.85; }
   border-radius: 8px;
   padding: 0.55rem 0.7rem;
   display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.gs-card-content {
+  display: flex;
   flex-direction: column;
   gap: 0.3rem;
+  min-width: 0;
+}
+.gs-card-logo {
+  width: 34px;
+  height: 34px;
+  object-fit: contain;
+  flex-shrink: 0;
 }
 .gs-card-badge {
   display: inline-flex;
@@ -727,6 +750,7 @@ button:hover, .btn:hover { opacity: 0.85; }
 .gs-rbar-fill  { height: 100%; border-radius: 2px; }
 .gs-rbar-off   { background: #f0883e; }
 .gs-rbar-def   { background: #58a6ff; }
+.gs-rbar-tpl   { background: #3fb950; }
 .gs-row-logo {
   width: 16px; height: 16px;
   object-fit: contain;
