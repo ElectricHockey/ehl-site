@@ -2868,7 +2868,8 @@ app.get('/api/standings', async (req, res) => {
   res.json({ teams, playoff_cutoff, conf_cutoffs, div_cutoffs });
 });
 
-// GET /api/seasons/:id/teams – return teams that have at least one game in this season
+// GET /api/seasons/:id/teams – return teams that participate in this season
+// (have at least one game scheduled/played, or have a season-roster assignment)
 app.get('/api/seasons/:id/teams', requireAdmin, async (req, res) => {
   const season = await db.prepare('SELECT id FROM seasons WHERE id = ?').get(req.params.id);
   if (!season) return res.status(404).json({ error: 'Season not found' });
@@ -2879,9 +2880,11 @@ app.get('/api/seasons/:id/teams', requireAdmin, async (req, res) => {
       SELECT home_team_id FROM games WHERE season_id = ?
       UNION
       SELECT away_team_id FROM games WHERE season_id = ?
+      UNION
+      SELECT team_id FROM season_rosters WHERE season_id = ? AND team_id IS NOT NULL
     )
     ORDER BY t.name
-  `).all(req.params.id, req.params.id);
+  `).all(req.params.id, req.params.id, req.params.id);
   res.json(teams);
 });
 

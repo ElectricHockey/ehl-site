@@ -653,11 +653,23 @@ async function loadTeams() {
   const res = await fetch(`${API}/teams`);
   const allTeams = await res.json();
   // Filter teams table display by selected league
-  const teams = allTeams.filter(t => !t.league_type || t.league_type === adminLeagueFilter);
+  let teams = allTeams.filter(t => !t.league_type || t.league_type === adminLeagueFilter);
+  // When a season is selected, restrict the table to teams that are part of that season
+  let seasonTeamIds = null;
+  if (adminSeasonFilter) {
+    try {
+      const seasonTeamsRes = await fetch(`${API}/seasons/${adminSeasonFilter}/teams`, { headers: adminHeaders() });
+      if (seasonTeamsRes.ok) {
+        const seasonTeams = await seasonTeamsRes.json();
+        seasonTeamIds = new Set(seasonTeams.map(t => t.id));
+        teams = teams.filter(t => seasonTeamIds.has(t.id));
+      }
+    } catch { /* fall back to showing all league teams */ }
+  }
   const tbody = document.querySelector('#teams-table tbody');
   const ltLabel = lt => lt === 'threes' ? '3v3' : lt === 'sixes' ? '6v6' : '—';
   tbody.innerHTML = teams.length === 0
-    ? '<tr><td colspan="9" style="color:#8b949e">No teams yet.</td></tr>'
+    ? `<tr><td colspan="9" style="color:#8b949e">${adminSeasonFilter ? 'No teams in this season yet.' : 'No teams yet.'}</td></tr>`
     : teams.map(t => `
       <tr>
         <td>${t.logo_url ? `<img src="${t.logo_url}" class="team-logo-sm" alt="${t.name}" />` : '—'}</td>
@@ -688,17 +700,10 @@ async function loadTeams() {
   // Game home/away and roster dropdowns: filter by current league, further by season if selected
   const leagueTeams = allTeams.filter(t => !t.league_type || t.league_type === adminLeagueFilter);
   let dropdownTeams = leagueTeams;
-  if (adminSeasonFilter) {
-    try {
-      const seasonTeamsRes = await fetch(`${API}/seasons/${adminSeasonFilter}/teams`, { headers: adminHeaders() });
-      if (seasonTeamsRes.ok) {
-        const seasonTeams = await seasonTeamsRes.json();
-        const seasonTeamIds = new Set(seasonTeams.map(t => t.id));
-        const filtered = leagueTeams.filter(t => seasonTeamIds.has(t.id));
-        if (filtered.length > 0) dropdownTeams = filtered;
-        // fallback: if no teams in season yet, show all league teams
-      }
-    } catch { /* fallback to all league teams */ }
+  if (adminSeasonFilter && seasonTeamIds) {
+    const filtered = leagueTeams.filter(t => seasonTeamIds.has(t.id));
+    if (filtered.length > 0) dropdownTeams = filtered;
+    // fallback: if no teams in season yet, show all league teams
   }
   const gOpts = '<option value="">Select team</option>' + dropdownTeams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
   document.getElementById('game-home').innerHTML = gOpts;
