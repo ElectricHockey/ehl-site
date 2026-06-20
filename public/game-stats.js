@@ -376,14 +376,14 @@
       ${statRow(game.home_score, 'Goals',         game.away_score)}
       ${statRow(homeShots,       'Total Shots',   awayShots)}
       ${statRow(h.hits,          'Hits',          a.hits)}
+      ${statRow(h.blocked_shots, 'Blocks',            a.blocked_shots)}
       ${fmtStatRow(h.possession_secs, 'Time on Attack', a.possession_secs, formatToi, formatToi)}
       ${fmtStatRow(h.pass_pct, 'Passing%', a.pass_pct,
           v => v !== null ? v + '%' : '–', v => v !== null ? v + '%' : '–')}
       ${statRow(h.faceoff_wins,  'Face offs won',     a.faceoff_wins)}
       ${fmtStatRow(h.pim, 'Penalty Minutes', a.pim, formatPim, formatPim)}
-      ${statRow(h.penalties_drawn, 'Penalties',       a.penalties_drawn)}
+      ${statRow(a.penalties_drawn, 'Penalties',       h.penalties_drawn)}
       ${statRow(h.pp_goals,      'Power Play Goals',  a.pp_goals)}
-      ${statRow(h.blocked_shots, 'Blocks',            a.blocked_shots)}
       ${statRow(h.sh_goals,      'Shorthanded Goals', a.sh_goals)}
     </table>`;
 

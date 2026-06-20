@@ -2200,6 +2200,7 @@ app.get('/api/games', async (req, res) => {
   const seasonId = req.query.season_id ? Number(req.query.season_id) : null;
   const status   = req.query.status   || null;
   const limit    = req.query.limit    ? Math.min(Number(req.query.limit), 100) : null;
+  const order    = String(req.query.order || '').toLowerCase() === 'desc' ? 'DESC' : 'ASC';
   const conditions = [];
   const params = [];
   if (seasonId) { conditions.push('g.season_id = ?'); params.push(seasonId); }
@@ -2216,7 +2217,7 @@ app.get('/api/games', async (req, res) => {
     JOIN teams ht ON g.home_team_id = ht.id
     JOIN teams at ON g.away_team_id = at.id
     LEFT JOIN playoff_series ps ON g.playoff_series_id = ps.id
-    ${where} ORDER BY g.date ASC ${limitClause}
+    ${where} ORDER BY g.date ${order}, g.id ${order} ${limitClause}
   `).all(...params);
   res.json(games);
 });

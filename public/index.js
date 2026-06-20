@@ -26,7 +26,7 @@ async function loadRecentScores(seasonId, rootId) {
   if (!root) return;
   if (!seasonId) { root.innerHTML = '<p style="color:#8b949e;font-size:0.88rem;">No active season.</p>'; return; }
   try {
-    const res = await fetch(`${API}/games?status=complete&season_id=${seasonId}&limit=${RECENT_GAMES_COUNT}`);
+    const res = await fetch(`${API}/games?status=complete&season_id=${seasonId}&limit=${RECENT_GAMES_COUNT}&order=desc`);
     if (!res.ok) { root.innerHTML = '<p style="color:#8b949e;font-size:0.88rem;">No games yet.</p>'; return; }
     const games = await res.json();
     if (!games.length) { root.innerHTML = '<p style="color:#8b949e;font-size:0.88rem;">No completed games yet.</p>'; return; }
