@@ -380,13 +380,8 @@
       ${fmtStatRow(h.pass_pct, 'Passing%', a.pass_pct,
           v => v !== null ? v + '%' : '–', v => v !== null ? v + '%' : '–')}
       ${statRow(h.faceoff_wins,  'Face offs won',     a.faceoff_wins)}
-      ${/* PIM: higher = more penalties (bad), so highlight in red rather than with a team bar */''}
-      <tr class="gs-stat-row">
-        <td class="gs-stat-val${h.pim > a.pim ? ' gs-pim-hi' : ''}">${formatPim(h.pim)}</td>
-        <td class="gs-stat-name">Penalty Minutes</td>
-        <td class="gs-stat-val${a.pim > h.pim ? ' gs-pim-hi' : ''}">${formatPim(a.pim)}</td>
-      </tr>
-      ${statRow(h.penalties_drawn, 'Power Plays',       a.penalties_drawn)}
+      ${fmtStatRow(h.pim, 'Penalty Minutes', a.pim, formatPim, formatPim)}
+      ${statRow(h.penalties_drawn, 'Penalties',       a.penalties_drawn)}
       ${statRow(h.pp_goals,      'Power Play Goals',  a.pp_goals)}
       ${statRow(h.blocked_shots, 'Blocks',            a.blocked_shots)}
       ${statRow(h.sh_goals,      'Shorthanded Goals', a.sh_goals)}
@@ -404,22 +399,31 @@
     </div>`;
   }
 
-  // ── Rating bars (offensive / defensive) ─────────────────────────────────
+  // ── Rating bars (offensive / defensive / team play) ─────────────────────
 
   function renderRatingBars(p) {
     const off = Math.min(100, Math.max(0, Number(p.offensive_rating) || 0));
     const def = Math.min(100, Math.max(0, Number(p.defensive_rating) || 0));
-    if (!off && !def) return '<div class="gs-rating-bars"></div>';
+    const tpl = Math.min(100, Math.max(0, Number(p.team_play_rating) || 0));
+    if (!off && !def && !tpl) return '<div class="gs-rating-bars"></div>';
     return `<div class="gs-rating-bars">
       <div class="gs-rbar"><div class="gs-rbar-fill gs-rbar-off" style="width:${off}%;"></div></div>
       <div class="gs-rbar"><div class="gs-rbar-fill gs-rbar-def" style="width:${def}%;"></div></div>
+      <div class="gs-rbar"><div class="gs-rbar-fill gs-rbar-tpl" style="width:${tpl}%;"></div></div>
     </div>`;
   }
 
   // ── Top player cards ─────────────────────────────────────────────────────
 
   function renderPlayerCards(game, homeNorm, awayNorm) {
-    const allPlayers = [...homeNorm, ...awayNorm];
+    const hLogo = (game.home_team && game.home_team.logo_url) || '';
+    const aLogo = (game.away_team && game.away_team.logo_url) || '';
+    const hName = (game.home_team && game.home_team.name) || '';
+    const aName = (game.away_team && game.away_team.name) || '';
+    const allPlayers = [
+      ...homeNorm.map(p => ({ ...p, _teamLogo: hLogo, _teamName: hName })),
+      ...awayNorm.map(p => ({ ...p, _teamLogo: aLogo, _teamName: aName })),
+    ];
     const candidates = allPlayers
       .sort((a, b) => (computeOvr(b) || 0) - (computeOvr(a) || 0))
       .slice(0, 3);
@@ -437,17 +441,24 @@
            <span>A <strong>${p.assists}</strong></span>
            <span>P <strong>${p.points}</strong></span>
            <span>+/- <strong>${p.plus_minus >= 0 ? '+' : ''}${p.plus_minus}</strong></span>`;
+      const logo = p._teamLogo
+        ? `<img src="${p._teamLogo}" class="gs-card-logo" alt="${p._teamName}" />`
+        : '';
       return `<div class="gs-player-card">
-        <div class="gs-card-badge" style="${ovrBadgeStyle(ovr)}">${ovr || '–'}</div>
-        <div class="gs-card-info">
-          <div class="gs-card-name">${p.name}</div>
-          <div class="gs-card-pos">${p.position || ''}</div>
+        <div class="gs-card-content">
+          <div class="gs-card-badge" style="${ovrBadgeStyle(ovr)}">${ovr || '–'}</div>
+          <div class="gs-card-info">
+            <div class="gs-card-name">${p.name}</div>
+            <div class="gs-card-pos">${p.position || ''}</div>
+          </div>
+          <div class="gs-card-stats">${stats}</div>
         </div>
-        <div class="gs-card-stats">${stats}</div>
+        ${logo}
       </div>`;
     }
 
-    return `<div class="gs-player-cards">${candidates.map(makeCard).join('')}</div>`;
+    return `<div class="gs-stars-title">3 STARS</div>
+      <div class="gs-player-cards">${candidates.map(makeCard).join('')}</div>`;
   }
 
   // ── Combined skater + goalie tables (both teams in one table each) ───────
