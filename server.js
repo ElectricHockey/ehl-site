@@ -1304,10 +1304,15 @@ const GOALIE_SELECT = `
   SUM(gps.breakaway_saves) AS breakaway_saves,
   SUM(gps.desperation_saves) AS desperation_saves,
   SUM(gps.poke_check_saves) AS poke_check_saves,
-  SUM(gps.goalie_wins) AS goalie_wins,
-  SUM(gps.goalie_losses) AS goalie_losses,
-  SUM(gps.goalie_otw) AS goalie_otw,
-  SUM(gps.goalie_otl) AS goalie_otl,
+  SUM(CASE WHEN (gps.team_id = g.home_team_id AND g.home_score > g.away_score)
+               OR (gps.team_id = g.away_team_id AND g.away_score > g.home_score) THEN 1 ELSE 0 END) AS goalie_wins,
+  SUM(CASE WHEN ((gps.team_id = g.home_team_id AND g.home_score < g.away_score)
+                OR (gps.team_id = g.away_team_id AND g.away_score < g.home_score))
+               AND (g.is_overtime IS NULL OR g.is_overtime = 0) THEN 1 ELSE 0 END) AS goalie_losses,
+  0 AS goalie_otw,
+  SUM(CASE WHEN ((gps.team_id = g.home_team_id AND g.home_score < g.away_score)
+                OR (gps.team_id = g.away_team_id AND g.away_score < g.home_score))
+               AND g.is_overtime = 1 THEN 1 ELSE 0 END) AS goalie_otl,
   CASE WHEN COUNT(DISTINCT gps.game_id) > 0
     THEN ROUND(CAST(SUM(gps.shots_against) AS NUMERIC)/COUNT(DISTINCT gps.game_id),1)
     ELSE NULL END AS shots_per_game,
@@ -2534,10 +2539,15 @@ app.get('/api/stats/leaders', async (req, res) => {
       SUM(gps.breakaway_saves) AS breakaway_saves,
       SUM(gps.desperation_saves) AS desperation_saves,
       SUM(gps.poke_check_saves) AS poke_check_saves,
-      SUM(gps.goalie_wins) AS goalie_wins,
-      SUM(gps.goalie_losses) AS goalie_losses,
-      SUM(gps.goalie_otw) AS goalie_otw,
-      SUM(gps.goalie_otl) AS goalie_otl,
+      SUM(CASE WHEN (gps.team_id = g.home_team_id AND g.home_score > g.away_score)
+                   OR (gps.team_id = g.away_team_id AND g.away_score > g.home_score) THEN 1 ELSE 0 END) AS goalie_wins,
+      SUM(CASE WHEN ((gps.team_id = g.home_team_id AND g.home_score < g.away_score)
+                    OR (gps.team_id = g.away_team_id AND g.away_score < g.home_score))
+                   AND (g.is_overtime IS NULL OR g.is_overtime = 0) THEN 1 ELSE 0 END) AS goalie_losses,
+      0 AS goalie_otw,
+      SUM(CASE WHEN ((gps.team_id = g.home_team_id AND g.home_score < g.away_score)
+                    OR (gps.team_id = g.away_team_id AND g.away_score < g.home_score))
+                   AND g.is_overtime = 1 THEN 1 ELSE 0 END) AS goalie_otl,
       ROUND(AVG(CASE WHEN gps.overall_rating > 0 THEN CAST(gps.overall_rating AS NUMERIC)
                      WHEN GREATEST(gps.defensive_rating, gps.offensive_rating, gps.team_play_rating) > 0
                        THEN GREATEST(0.0, LEAST(99.0,

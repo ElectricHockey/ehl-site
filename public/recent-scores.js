@@ -4,6 +4,12 @@ function buildScoreCards(games) {
   const completed = games.filter(g => g.status === 'complete');
   if (completed.length === 0) return '<p style="color:#8b949e;">No completed games yet for this season.</p>';
 
+  // Sort most recent first
+  completed.sort((a, b) => {
+    if (b.date !== a.date) return b.date.localeCompare(a.date);
+    return b.id - a.id;
+  });
+
   const logoHtml = (url, alt) => url ? `<img src="${url}" class="team-logo-sm" alt="${alt}" />` : '';
 
   return completed.map(g => {

@@ -856,7 +856,11 @@ function updateAddGameVisibility() {
 
 async function deleteGame(gameId, event) {
   if (event) event.stopPropagation();
-  if (!confirm('Delete this game? This cannot be undone.')) return;
+  const game = allGames.find(g => g.id === gameId);
+  const matchDesc = game
+    ? `${game.home_team_name} vs ${game.away_team_name} (${game.date})`
+    : `Game #${gameId}`;
+  if (!confirm(`Are you sure you want to delete this match?\n\n${matchDesc}\n\nThis cannot be undone.`)) return;
   try {
     const res = await fetch(`${API}/games/${gameId}`, {
       method: 'DELETE',

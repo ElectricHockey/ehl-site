@@ -16,6 +16,7 @@ function setAdminSeason(id) {
   if (gameSeason && adminSeasonFilter) gameSeason.value = adminSeasonFilter;
   loadTeams();
   loadGames();
+  loadRoster();
 }
 
 function _syncLeagueFormDefaults(league) {
