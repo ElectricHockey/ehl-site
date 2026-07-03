@@ -619,9 +619,10 @@ async function loadPlayer() {
     const pos = isGoalie ? 'G' :
       (player ? (player.user_position || player.player_position || '–') : (seasonTeamStats[0]?.position || '–'));
 
-    // Career aggregate for hero stat boxes
-    const career = seasonTeamStats.length
-      ? (isGoalie ? sumGoalieRows(seasonTeamStats) : sumSkaterRows(seasonTeamStats))
+    // Career aggregate for hero stat boxes – scoped to the selected league
+    const ltSeasonStats = seasonTeamStats.filter(r => (r.league_type || '') === preferredLt);
+    const career = ltSeasonStats.length
+      ? (isGoalie ? sumGoalieRows(ltSeasonStats) : sumSkaterRows(ltSeasonStats))
       : null;
     const totalGP  = career?.gp ?? 0;
     const totalPts = isGoalie ? null : (career?.points ?? 0);
@@ -663,7 +664,7 @@ async function loadPlayer() {
       : `<p class="phl-fa">Free Agent</p>`;
 
     // Sidebar career info rows
-    const uniqueSeasons = new Set(seasonTeamStats.map(r => r.season_id)).size;
+    const uniqueSeasons = new Set(ltSeasonStats.map(r => r.season_id)).size;
     const infoRows = [];
     infoRows.push({ label: 'Seasons', value: uniqueSeasons || 0 });
     infoRows.push({ label: 'Position', value: isGoalie ? 'Goalie' : (pos !== '–' ? pos : '–') });

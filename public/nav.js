@@ -100,7 +100,11 @@ document.addEventListener('click', e => {
       if (!VALID_TYPES.includes(next)) return;
       if (next !== getActiveLeague()) {
         localStorage.setItem(STORAGE_TYPE, next);
-        window.location.reload();
+        // Navigate to the current page with the updated ?league= param so the
+        // reload doesn't overwrite the new choice from the old URL's query string.
+        const u = new URL(window.location.href);
+        u.searchParams.set('league', next);
+        window.location.href = u.href;
         return;
       }
       renderLeagueNav();
