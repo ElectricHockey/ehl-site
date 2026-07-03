@@ -52,6 +52,77 @@ nav a:hover, nav a.active {
   text-decoration: none;
 }
 
+/* ── League-first nav mode ─────────────────────────────────── */
+nav.league-nav-mode {
+  min-height: 56px;
+  height: auto;
+  gap: 1rem;
+  padding-top: 0.35rem;
+  padding-bottom: 0.35rem;
+}
+
+.league-nav-switch {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.league-nav-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.28rem 0.65rem;
+  border-radius: 8px;
+  border: 1px solid #30363d;
+  background: #161b22;
+  color: #8b949e;
+  cursor: pointer;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.league-nav-btn:hover {
+  border-color: #8b949e;
+  color: #c9d1d9;
+}
+
+.league-nav-btn.active {
+  border-color: #58a6ff;
+  background: #1c2a3a;
+  color: #58a6ff;
+}
+
+.league-nav-logo {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  border-radius: 3px;
+}
+
+.league-subnav {
+  background: #0f141b;
+  border-bottom: 1px solid #30363d;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.45rem 1.5rem;
+  flex-wrap: wrap;
+}
+
+.league-subnav-link {
+  color: #c9d1d9;
+  font-size: 0.88rem;
+  padding: 0.3rem 0.58rem;
+  border-radius: 6px;
+}
+
+.league-subnav-link:hover,
+.league-subnav-link.active {
+  background: #21262d;
+  color: #e6edf3;
+  text-decoration: none;
+}
+
 /* ── Nav dropdown ─────────────────────────────────────────── */
 .nav-dropdown {
   position: relative;

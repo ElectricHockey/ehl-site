@@ -17,6 +17,99 @@ document.addEventListener('click', e => {
   }
 });
 
+// ── League-first navigation (3's / 6's) ─────────────────────────────────────
+(function () {
+  const STORAGE_TYPE = 'ehl_league_type';
+  const VALID_TYPES = ['threes', 'sixes'];
+
+  const queryLeague = new URLSearchParams(window.location.search).get('league');
+  if (VALID_TYPES.includes(queryLeague)) {
+    localStorage.setItem(STORAGE_TYPE, queryLeague);
+  }
+
+  const nav = document.querySelector('nav');
+  if (!nav) return;
+
+  const getActiveLeague = () => {
+    const saved = localStorage.getItem(STORAGE_TYPE);
+    return VALID_TYPES.includes(saved) ? saved : 'threes';
+  };
+
+  const keepInTopBar = el =>
+    el.classList.contains('brand') ||
+    el.id === 'nav-admin-link' ||
+    el.classList.contains('nav-portal');
+
+  [...nav.children].forEach(el => {
+    if (!keepInTopBar(el)) el.style.display = 'none';
+  });
+
+  nav.classList.add('league-nav-mode');
+
+  const switcher = document.createElement('div');
+  switcher.className = 'league-nav-switch';
+  switcher.innerHTML = `
+    <button class="league-nav-btn" data-league="sixes">
+      <img src="/api/site-logo?type=sixes" alt="6's" class="league-nav-logo" />
+      <span>6's</span>
+    </button>
+    <button class="league-nav-btn" data-league="threes">
+      <img src="/api/site-logo?type=threes" alt="3's" class="league-nav-logo" />
+      <span>3's</span>
+    </button>
+  `;
+
+  const portalLink = nav.querySelector('.nav-portal');
+  if (portalLink) nav.insertBefore(switcher, portalLink);
+  else nav.appendChild(switcher);
+
+  const currentPath = (window.location.pathname.split('/').pop() || 'index.html').toLowerCase();
+  const links = [
+    { href: 'index.html', label: 'Home' },
+    { href: 'schedule.html', label: 'Schedule' },
+    { href: 'standings.html', label: 'Standings' },
+    { href: 'recent-scores.html', label: 'Recent Scores' },
+    { href: 'stats.html', label: 'Stats' },
+    { href: 'records.html', label: 'Records' },
+    { href: 'players.html', label: 'Players' },
+  ];
+
+  const subnav = document.createElement('div');
+  subnav.className = 'league-subnav';
+  subnav.innerHTML = links.map(l =>
+    `<a class="league-subnav-link${currentPath === l.href ? ' active' : ''}" data-base-href="${l.href}" href="${l.href}">${l.label}</a>`
+  ).join('');
+  nav.insertAdjacentElement('afterend', subnav);
+
+  function renderLeagueNav() {
+    const active = getActiveLeague();
+    switcher.querySelectorAll('.league-nav-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.league === active);
+    });
+    subnav.querySelectorAll('.league-subnav-link').forEach(a => {
+      const baseHref = a.dataset.baseHref || 'index.html';
+      const u = new URL(baseHref, window.location.origin);
+      u.searchParams.set('league', active);
+      a.href = `${u.pathname}${u.search}`;
+    });
+  }
+
+  switcher.querySelectorAll('.league-nav-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const next = btn.dataset.league;
+      if (!VALID_TYPES.includes(next)) return;
+      if (next !== getActiveLeague()) {
+        localStorage.setItem(STORAGE_TYPE, next);
+        window.location.reload();
+        return;
+      }
+      renderLeagueNav();
+    });
+  });
+
+  renderLeagueNav();
+}());
+
 // ── Admin nav link visibility ──────────────────────────────────────────────
 // The Admin link is hidden by default. Show it only when the visitor has an
 // active admin session (owner Discord ID 363915181765427200 or promoted admin).
@@ -245,4 +338,3 @@ document.addEventListener('click', e => {
     }
   });
 }());
-

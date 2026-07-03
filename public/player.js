@@ -1,4 +1,5 @@
 const API = '/api';
+const LEAGUE_TYPE_STORAGE = 'ehl_league_type';
 
 // League type keys — must match values stored in the seasons.league_type column
 const LT_SIXES  = 'sixes';
@@ -9,6 +10,16 @@ const LT_TABS   = [
 ];
 // Extra (non-league) tabs on the player profile
 const LT_EXTRA_TABS = ['records', 'awards'];
+
+function getPreferredLeagueType() {
+  const qp = new URLSearchParams(window.location.search).get('league');
+  if (qp === LT_THREES || qp === LT_SIXES) {
+    localStorage.setItem(LEAGUE_TYPE_STORAGE, qp);
+    return qp;
+  }
+  const saved = localStorage.getItem(LEAGUE_TYPE_STORAGE);
+  return (saved === LT_THREES || saved === LT_SIXES) ? saved : LT_THREES;
+}
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -526,12 +537,14 @@ function renderPlayerRecords(holdings) {
 
 // ── League-type tab rendering ──────────────────────────────────────────────
 
-function renderLeagueSections(seasonTeamStats, lastGames, isGoalie, holdings) {
+function renderLeagueSections(seasonTeamStats, lastGames, isGoalie, holdings, preferredLt) {
   const ltSet = new Set(seasonTeamStats.map(r => r.league_type || ''));
   lastGames.forEach(g => ltSet.add(g.league_type || ''));
 
   // Default to first league that has data, fallback to first tab
-  const defaultLt = (LT_TABS.find(t => ltSet.has(t.key)) || LT_TABS[0]).key;
+  const defaultLt =
+    (preferredLt && LT_TABS.some(t => t.key === preferredLt) ? preferredLt : null) ||
+    (LT_TABS.find(t => ltSet.has(t.key)) || LT_TABS[0]).key;
 
   // League tabs + spacer + Records + Awards
   const tabButtons = [
@@ -565,7 +578,7 @@ function renderLeagueSections(seasonTeamStats, lastGames, isGoalie, holdings) {
 
 // ── Skater / Goalie tab switcher ───────────────────────────────────────────
 
-function renderPlayerModeTabs(skaterStats, goalieStats, lastGames, defaultIsGoalie, holdings) {
+function renderPlayerModeTabs(skaterStats, goalieStats, lastGames, defaultIsGoalie, holdings, preferredLt) {
   const hasSkater = skaterStats.length > 0;
   const hasGoalie = goalieStats.length > 0;
 
@@ -576,11 +589,11 @@ function renderPlayerModeTabs(skaterStats, goalieStats, lastGames, defaultIsGoal
   const goalieBtnClass = `sg-tab${goalieActive ? ' sg-tab-active' : ''}`;
 
   const skaterContent = hasSkater
-    ? renderLeagueSections(skaterStats, lastGames, false, holdings)
+    ? renderLeagueSections(skaterStats, lastGames, false, holdings, preferredLt)
     : '<p style="color:#8b949e;padding:1rem 0;">No skater stats on file.</p>';
 
   const goalieContent = hasGoalie
-    ? renderLeagueSections(goalieStats, lastGames, true, holdings)
+    ? renderLeagueSections(goalieStats, lastGames, true, holdings, preferredLt)
     : '<p style="color:#8b949e;padding:1rem 0;">No goalie stats on file.</p>';
 
   return `
@@ -599,6 +612,7 @@ async function loadPlayer() {
   const root = document.getElementById('player-root');
   const params = new URLSearchParams(window.location.search);
   const name = params.get('name');
+  const preferredLt = getPreferredLeagueType();
   if (!name) {
     root.innerHTML = '<p class="error">No player name specified.</p>';
     return;
@@ -711,7 +725,7 @@ async function loadPlayer() {
           </div>
         </aside>
         <div class="phl-main">
-          ${renderPlayerModeTabs(skaterStats || [], goalieStats || [], lastGames, isGoalie, holdings)}
+          ${renderPlayerModeTabs(skaterStats || [], goalieStats || [], lastGames, isGoalie, holdings, preferredLt)}
         </div>
       </div>
     `;
@@ -737,6 +751,12 @@ async function loadPlayer() {
         btn.addEventListener('click', () => {
           const lt = btn.dataset.lt;
           if (!LT_TABS.some(t => t.key === lt) && !LT_EXTRA_TABS.includes(lt)) return;
+          if (LT_TABS.some(t => t.key === lt)) {
+            localStorage.setItem(LEAGUE_TYPE_STORAGE, lt);
+            const u = new URL(window.location.href);
+            u.searchParams.set('league', lt);
+            window.history.replaceState({}, '', `${u.pathname}${u.search}`);
+          }
           sgPanel.querySelectorAll('.lt-tab').forEach(b => b.classList.remove('lt-tab-active'));
           btn.classList.add('lt-tab-active');
           sgPanel.querySelectorAll('.lt-panel').forEach(p => { p.style.display = 'none'; });

@@ -1,8 +1,31 @@
 const API = '/api';
+const LEAGUE_TYPE_STORAGE = 'ehl_league_type';
 
 const RECENT_GAMES_COUNT = 6;
 const MIN_SHOTS_FOR_SAVE_PCT = 10;
 const STATS_LEADERS_COUNT = 5;
+
+function getSelectedLeagueType() {
+  const qp = new URLSearchParams(window.location.search).get('league');
+  if (qp === 'threes' || qp === 'sixes') {
+    localStorage.setItem(LEAGUE_TYPE_STORAGE, qp);
+    return qp;
+  }
+  const saved = localStorage.getItem(LEAGUE_TYPE_STORAGE);
+  return (saved === 'threes' || saved === 'sixes') ? saved : 'threes';
+}
+
+function applyHomeLeagueView(type) {
+  const showThrees = type !== 'sixes';
+  const threesHeader = document.getElementById('home-threes-header');
+  const threesPanel = document.getElementById('home-panels-threes');
+  const sixesHeader = document.getElementById('home-sixes-header');
+  const sixesPanel = document.getElementById('home-panels-sixes');
+  if (threesHeader) threesHeader.style.display = showThrees ? '' : 'none';
+  if (threesPanel) threesPanel.style.display = showThrees ? '' : 'none';
+  if (sixesHeader) sixesHeader.style.display = showThrees ? 'none' : '';
+  if (sixesPanel) sixesPanel.style.display = showThrees ? 'none' : '';
+}
 
 function hexToRgbStr(hex) {
   if (!hex || hex.length < 4) return null;
@@ -155,6 +178,8 @@ async function loadStatsLeaders(seasonId, rootId) {
 // ── Bootstrap ───────────────────────────────────────────────────────────────
 
 async function initHome() {
+  applyHomeLeagueView(getSelectedLeagueType());
+
   // Load active seasons for both league types in parallel
   let threesSeasonId = null;
   let sixesSeasonId  = null;
@@ -198,6 +223,8 @@ async function initHome() {
     loadMiniStandings(sixesSeasonId,  'home-standings-sixes'),
     loadStatsLeaders(sixesSeasonId,   'home-leaders-sixes'),
   ]);
+
+  applyHomeLeagueView(getSelectedLeagueType());
 }
 
 initHome();

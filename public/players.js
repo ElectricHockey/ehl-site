@@ -1,7 +1,18 @@
 const API = '/api';
+const LEAGUE_TYPE_STORAGE = 'ehl_league_type';
 
 let allPlayers = [];
 let sortState = { key: 'name', dir: 'asc' };
+
+function getSelectedLeagueType() {
+  const qp = new URLSearchParams(window.location.search).get('league');
+  if (qp === 'threes' || qp === 'sixes') {
+    localStorage.setItem(LEAGUE_TYPE_STORAGE, qp);
+    return qp;
+  }
+  const saved = localStorage.getItem(LEAGUE_TYPE_STORAGE);
+  return (saved === 'threes' || saved === 'sixes') ? saved : 'threes';
+}
 
 async function loadPlayers() {
   try {
@@ -105,7 +116,7 @@ function applyFilters() {
       : '';
     return `<tr>
       <td>${numCell}</td>
-      <td><a href="player.html?name=${encodeURIComponent(p.name)}" class="player-link">${p.name}</a></td>
+      <td><a href="player.html?name=${encodeURIComponent(p.name)}&league=${encodeURIComponent(getSelectedLeagueType())}" class="player-link">${p.name}</a></td>
       <td>${teamCell}</td>
       <td>${posBadge}</td>
       <td>${platformBadge}</td>
