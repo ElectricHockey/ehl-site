@@ -1,6 +1,5 @@
-// season-selector.js – League type + season selector
-// Renders tab buttons for 3's / 6's (with the site logo) and a "Season"
-// dropdown that updates to show only seasons for the active league.
+// season-selector.js – Season selector
+// Renders a season dropdown for the league selected in the top navigation bar.
 // Exposes:
 //   SeasonSelector.init(containerId)
 //   SeasonSelector.getSelectedSeasonId()        – season id for active league
@@ -11,6 +10,7 @@
 const SeasonSelector = (() => {
   const STORAGE_TYPE   = 'ehl_league_type';
   const STORAGE_SEASON = { threes: 'ehl_season_threes', sixes: 'ehl_season_sixes' };
+  const VALID_TYPES    = ['threes', 'sixes'];
   let _onChange = null;
   let _seasonsCache = { threes: [], sixes: [] };
   let _noAllTime = false;
@@ -18,8 +18,13 @@ const SeasonSelector = (() => {
   const selectStyle = 'background:#161b22;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.3rem 0.6rem;font-size:0.88rem;';
 
   function getSelectedLeagueType() {
-    const active = document.querySelector('.league-tab-btn.active');
-    return active ? active.dataset.league : 'threes';
+    const qp = new URLSearchParams(window.location.search).get('league');
+    if (VALID_TYPES.includes(qp)) {
+      localStorage.setItem(STORAGE_TYPE, qp);
+      return qp;
+    }
+    const saved = localStorage.getItem(STORAGE_TYPE);
+    return VALID_TYPES.includes(saved) ? saved : 'threes';
   }
 
   function getSelectedSeasonId() {
@@ -93,16 +98,6 @@ const SeasonSelector = (() => {
     ).join('');
   }
 
-  function _switchLeague(type) {
-    localStorage.setItem(STORAGE_TYPE, type);
-    // Update tab active states
-    document.querySelectorAll('.league-tab-btn').forEach(btn => {
-      btn.classList.toggle('active', btn.dataset.league === type);
-    });
-    _populateSeasonSelect(type);
-    if (_onChange) _onChange();
-  }
-
   async function init(containerId, options) {
     _noAllTime = !!(options && options.noAllTime);
     const container = document.getElementById(containerId || 'season-selector-container');
@@ -115,18 +110,10 @@ const SeasonSelector = (() => {
       _seasonsCache.threes = r3.ok ? await r3.json() : [];
       _seasonsCache.sixes  = r6.ok ? await r6.json() : [];
 
-      const savedType = localStorage.getItem(STORAGE_TYPE) || 'threes';
+      const savedType = getSelectedLeagueType();
 
       container.innerHTML = `
         <div class="league-tabs-row">
-          <button class="league-tab-btn${savedType === 'threes' ? ' active' : ''}" data-league="threes">
-            <img src="/api/site-logo?type=threes" alt="EHL" class="league-tab-logo" />
-            <span>3's</span>
-          </button>
-          <button class="league-tab-btn${savedType === 'sixes' ? ' active' : ''}" data-league="sixes">
-            <img src="/api/site-logo?type=sixes" alt="EHL" class="league-tab-logo" />
-            <span>6's</span>
-          </button>
           <div class="league-tab-season">
             <label for="season-select" style="color:#8b949e;font-size:0.85rem;white-space:nowrap;">Season:</label>
             <select id="season-select" style="${selectStyle}"></select>
@@ -134,10 +121,6 @@ const SeasonSelector = (() => {
         </div>`;
 
       _populateSeasonSelect(savedType);
-
-      container.querySelectorAll('.league-tab-btn').forEach(btn => {
-        btn.addEventListener('click', () => _switchLeague(btn.dataset.league));
-      });
 
       document.getElementById('season-select').addEventListener('change', e => {
         const type = getSelectedLeagueType();

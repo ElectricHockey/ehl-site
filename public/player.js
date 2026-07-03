@@ -1,4 +1,5 @@
 const API = '/api';
+const LEAGUE_TYPE_STORAGE = 'ehl_league_type';
 
 // League type keys — must match values stored in the seasons.league_type column
 const LT_SIXES  = 'sixes';
@@ -9,6 +10,16 @@ const LT_TABS   = [
 ];
 // Extra (non-league) tabs on the player profile
 const LT_EXTRA_TABS = ['records', 'awards'];
+
+function getPreferredLeagueType() {
+  const qp = new URLSearchParams(window.location.search).get('league');
+  if (qp === LT_THREES || qp === LT_SIXES) {
+    localStorage.setItem(LEAGUE_TYPE_STORAGE, qp);
+    return qp;
+  }
+  const saved = localStorage.getItem(LEAGUE_TYPE_STORAGE);
+  return (saved === LT_THREES || saved === LT_SIXES) ? saved : LT_THREES;
+}
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -446,7 +457,7 @@ function renderLastGames(lastGames, name, isGoalie) {
 
 // ── Player record holdings renderer ───────────────────────────────────────
 
-function renderPlayerRecords(holdings) {
+function renderPlayerRecords(holdings, leagueType) {
   if (!holdings || holdings.length === 0) {
     return '<p style="color:#8b949e;padding:1.5rem 0;">This player does not currently hold any records.</p>';
   }
@@ -494,10 +505,8 @@ function renderPlayerRecords(holdings) {
     </table></div>`;
   }
 
-  const threes = holdings.filter(h => h.league_type === 'threes');
-  const sixes  = holdings.filter(h => h.league_type === 'sixes');
+  const filtered = holdings.filter(h => h.league_type === leagueType);
 
-  // Group by category within each section
   function groupRows(arr) {
     const alltime    = arr.filter(h => h.category === 'alltime');
     const seasonal   = arr.filter(h => h.category === 'seasonal');
@@ -505,58 +514,43 @@ function renderPlayerRecords(holdings) {
     return { alltime, seasonal, singlegame };
   }
 
-  let html = '';
-  const g3 = groupRows(threes);
-  if (g3.alltime.length || g3.seasonal.length || g3.singlegame.length) {
-    html += `<h3 style="color:#58a6ff;margin-top:0.5rem;margin-bottom:0.25rem;">3's</h3>`;
-    html += buildSection('All-Time Records', g3.alltime);
-    html += buildSection('Single-Season Records', g3.seasonal);
-    html += buildSection('Single-Game Records', g3.singlegame);
-  }
-  const g6 = groupRows(sixes);
-  if (g6.alltime.length || g6.seasonal.length || g6.singlegame.length) {
-    html += `<h3 style="color:#58a6ff;margin-top:1rem;margin-bottom:0.25rem;">6's</h3>`;
-    html += buildSection('All-Time Records', g6.alltime);
-    html += buildSection('Single-Season Records', g6.seasonal);
-    html += buildSection('Single-Game Records', g6.singlegame);
-  }
+  const grouped = groupRows(filtered);
+  const html =
+    buildSection('All-Time Records', grouped.alltime) +
+    buildSection('Single-Season Records', grouped.seasonal) +
+    buildSection('Single-Game Records', grouped.singlegame);
 
   return html || '<p style="color:#8b949e;padding:1.5rem 0;">This player does not currently hold any records.</p>';
 }
 
 // ── League-type tab rendering ──────────────────────────────────────────────
 
-function renderLeagueSections(seasonTeamStats, lastGames, isGoalie, holdings) {
-  const ltSet = new Set(seasonTeamStats.map(r => r.league_type || ''));
-  lastGames.forEach(g => ltSet.add(g.league_type || ''));
+function renderLeagueSections(seasonTeamStats, lastGames, isGoalie, holdings, preferredLt) {
+  const selectedLt = LT_TABS.some(t => t.key === preferredLt) ? preferredLt : LT_THREES;
+  const filteredStats = seasonTeamStats.filter(r => (r.league_type || '') === selectedLt);
+  const filteredGames = lastGames.filter(g => (g.league_type || '') === selectedLt);
+  const statsContent = filteredStats.length || filteredGames.length
+    ? `
+      <h2 class="section-heading" style="margin-top:0.75rem;">🕐 Last 5 Games</h2>
+      ${renderLastGames(filteredGames, '', isGoalie)}
+      <h2 class="section-heading">📊 Career Stats</h2>
+      ${renderCareerTable(filteredStats, isGoalie)}
+    `
+    : '<p style="color:#8b949e;padding:1.5rem 0;">No stats on file for the selected league.</p>';
 
-  // Default to first league that has data, fallback to first tab
-  const defaultLt = (LT_TABS.find(t => ltSet.has(t.key)) || LT_TABS[0]).key;
-
-  // League tabs + spacer + Records + Awards
   const tabButtons = [
-    ...LT_TABS.map(t =>
-      `<button class="lt-tab${t.key === defaultLt ? ' lt-tab-active' : ''}" data-lt="${t.key}">${t.label}</button>`
-    ),
+    '<button class="lt-tab lt-tab-active" data-lt="stats">Stats</button>',
     '<span style="flex:1;"></span>',
     `<button class="lt-tab" data-lt="records">Records</button>`,
     `<button class="lt-tab" data-lt="awards">Awards</button>`,
   ].join('');
 
-  const leaguePanels = LT_TABS.map(t => {
-    const filteredStats = seasonTeamStats.filter(r => (r.league_type || '') === t.key);
-    const filteredGames = lastGames.filter(g => (g.league_type || '') === t.key);
-    return `<div class="lt-panel" id="lt-panel-${t.key}" style="${t.key !== defaultLt ? 'display:none;' : ''}">
-      <h2 class="section-heading" style="margin-top:0.75rem;">🕐 Last 5 Games</h2>
-      ${renderLastGames(filteredGames, '', isGoalie)}
-      <h2 class="section-heading">📊 Career Stats</h2>
-      ${renderCareerTable(filteredStats, isGoalie)}
-    </div>`;
-  }).join('');
-
-  return `<div class="lt-tabs">${tabButtons}</div>${leaguePanels}
+  return `<div class="lt-tabs">${tabButtons}</div>
+    <div class="lt-panel" id="lt-panel-stats">
+      ${statsContent}
+    </div>
     <div class="lt-panel" id="lt-panel-records" style="display:none;">
-      ${renderPlayerRecords(holdings || [])}
+      ${renderPlayerRecords(holdings || [], selectedLt)}
     </div>
     <div class="lt-panel" id="lt-panel-awards" style="display:none;">
       <p style="color:#8b949e;padding:1.5rem 0;">No awards on file.</p>
@@ -565,7 +559,7 @@ function renderLeagueSections(seasonTeamStats, lastGames, isGoalie, holdings) {
 
 // ── Skater / Goalie tab switcher ───────────────────────────────────────────
 
-function renderPlayerModeTabs(skaterStats, goalieStats, lastGames, defaultIsGoalie, holdings) {
+function renderPlayerModeTabs(skaterStats, goalieStats, lastGames, defaultIsGoalie, holdings, preferredLt) {
   const hasSkater = skaterStats.length > 0;
   const hasGoalie = goalieStats.length > 0;
 
@@ -576,11 +570,11 @@ function renderPlayerModeTabs(skaterStats, goalieStats, lastGames, defaultIsGoal
   const goalieBtnClass = `sg-tab${goalieActive ? ' sg-tab-active' : ''}`;
 
   const skaterContent = hasSkater
-    ? renderLeagueSections(skaterStats, lastGames, false, holdings)
+    ? renderLeagueSections(skaterStats, lastGames, false, holdings, preferredLt)
     : '<p style="color:#8b949e;padding:1rem 0;">No skater stats on file.</p>';
 
   const goalieContent = hasGoalie
-    ? renderLeagueSections(goalieStats, lastGames, true, holdings)
+    ? renderLeagueSections(goalieStats, lastGames, true, holdings, preferredLt)
     : '<p style="color:#8b949e;padding:1rem 0;">No goalie stats on file.</p>';
 
   return `
@@ -599,6 +593,7 @@ async function loadPlayer() {
   const root = document.getElementById('player-root');
   const params = new URLSearchParams(window.location.search);
   const name = params.get('name');
+  const preferredLt = getPreferredLeagueType();
   if (!name) {
     root.innerHTML = '<p class="error">No player name specified.</p>';
     return;
@@ -624,9 +619,10 @@ async function loadPlayer() {
     const pos = isGoalie ? 'G' :
       (player ? (player.user_position || player.player_position || '–') : (seasonTeamStats[0]?.position || '–'));
 
-    // Career aggregate for hero stat boxes
-    const career = seasonTeamStats.length
-      ? (isGoalie ? sumGoalieRows(seasonTeamStats) : sumSkaterRows(seasonTeamStats))
+    // Career aggregate for hero stat boxes – scoped to the selected league
+    const ltSeasonStats = seasonTeamStats.filter(r => (r.league_type || '') === preferredLt);
+    const career = ltSeasonStats.length
+      ? (isGoalie ? sumGoalieRows(ltSeasonStats) : sumSkaterRows(ltSeasonStats))
       : null;
     const totalGP  = career?.gp ?? 0;
     const totalPts = isGoalie ? null : (career?.points ?? 0);
@@ -668,7 +664,7 @@ async function loadPlayer() {
       : `<p class="phl-fa">Free Agent</p>`;
 
     // Sidebar career info rows
-    const uniqueSeasons = new Set(seasonTeamStats.map(r => r.season_id)).size;
+    const uniqueSeasons = new Set(ltSeasonStats.map(r => r.season_id)).size;
     const infoRows = [];
     infoRows.push({ label: 'Seasons', value: uniqueSeasons || 0 });
     infoRows.push({ label: 'Position', value: isGoalie ? 'Goalie' : (pos !== '–' ? pos : '–') });
@@ -711,7 +707,7 @@ async function loadPlayer() {
           </div>
         </aside>
         <div class="phl-main">
-          ${renderPlayerModeTabs(skaterStats || [], goalieStats || [], lastGames, isGoalie, holdings)}
+          ${renderPlayerModeTabs(skaterStats || [], goalieStats || [], lastGames, isGoalie, holdings, preferredLt)}
         </div>
       </div>
     `;
@@ -731,12 +727,12 @@ async function loadPlayer() {
       });
     });
 
-    // Wire up league-type tab buttons scoped to their parent sg-panel
+    // Wire up stats/records/awards tab buttons scoped to their parent sg-panel
     root.querySelectorAll('[id^="sg-panel-"]').forEach(sgPanel => {
       sgPanel.querySelectorAll('.lt-tab').forEach(btn => {
         btn.addEventListener('click', () => {
           const lt = btn.dataset.lt;
-          if (!LT_TABS.some(t => t.key === lt) && !LT_EXTRA_TABS.includes(lt)) return;
+          if (lt !== 'stats' && !LT_EXTRA_TABS.includes(lt)) return;
           sgPanel.querySelectorAll('.lt-tab').forEach(b => b.classList.remove('lt-tab-active'));
           btn.classList.add('lt-tab-active');
           sgPanel.querySelectorAll('.lt-panel').forEach(p => { p.style.display = 'none'; });
