@@ -1,10 +1,21 @@
 /* records.js – League Records page */
 const API = '/api';
+const LEAGUE_TYPE_STORAGE = 'ehl_league_type';
 
 let _leagueType = 'threes';
 let _seasonType = 'regular';   // 'regular' | 'playoffs'
 let _category   = 'alltime';
 let _data       = {};   // cache keyed by "leagueType:seasonType"
+
+function getPreferredLeagueType() {
+  const qp = new URLSearchParams(window.location.search).get('league');
+  if (qp === 'threes' || qp === 'sixes') {
+    localStorage.setItem(LEAGUE_TYPE_STORAGE, qp);
+    return qp;
+  }
+  const saved = localStorage.getItem(LEAGUE_TYPE_STORAGE);
+  return (saved === 'threes' || saved === 'sixes') ? saved : 'threes';
+}
 
 // ── Format helpers ─────────────────────────────────────────────────────────
 function fmt(v, type) {
@@ -244,14 +255,7 @@ async function loadRecords(lt, st) {
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-  document.querySelectorAll('.league-tab-btn[data-lt]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.league-tab-btn[data-lt]').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      _leagueType = btn.dataset.lt;
-      loadRecords(_leagueType, _seasonType);
-    });
-  });
+  _leagueType = getPreferredLeagueType();
 
   document.querySelectorAll('#season-type-bar .league-tab-btn').forEach(btn => {
     btn.addEventListener('click', () => {
