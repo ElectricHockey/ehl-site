@@ -72,7 +72,10 @@
 
   <div class="container">
     <h1 id="page-title">League Standings</h1>
-    <div style="margin-bottom:1.25rem;" id="season-selector-container"></div>
+    <div style="margin-bottom:1.25rem;display:flex;align-items:center;gap:1.5rem;flex-wrap:wrap;">
+      <div id="season-selector-container"></div>
+      <div id="standings-view-container" style="display:flex;align-items:center;gap:0.5rem;"></div>
+    </div>
 
     <div id="standings-root"><p class="loading">Loading standings…</p></div>
     <div id="playoff-root" style="display:none;"><p class="loading">Loading playoff bracket…</p></div>
