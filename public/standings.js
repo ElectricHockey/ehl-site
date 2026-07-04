@@ -270,14 +270,9 @@ function buildStandingsHtml(data) {
         ? confOrder
         : sortTeams(confMap[conf], _sortCol, _sortDir);
 
-      // Determine cutoff: per-conf cutoff, or fall back to global cutoff expressed as conf rank
-      const confCut = conf !== 'Unassigned' ? (confCutoffs[conf] ?? null) : null;
-
-      let effectiveCut = confCut;
-      if (effectiveCut == null && cutoff != null) {
-        // Count how many teams from this conference fall within the global cutoff
-        effectiveCut = confOrder.filter(t => globalRank[t.id] <= cutoff).length || null;
-      }
+      // Use only the per-conference cutoff; never fall back to the league-wide cutoff
+      // (conference standings qualify teams purely by conference placement, not league points)
+      const effectiveCut = conf !== 'Unassigned' ? (confCutoffs[conf] ?? null) : null;
 
       html += `<div style="overflow-x:auto;"><table>${thead}<tbody>`;
       html += renderGroupRows(group, confRank, effectiveCut);
@@ -308,12 +303,8 @@ function buildStandingsHtml(data) {
         ? divOrder
         : sortTeams(divMap[div], _sortCol, _sortDir);
 
-      const divCut = div !== 'Unassigned' ? (divCutoffs[div] ?? null) : null;
-
-      let effectiveCut = divCut;
-      if (effectiveCut == null && cutoff != null) {
-        effectiveCut = divOrder.filter(t => globalRank[t.id] <= cutoff).length || null;
-      }
+      // Use only the per-division cutoff; never fall back to the league-wide cutoff
+      const effectiveCut = div !== 'Unassigned' ? (divCutoffs[div] ?? null) : null;
 
       html += `<div style="overflow-x:auto;"><table>${thead}<tbody>`;
       html += renderGroupRows(group, divRank, effectiveCut);
