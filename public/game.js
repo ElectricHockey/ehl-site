@@ -54,9 +54,9 @@ async function loadGame() {
 
     const adminBtn = adminFlag
       ? `<p style="text-align:center;margin-bottom:0.75rem;">
-           <a href="admin.html#games" style="display:inline-block;padding:0.35rem 0.9rem;background:#21262d;border:1px solid #30363d;border-radius:6px;color:#58a6ff;font-size:0.82rem;text-decoration:none;">
+           <button onclick="editGameStats('${id}')" style="display:inline-block;padding:0.35rem 0.9rem;background:#21262d;border:1px solid #30363d;border-radius:6px;color:#58a6ff;font-size:0.82rem;cursor:pointer;">
              ✏️ Edit Stats / Score
-           </a>
+           </button>
          </p>`
       : '';
 
@@ -87,6 +87,9 @@ async function loadGame() {
     }
 
     root.innerHTML = html;
+
+    // Reload the game view after the stats editor saves changes
+    window._gseOnSave = () => loadGame();
   } catch (err) {
     root.innerHTML = `<p class="error">Failed to load game: ${err.message}</p>`;
   }
