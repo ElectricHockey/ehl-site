@@ -60,6 +60,7 @@ function recordPts(r) {
 let _standingsData = null;   // { teams, playoff_cutoff, conf_cutoffs, div_cutoffs }
 let _sortCol = 'pts';
 let _sortDir = 'desc';
+let _viewMode = null;        // null | 'league' | 'conference' | 'division'
 
 const SORT_DEFAULTS = { name: 'asc' };
 
@@ -159,6 +160,63 @@ function clinchLegend(teams) {
   </div>`;
 }
 
+// ── View selector (League / Conference / Division) ────────────────────────
+
+function updateViewSelector(hasConf, hasDiv) {
+  const container = document.getElementById('standings-view-container');
+  if (!container) return;
+
+  if (!hasConf && !hasDiv) {
+    container.innerHTML = '';
+    _viewMode = 'league';
+    return;
+  }
+
+  // Set default or correct an invalid view mode for this data
+  if (!_viewMode || (_viewMode === 'conference' && !hasConf) || (_viewMode === 'division' && !hasDiv)) {
+    _viewMode = hasConf ? 'conference' : 'division';
+  }
+
+  const options = [
+    { value: 'league', label: 'League' },
+    ...(hasConf ? [{ value: 'conference', label: 'Conference' }] : []),
+    ...(hasDiv  ? [{ value: 'division',   label: 'Division'   }] : []),
+  ];
+
+  const selectStyle = 'background:#161b22;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.3rem 0.6rem;font-size:0.88rem;';
+  container.innerHTML = `
+    <label for="standings-view-select" style="color:#8b949e;font-size:0.85rem;white-space:nowrap;">View:</label>
+    <select id="standings-view-select" style="${selectStyle}">
+      ${options.map(o => `<option value="${o.value}"${_viewMode === o.value ? ' selected' : ''}>${o.label}</option>`).join('')}
+    </select>`;
+
+  document.getElementById('standings-view-select').addEventListener('change', e => {
+    _viewMode = e.target.value;
+    if (_standingsData) {
+      document.getElementById('standings-root').innerHTML = buildStandingsHtml(_standingsData);
+    }
+  });
+}
+
+// ── Shared helper: insert playoff line based on rank map ──────────────────
+
+function renderGroupRows(group, rankMap, cutoffN) {
+  let rows = '';
+  let inserted = false;
+  group.forEach((t, i) => {
+    if (cutoffN != null && !inserted) {
+      const prevIn = i > 0 && rankMap[group[i - 1].id] <= cutoffN;
+      const currOut = rankMap[t.id] > cutoffN;
+      if ((i === 0 && currOut) || (prevIn && currOut)) {
+        rows += PLAYOFF_LINE_ROW;
+        inserted = true;
+      }
+    }
+    rows += makeRow(t, rankMap[t.id]);
+  });
+  return rows;
+}
+
 function buildStandingsHtml(data) {
   if (!data) return '<p style="color:#8b949e">Select a season above to view standings.</p>';
   const teams = data.teams || data;   // handle both {teams,playoff_cutoff} and bare array
@@ -168,101 +226,104 @@ function buildStandingsHtml(data) {
 
   if (!teams || teams.length === 0) return '<p style="color:#8b949e">No standings data for this season yet.</p>';
 
-  const hasGroups = teams.some(t => t.conference || t.division);
+  const hasConf = teams.some(t => t.conference);
+  const hasDiv  = teams.some(t => t.division);
   const thead = buildThead();
+
+  // Update (or hide) the view selector
+  updateViewSelector(hasConf, hasDiv);
 
   // Build a global pts-sort order to know each team's true league rank
   const globalOrder = sortTeams(teams, 'pts', 'desc');
   const globalRank = {};
   globalOrder.forEach((t, i) => { globalRank[t.id] = i + 1; });
 
-  if (!hasGroups) {
+  const effectiveView = (hasConf || hasDiv) ? (_viewMode || 'league') : 'league';
+
+  // ── League view (flat list) ──────────────────────────────────────────────
+  if (effectiveView === 'league') {
     const sorted = _sortCol === 'rank'
       ? [...globalOrder]
       : sortTeams(teams, _sortCol, _sortDir);
-    let rows = '';
-    sorted.forEach((t, i) => {
-      // Insert playoff line AFTER the last in-playoff team (between rank N and N+1)
-      if (cutoff && i === cutoff) rows += PLAYOFF_LINE_ROW;
-      rows += makeRow(t, globalRank[t.id]);
-    });
+    const rows = renderGroupRows(sorted, globalRank, cutoff);
     return `<div style="overflow-x:auto;"><table>${thead}<tbody>${rows}</tbody></table></div>${clinchLegend(teams)}`;
   }
 
-  // Grouped by conference → division
+  // ── Conference view ──────────────────────────────────────────────────────
+  if (effectiveView === 'conference') {
+    const confMap = {};
+    for (const t of teams) {
+      const key = t.conference || 'Unassigned';
+      if (!confMap[key]) confMap[key] = [];
+      confMap[key].push(t);
+    }
+    let html = '';
+    for (const conf of Object.keys(confMap).sort()) {
+      html += `<div class="conference-block"><h3>${conf}${conf !== 'Unassigned' ? ' Conference' : ''}</h3>`;
 
-  const conferences = {};
-  for (const t of teams) {
-    const conf = t.conference || 'Unassigned';
-    const div  = t.division  || '';
-    if (!conferences[conf]) conferences[conf] = {};
-    if (!conferences[conf][div]) conferences[conf][div] = [];
-    conferences[conf][div].push(t);
-  }
-  let html = '';
-  for (const conf of Object.keys(conferences).sort()) {
-    html += `<div class="conference-block"><h3>${conf}${conf !== 'Unassigned' ? ' Conference' : ''}</h3>`;
-    for (const div of Object.keys(conferences[conf]).sort()) {
-      if (div) html += `<div class="division-block"><h4 style="font-size:1rem;color:#8b949e;margin-top:1rem;">${div} Division</h4>`;
+      // Rank teams within this conference by pts
+      const confOrder = sortTeams(confMap[conf], 'pts', 'desc');
+      const confRank = {};
+      confOrder.forEach((t, i) => { confRank[t.id] = i + 1; });
+
       const group = _sortCol === 'rank'
-        ? sortTeams(conferences[conf][div], 'pts', 'desc')
-        : sortTeams(conferences[conf][div], _sortCol, _sortDir);
-      html += `<div style="overflow-x:auto;"><table>${thead}<tbody>`;
-      let cutoffInserted = false;
+        ? confOrder
+        : sortTeams(confMap[conf], _sortCol, _sortDir);
 
-      // Determine the effective cutoff for this group
-      // Priority: division cutoff > conference cutoff > global cutoff (by global rank)
-      const divCut = div ? (divCutoffs[div] ?? null) : null;
+      // Determine cutoff: per-conf cutoff, or fall back to global cutoff expressed as conf rank
       const confCut = conf !== 'Unassigned' ? (confCutoffs[conf] ?? null) : null;
 
-      if (divCut != null) {
-        // Use per-division position: insert line after divCut teams in this division
-        group.forEach((t, i) => {
-          if (i === divCut) html += PLAYOFF_LINE_ROW;
-          html += makeRow(t, globalRank[t.id]);
-        });
-      } else if (confCut != null) {
-        // Use per-conference position: count how many from this conf are already in playoffs
-        // Sort entire conference by pts to determine per-conf rank
-        const allConfTeams = sortTeams(
-          Object.values(conferences[conf]).flat(),
-          'pts', 'desc'
-        );
-        const confRank = {};
-        allConfTeams.forEach((t, i) => { confRank[t.id] = i + 1; });
-        group.forEach((t, i) => {
-          if (!cutoffInserted) {
-            const prevIn = i > 0 && confRank[group[i - 1].id] <= confCut;
-            const currOut = confRank[t.id] > confCut;
-            if ((i === 0 && currOut) || (prevIn && currOut)) {
-              html += PLAYOFF_LINE_ROW;
-              cutoffInserted = true;
-            }
-          }
-          html += makeRow(t, globalRank[t.id]);
-        });
-      } else {
-        // Fall back to global rank cutoff
-        group.forEach((t, i) => {
-          if (cutoff && !cutoffInserted) {
-            const prevIn = i > 0 && globalRank[group[i - 1].id] <= cutoff;
-            const currOut = globalRank[t.id] > cutoff;
-            if ((i === 0 && currOut) || (prevIn && currOut)) {
-              html += PLAYOFF_LINE_ROW;
-              cutoffInserted = true;
-            }
-          }
-          html += makeRow(t, globalRank[t.id]);
-        });
+      let effectiveCut = confCut;
+      if (effectiveCut == null && cutoff != null) {
+        // Count how many teams from this conference fall within the global cutoff
+        effectiveCut = confOrder.filter(t => globalRank[t.id] <= cutoff).length || null;
       }
 
-      html += '</tbody></table></div>';
-      if (div) html += '</div>';
+      html += `<div style="overflow-x:auto;"><table>${thead}<tbody>`;
+      html += renderGroupRows(group, confRank, effectiveCut);
+      html += '</tbody></table></div></div>';
     }
-    html += '</div>';
+    html += clinchLegend(teams);
+    return html;
   }
-  html += clinchLegend(teams);
-  return html;
+
+  // ── Division view ────────────────────────────────────────────────────────
+  if (effectiveView === 'division') {
+    const divMap = {};
+    for (const t of teams) {
+      const key = t.division || 'Unassigned';
+      if (!divMap[key]) divMap[key] = [];
+      divMap[key].push(t);
+    }
+    let html = '';
+    for (const div of Object.keys(divMap).sort()) {
+      html += `<div class="division-block"><h3>${div}${div !== 'Unassigned' ? ' Division' : ''}</h3>`;
+
+      // Rank teams within this division by pts
+      const divOrder = sortTeams(divMap[div], 'pts', 'desc');
+      const divRank = {};
+      divOrder.forEach((t, i) => { divRank[t.id] = i + 1; });
+
+      const group = _sortCol === 'rank'
+        ? divOrder
+        : sortTeams(divMap[div], _sortCol, _sortDir);
+
+      const divCut = div !== 'Unassigned' ? (divCutoffs[div] ?? null) : null;
+
+      let effectiveCut = divCut;
+      if (effectiveCut == null && cutoff != null) {
+        effectiveCut = divOrder.filter(t => globalRank[t.id] <= cutoff).length || null;
+      }
+
+      html += `<div style="overflow-x:auto;"><table>${thead}<tbody>`;
+      html += renderGroupRows(group, divRank, effectiveCut);
+      html += '</tbody></table></div></div>';
+    }
+    html += clinchLegend(teams);
+    return html;
+  }
+
+  return '<p style="color:#8b949e">Unknown view mode.</p>';
 }
 
 function handleSortClick(col) {
@@ -319,6 +380,8 @@ function showForSelectedSeason() {
     if (standingsRoot) standingsRoot.style.display = 'none';
     if (playoffRoot)   playoffRoot.style.display   = '';
     if (sd)            sd.style.display            = 'none';
+    const vc = document.getElementById('standings-view-container');
+    if (vc) vc.innerHTML = '';
     if (typeof loadPlayoff === 'function') loadPlayoff();
   } else {
     if (standingsRoot) standingsRoot.style.display = '';

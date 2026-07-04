@@ -2898,14 +2898,21 @@ app.get('/api/seasons/:id/teams', requireAdmin, async (req, res) => {
   res.json(teams);
 });
 
-// GET /api/seasons/:id/team-conf – return all teams for this season's league type
+// GET /api/seasons/:id/team-conf – return teams active in this season (at least one game)
 // with their current season-specific conference/division (falls back to team default)
 app.get('/api/seasons/:id/team-conf', requireAdmin, async (req, res) => {
   const season = await db.prepare('SELECT * FROM seasons WHERE id = ?').get(req.params.id);
   if (!season) return res.status(404).json({ error: 'Season not found' });
-  const teamRows = season.league_type
-    ? await db.prepare('SELECT id, name, conference, division, logo_url FROM teams WHERE league_type = ? ORDER BY name').all(season.league_type)
-    : await db.prepare('SELECT id, name, conference, division, logo_url FROM teams ORDER BY name').all();
+  const teamRows = await db.prepare(`
+    SELECT DISTINCT t.id, t.name, t.conference, t.division, t.logo_url
+    FROM teams t
+    WHERE t.id IN (
+      SELECT home_team_id FROM games WHERE season_id = ?
+      UNION
+      SELECT away_team_id FROM games WHERE season_id = ?
+    )
+    ORDER BY t.name
+  `).all(req.params.id, req.params.id);
   const overrides = await db.prepare('SELECT team_id, conference, division FROM season_team_conf WHERE season_id = ?').all(req.params.id);
   const overMap = {};
   for (const o of overrides) overMap[o.team_id] = o;
