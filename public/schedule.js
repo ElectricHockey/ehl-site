@@ -539,6 +539,106 @@ function pasteEAJsonUI(gameId) {
     </details>`;
 }
 
+function mapEAResultToBadge(result) {
+  if (result === '1' || result === 1) return 'W';
+  if (result === '2' || result === 2) return 'L';
+  return '?';
+}
+
+function readEAField(player, keys) {
+  if (!player || !Array.isArray(keys)) return undefined;
+  for (const k of keys) {
+    if (player[k] !== undefined) return player[k];
+  }
+  return undefined;
+}
+
+function mapEAPlayerFromRaw(player) {
+  const posRaw = String(readEAField(player, ['position', 'pos']) || '');
+  const posSorted = String(player?.posSorted ?? '');
+  let position = posRaw;
+  if (posRaw === 'goalie' || posRaw === '0') position = 'G';
+  else if (posRaw === 'center' || posRaw === '1') position = 'C';
+  else if (posRaw === 'leftWing' || posRaw === '2') position = 'LW';
+  else if (posRaw === 'rightWing' || posRaw === '3') position = 'RW';
+  else if (posRaw === 'defenseMen' || posRaw === '4' || posRaw === '5') {
+    if (posSorted === '2' || posRaw === '4') position = 'LD';
+    else if (posSorted === '1' || posRaw === '5') position = 'RD';
+    else position = 'D';
+  }
+
+  const goals = Number(readEAField(player, ['goals', 'skgoals'])) || 0;
+  const assists = Number(readEAField(player, ['assists', 'skassists'])) || 0;
+
+  return {
+    name: readEAField(player, ['playerName', 'name']) || 'Unknown',
+    position,
+    goals,
+    assists,
+    points: goals + assists,
+    shots: Number(readEAField(player, ['shots', 'skshots'])) || 0,
+    hits: Number(readEAField(player, ['hits', 'skhits'])) || 0,
+    plusMinus: Number(readEAField(player, ['plusMinus', 'skplusmin'])) || 0,
+    pim: Number(readEAField(player, ['pim', 'skpim'])) || 0,
+    blockedShots: Number(readEAField(player, ['blockedShots', 'skblockedshots'])) || 0,
+    toi: Number(readEAField(player, ['toi', 'sktoi'])) || 0,
+    saves: Number(readEAField(player, ['saves', 'glsaves'])) || 0,
+    savesPct: readEAField(player, ['savesPct', 'glsavepct']) != null ? parseFloat(readEAField(player, ['savesPct', 'glsavepct'])) : null,
+    goalsAgainst: Number(readEAField(player, ['goalsAgainst', 'glga'])) || 0,
+    shotsAgainst: Number(readEAField(player, ['shotsAgainst', 'glshots'])) || 0,
+  };
+}
+
+function buildPickerGameData(game) {
+  return {
+    id: game.id,
+    date: game.date,
+    status: game.status,
+    ea_match_id: game.ea_match_id || null,
+    home_team: {
+      id: game.home_team_id,
+      name: game.home_team_name,
+      ea_club_id: game.home_ea_club_id,
+    },
+    away_team: {
+      id: game.away_team_id,
+      name: game.away_team_name,
+      ea_club_id: game.away_ea_club_id,
+    },
+  };
+}
+
+function processEAMatchesInBrowser(raw, game) {
+  const rows = Array.isArray(raw) ? raw : (Array.isArray(raw?.raw) ? raw.raw : []);
+  const homeClubId = String(game.home_team.ea_club_id || '');
+  return rows.map(m => {
+    const myClub = m?.clubs?.[homeClubId];
+    if (!myClub) return null;
+    const oppId = String(myClub.opponentClubId || '');
+    if (!oppId) return null;
+    const oppClub = m?.clubs?.[oppId];
+    const players = Object.values(m?.players?.[homeClubId] || {}).map(mapEAPlayerFromRaw);
+    const awayPlayers = Object.values(m?.players?.[oppId] || {}).map(mapEAPlayerFromRaw);
+    return {
+      matchId: m.matchId,
+      timestamp: m.timestamp || 0,
+      date: m.timestamp ? new Date(m.timestamp * 1000).toISOString().split('T')[0] : null,
+      result: mapEAResultToBadge(myClub.result),
+      homeScore: Number(myClub.score) || 0,
+      awayScore: Number(myClub.opponentScore) || 0,
+      homeShots: myClub.shots != null ? Number(myClub.shots) : null,
+      awayShots: oppClub?.shots != null ? Number(oppClub.shots) : null,
+      opponentClubId: oppId,
+      opponentClubName: oppClub?.details?.name || `Club ${oppId}`,
+      isScheduledOpponent: !!game.away_team.ea_club_id && String(game.away_team.ea_club_id) === oppId,
+      players,
+      awayPlayers,
+    };
+  })
+    .filter(Boolean)
+    .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+}
+
 async function submitPastedEAJson(gameId) {
   const textarea = document.getElementById('paste-ea-json');
   const errSpan = document.getElementById('paste-ea-error');
@@ -555,16 +655,11 @@ async function submitPastedEAJson(gameId) {
   }
   if (errSpan) errSpan.style.display = 'none';
   try {
-    const postRes = await fetch(`${API}/games/${gameId}/ea-matches`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Admin-Token': getAdminToken() },
-      body: JSON.stringify(rawEa),
-    });
-    if (!postRes.ok) {
-      const err = await postRes.json().catch(() => ({}));
-      throw new Error(err.error || `Server returned ${postRes.status}`);
-    }
-    const data = await postRes.json();
+    const game = allGames.find(g => g.id === gameId);
+    if (!game) throw new Error('Game not found');
+    const gameData = buildPickerGameData(game);
+    const matches = processEAMatchesInBrowser(rawEa, gameData);
+    const data = { game: gameData, matches };
     renderPickerMatches(data, gameId);
   } catch (err) {
     if (errSpan) { errSpan.textContent = `Error: ${err.message}`; errSpan.style.display = ''; }
@@ -609,45 +704,10 @@ async function openPicker(gameId) {
 
   const eaUrl = `https://proclubs.ea.com/api/nhl/clubs/matches?matchType=club_private&platform=common-gen5&clubIds=${homeEaClubId}`;
 
-  // ─── Attempt 1: Browser-direct fetch (works when EA allows CORS) ───
-  try {
-    const eaRes = await fetch(eaUrl);
-    if (!eaRes.ok) throw new Error(`EA API responded with ${eaRes.status}`);
-    const rawEa = await eaRes.json();
-    // Send raw EA data to server for processing into picker format
-    const postRes = await fetch(`${API}/games/${gameId}/ea-matches`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Admin-Token': getAdminToken() },
-      body: JSON.stringify(rawEa),
-    });
-    if (!postRes.ok) throw new Error(`Server returned ${postRes.status}`);
-    const data = await postRes.json();
-    renderPickerMatches(data, gameId);
-    return;
-  } catch (browserErr) {
-    // Browser fetch failed (CORS or network) — try server proxy next
-  }
-
-  // ─── Attempt 2: Server-side proxy ───
-  try {
-    body.innerHTML = '<p class="picker-loading">Trying server proxy…</p>';
-    const infoRes = await fetch(`${API}/games/${gameId}/ea-matches`, {
-      headers: { 'X-Admin-Token': getAdminToken() },
-    });
-    if (!infoRes.ok) {
-      const err = await infoRes.json().catch(() => ({}));
-      const detail = err.details ? ` (${err.details})` : '';
-      throw new Error(`EA Pro Clubs API is currently unreachable${detail}`);
-    }
-    const data = await infoRes.json();
-    renderPickerMatches(data, gameId);
-    return;
-  } catch (proxyErr) {
-    // Server proxy also failed — show manual entry
-  }
-
-  // ─── Both attempts failed — show manual entry + paste JSON UI ───
-  body.innerHTML = `<p class="picker-error">⚠️ EA Pro Clubs API is unreachable — please enter stats manually or paste the EA JSON below.</p>
+  body.innerHTML = `<p class="picker-empty">This picker now uses local browser JSON only (no EA/proxy API calls).</p>
+    <p style="color:#8b949e;font-size:0.82rem;text-align:center;margin:0.35rem 1rem 0.75rem;">
+      Open <a href="${eaUrl}" target="_blank" style="color:#58a6ff;">EA match data for club ${homeEaClubId}</a>, copy the JSON, and paste it below.
+    </p>
     <p style="text-align:center;margin:0.5rem 0;">
       <button onclick="closePickerAndEditManually(${gameId})" style="padding:0.35rem 0.9rem;background:#238636;border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:0.85rem;">✏️ Enter Stats Manually</button>
     </p>
@@ -743,9 +803,6 @@ document.getElementById('ea-picker').addEventListener('click', e => {
 
 async function assignMatch(gameId, matchId, homeScore, awayScore, homePlayers, awayPlayers, homeShots, awayShots) {
   try {
-    // #region agent log
-    fetch('http://127.0.0.1:7370/ingest/09eeda4e-053a-4a95-a317-63a92e5d9089',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a43d81'},body:JSON.stringify({sessionId:'a43d81',location:'schedule.js:assignMatch',message:'assign_match_start',data:{gameId,matchId,homeScore,awayScore,homePlayerCount:(homePlayers||[]).length,awayPlayerCount:(awayPlayers||[]).length,hasAdminToken:!!getAdminToken()},timestamp:Date.now(),hypothesisId:'C/D'})}).catch(()=>{});
-    // #endregion
     const res = await fetch(`${API}/games/${gameId}`, {
       method: 'PATCH',
       headers: adminHeaders(),
@@ -760,16 +817,8 @@ async function assignMatch(gameId, matchId, homeScore, awayScore, homePlayers, a
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      // #region agent log
-      fetch('http://127.0.0.1:7370/ingest/09eeda4e-053a-4a95-a317-63a92e5d9089',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a43d81'},body:JSON.stringify({sessionId:'a43d81',location:'schedule.js:assignMatch',message:'assign_match_failed',data:{gameId,status:res.status,error:err.error||null},timestamp:Date.now(),hypothesisId:'C'})}).catch(()=>{});
-      // #endregion
       throw new Error(err.error || `HTTP ${res.status}`);
     }
-    const statsRes = await fetch(`${API}/games/${gameId}/stats`);
-    const statsData = statsRes.ok ? await statsRes.json().catch(() => null) : null;
-    // #region agent log
-    fetch('http://127.0.0.1:7370/ingest/09eeda4e-053a-4a95-a317-63a92e5d9089',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a43d81'},body:JSON.stringify({sessionId:'a43d81',location:'schedule.js:assignMatch',message:'assign_match_after_stats_fetch',data:{gameId,hasStats:!!statsData?.has_stats,homePlayers:statsData?.home_players?.length||0,awayPlayers:statsData?.away_players?.length||0},timestamp:Date.now(),hypothesisId:'A/D'})}).catch(()=>{});
-    // #endregion
     await refreshGame(gameId);
     closePicker(); // close picker so detail is the focus
     await openGameDetail(gameId);
