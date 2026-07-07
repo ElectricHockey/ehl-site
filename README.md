@@ -39,6 +39,7 @@ You now have the three values needed:
    | `SUPABASE_SERVICE_KEY` | Your Supabase service_role key |
    | `OWNER_DISCORD_ID` | Your Discord user ID (for admin access) |
    | `IP_HMAC_SECRET` | Any random string (used to hash IPs) |
+   | `EA_PROXY_URL` | *(Optional)* Base URL of a CORS/relay proxy for the EA Pro Clubs API (e.g. a Cloudflare Worker). Omit if the server can reach EA directly. |
 
 3. Redeploy. The app will automatically create all tables on first request and seed your teams.
 

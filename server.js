@@ -17,6 +17,11 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const scrypt = promisify(crypto.scrypt);
 
+// Optional CORS proxy for the EA Pro Clubs API (set to avoid Vercel IP blocks).
+// Example: EA_PROXY_URL=https://your-worker.your-subdomain.workers.dev
+// When set, all fetchEA calls replace 'https://proclubs.ea.com' with this base URL.
+const EA_PROXY_URL = (process.env.EA_PROXY_URL || '').replace(/\/$/, '');
+
 // ── Supabase Storage client (for logo / file uploads) ────────────────────
 // Accept both the app's own names and the Vercel/Supabase integration names.
 const SUPABASE_URL = process.env.SUPABASE_URL
@@ -1174,7 +1179,16 @@ function mapEAPlayer(p) {
   };
 }
 
+// ── EA match response cache ────────────────────────────────────────────────
+// Keyed by gameId; avoids re-hitting the EA API when the picker is reopened.
+const _eaMatchCache = new Map();
+const EA_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
 async function fetchEA(url) {
+  // If a CORS proxy is configured, route through it instead of hitting EA directly.
+  if (EA_PROXY_URL) {
+    url = url.replace('https://proclubs.ea.com', EA_PROXY_URL);
+  }
   // Use an 8-second timeout so our catch block can respond before Vercel's
   // 10-second serverless function limit kills the process and returns its own 502.
   const controller = new AbortController();
@@ -3396,6 +3410,13 @@ app.get('/api/games/:id/ea-matches', async (req, res) => {
   `).get(req.params.id);
   if (!game) return res.status(404).json({ error: 'Game not found' });
   if (!game.home_ea_club_id) return res.status(400).json({ error: 'Home team has no EA club ID configured' });
+
+  // Return cached result if fresh
+  const _cached = _eaMatchCache.get(req.params.id);
+  if (_cached && Date.now() - _cached.ts < EA_CACHE_TTL_MS) {
+    return res.json(_cached.data);
+  }
+
   const eaUrl = `https://proclubs.ea.com/api/nhl/clubs/matches?matchType=club_private&platform=common-gen5&clubIds=${game.home_ea_club_id}`;
   let raw;
   try {
@@ -3404,7 +3425,9 @@ app.get('/api/games/:id/ea-matches', async (req, res) => {
     return res.status(502).json({ error: 'EA Pro Clubs API is currently unreachable', details: err.message, ea_status: err.eaStatus || null, ea_body: err.eaBody || null, ea_url: eaUrl, game: _eaGameInfo(game) });
   }
   const matches = _processEAMatches(raw, game);
-  res.json({ game: _eaGameInfo(game), matches });
+  const result = { game: _eaGameInfo(game), matches };
+  _eaMatchCache.set(req.params.id, { data: result, ts: Date.now() });
+  res.json(result);
 });
 
 // POST: client fetches the EA URL above from the browser and sends the raw
@@ -3423,7 +3446,9 @@ app.post('/api/games/:id/ea-matches', async (req, res) => {
     return res.status(400).json({ error: 'Request body must be the raw EA JSON response' });
   }
   const matches = _processEAMatches(raw, game);
-  res.json({ game: _eaGameInfo(game), matches });
+  const result = { game: _eaGameInfo(game), matches };
+  _eaMatchCache.set(req.params.id, { data: result, ts: Date.now() });
+  res.json(result);
 });
 
 // ── EA Club Matches proxy ──────────────────────────────────────────────────
