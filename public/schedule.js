@@ -521,12 +521,12 @@ function closePickerAndEditManually(gameId) {
 
 // ── Paste EA JSON fallback ─────────────────────────────────────────────────
 // Generates the "Paste EA JSON" UI block used when the EA API is unreachable.
-function pasteEAJsonUI(gameId, open = false) {
+function pasteEAJsonUI(gameId) {
   const game = allGames.find(g => g.id === gameId);
   const clubId = (game && game.home_ea_club_id) || 'YOUR_CLUB_ID';
   const eaLink = `https://proclubs.ea.com/api/nhl/clubs/matches?matchType=club_private&platform=common-gen5&clubIds=${clubId}`;
   return `
-    <details${open ? ' open' : ''} style="margin-top:1rem;padding:0.75rem 1rem;background:#0d1117;border:1px solid #30363d;border-radius:8px;">
+    <details style="margin-top:1rem;padding:0.75rem 1rem;background:#0d1117;border:1px solid #30363d;border-radius:8px;">
       <summary style="cursor:pointer;color:#58a6ff;font-size:0.85rem;font-weight:600;">📋 Paste EA JSON manually</summary>
       <p style="color:#8b949e;font-size:0.8rem;margin:0.5rem 0 0.4rem;">
         Open <a href="${eaLink}" target="_blank" style="color:#58a6ff;">this EA API link</a> in your browser, copy the entire JSON response, and paste it below.
@@ -598,9 +598,8 @@ async function openPicker(gameId) {
   picker.classList.remove('hidden');
   picker.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
-  // Strategy: try the server-side proxy. Show the paste UI immediately alongside
-  // the loading indicator so admins don't have to wait for a timeout before they
-  // can fall back to manual entry.
+  // Strategy: try fetching EA data directly from the user's browser first
+  // (avoids Vercel IP blocks). Fall back to server proxy, then manual entry.
   const homeEaClubId = game && game.home_ea_club_id;
   if (!homeEaClubId) {
     body.innerHTML = `<p class="picker-error">⚠️ Home team has no EA club ID configured</p>
@@ -608,12 +607,30 @@ async function openPicker(gameId) {
     return;
   }
 
-  // Show loading indicator + paste UI up front (open by default so it's ready to use)
-  body.innerHTML = `<p class="picker-loading" id="picker-status">Fetching EA matches…</p>
-    ${pasteEAJsonUI(gameId, true)}`;
+  const eaUrl = `https://proclubs.ea.com/api/nhl/clubs/matches?matchType=club_private&platform=common-gen5&clubIds=${homeEaClubId}`;
 
-  // ─── Server-side proxy ───
+  // ─── Attempt 1: Browser-direct fetch (works when EA allows CORS) ───
   try {
+    const eaRes = await fetch(eaUrl);
+    if (!eaRes.ok) throw new Error(`EA API responded with ${eaRes.status}`);
+    const rawEa = await eaRes.json();
+    // Send raw EA data to server for processing into picker format
+    const postRes = await fetch(`${API}/games/${gameId}/ea-matches`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Token': getAdminToken() },
+      body: JSON.stringify(rawEa),
+    });
+    if (!postRes.ok) throw new Error(`Server returned ${postRes.status}`);
+    const data = await postRes.json();
+    renderPickerMatches(data, gameId);
+    return;
+  } catch (browserErr) {
+    // Browser fetch failed (CORS or network) — try server proxy next
+  }
+
+  // ─── Attempt 2: Server-side proxy ───
+  try {
+    body.innerHTML = '<p class="picker-loading">Trying server proxy…</p>';
     const infoRes = await fetch(`${API}/games/${gameId}/ea-matches`, {
       headers: { 'X-Admin-Token': getAdminToken() },
     });
@@ -626,15 +643,15 @@ async function openPicker(gameId) {
     renderPickerMatches(data, gameId);
     return;
   } catch (proxyErr) {
-    // Proxy failed — update the status indicator but preserve the paste UI below it
-    const status = document.getElementById('picker-status');
-    if (status) {
-      status.outerHTML = `<p class="picker-error">⚠️ EA Pro Clubs API is unreachable — please enter stats manually or paste the EA JSON below.</p>
-        <p style="text-align:center;margin:0.5rem 0;">
-          <button onclick="closePickerAndEditManually(${gameId})" style="padding:0.35rem 0.9rem;background:#238636;border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:0.85rem;">✏️ Enter Stats Manually</button>
-        </p>`;
-    }
+    // Server proxy also failed — show manual entry
   }
+
+  // ─── Both attempts failed — show manual entry + paste JSON UI ───
+  body.innerHTML = `<p class="picker-error">⚠️ EA Pro Clubs API is unreachable — please enter stats manually or paste the EA JSON below.</p>
+    <p style="text-align:center;margin:0.5rem 0;">
+      <button onclick="closePickerAndEditManually(${gameId})" style="padding:0.35rem 0.9rem;background:#238636;border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:0.85rem;">✏️ Enter Stats Manually</button>
+    </p>
+    ${pasteEAJsonUI(gameId)}`;
 }
 
 function renderPickerMatches(data, gameId) {
