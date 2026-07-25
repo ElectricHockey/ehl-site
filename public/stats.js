@@ -199,7 +199,7 @@ function renderSkaters(league) {
   const limited = statsPlayerLimit > 0 ? sorted.slice(0, statsPlayerLimit) : sorted;
   const s = k => thClass(k, leagueSort[league].skater);
   const prevScroll = root.firstElementChild?.scrollLeft || 0;
-  root.innerHTML = `<div style="overflow-x:auto;"><table id="skaters-table">
+  root.innerHTML = `<div class="table-scroll-wrap stats-table-wrap"><table id="skaters-table">
     <thead><tr>
       <th style="text-align:center;width:2rem;">#</th>
       <th>Player</th><th>Pos</th>
@@ -226,7 +226,7 @@ function renderGoalies(league) {
   const limited = statsPlayerLimit > 0 ? sorted.slice(0, statsPlayerLimit) : sorted;
   const s = k => thClass(k, leagueSort[league].goalie);
   const prevScroll = root.firstElementChild?.scrollLeft || 0;
-  root.innerHTML = `<div style="overflow-x:auto;"><table id="goalies-table">
+  root.innerHTML = `<div class="table-scroll-wrap stats-table-wrap"><table id="goalies-table">
     <thead><tr>
       <th style="text-align:center;width:2rem;">#</th>
       <th>Player</th>

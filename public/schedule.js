@@ -256,7 +256,7 @@ function buildGameTable(games) {
   let html = '';
   for (const date of Object.keys(byDate).sort()) {
     html += `<div class="schedule-date-header">${formatDateHeader(date)}</div>`;
-    html += `<div style="overflow-x:auto;margin-bottom:0.25rem;"><table class="schedule-section-table">${thead}<tbody>`;
+    html += `<div class="table-scroll-wrap schedule-table-wrap" style="margin-bottom:0.25rem;"><table class="schedule-section-table">${thead}<tbody>`;
     html += byDate[date].map(buildGameRow).join('');
     html += '</tbody></table></div>';
   }

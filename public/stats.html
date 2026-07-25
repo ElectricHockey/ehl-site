@@ -53,6 +53,33 @@
     #goalies-table tbody td:nth-child(-n+2) { background: #0d1117; }
     #skaters-table tbody tr:nth-child(even) td:nth-child(-n+2),
     #goalies-table tbody tr:nth-child(even) td:nth-child(-n+2) { background: #161b22; }
+
+    @media (max-width: 700px) {
+      #skaters-table th:nth-child(1), #skaters-table td:nth-child(1),
+      #goalies-table th:nth-child(1), #goalies-table td:nth-child(1) {
+        width: 2rem;
+        min-width: 2rem;
+        max-width: 2rem;
+      }
+      #skaters-table th:nth-child(2), #skaters-table td:nth-child(2),
+      #goalies-table th:nth-child(2), #goalies-table td:nth-child(2) {
+        left: 2rem;
+      }
+    }
+
+    @media (max-width: 560px) {
+      #skaters-table th:nth-child(2), #skaters-table td:nth-child(2),
+      #goalies-table th:nth-child(2), #goalies-table td:nth-child(2) {
+        position: static;
+        box-shadow: none;
+      }
+      #skaters-table thead th:nth-child(2),
+      #goalies-table thead th:nth-child(2),
+      #skaters-table tbody td:nth-child(2),
+      #goalies-table tbody td:nth-child(2) {
+        background: transparent;
+      }
+    }
   </style>
 </head>
 <body>
@@ -89,7 +116,7 @@
       <button class="tab-btn"        data-tab="goalies" onclick="switchStatsTab('goalies')">Goalies</button>
     </div>
 
-    <div style="display:flex;gap:0.6rem;flex-wrap:wrap;align-items:center;margin-bottom:1rem;">
+    <div class="stats-filter-row" style="display:flex;gap:0.6rem;flex-wrap:wrap;align-items:center;margin-bottom:1rem;">
       <input type="text" id="stats-search" placeholder="🔍 Filter by player name…"
         style="background:#161b22;border:1px solid #30363d;border-radius:6px;color:#e6edf3;padding:0.45rem 0.75rem;font-size:0.9rem;width:220px;max-width:100%;"
         oninput="onStatsSearch(this.value)" />
