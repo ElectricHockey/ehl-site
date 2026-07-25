@@ -70,9 +70,12 @@
     <a href="register.html" class="nav-portal">Player Portal</a>
   </nav>
 
-  <div class="container">
-    <h1>Players</h1>
-    <p style="color:#8b949e;margin-bottom:1.25rem;">All registered league players. Click a name to view their profile.</p>
+  <div class="container page-shell">
+    <div class="page-header">
+      <div class="page-eyebrow">Player Directory</div>
+      <h1>Players</h1>
+      <p class="page-subtitle">Search every rostered player and free agent, then jump straight into detailed profiles and career stats.</p>
+    </div>
 
     <div class="players-filter-bar">
       <input type="text" id="player-search" placeholder="🔍 Search by name…" oninput="applyFilters()" />
@@ -96,7 +99,7 @@
       <span class="filter-count" id="player-count"></span>
     </div>
 
-    <div style="overflow-x:auto;">
+    <div class="surface-card" style="overflow-x:auto;padding:0.35rem 0.5rem;">
       <table class="players-table" id="players-table">
         <thead>
           <tr>

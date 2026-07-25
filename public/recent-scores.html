@@ -75,11 +75,14 @@
     <a href="register.html" class="nav-portal">Player Portal</a>
   </nav>
 
-  <div class="container">
-    <h1>Recent Scores</h1>
-    <p style="color:#8b949e;margin-bottom:1rem;">Completed games, newest first.</p>
-    <div style="margin-bottom:1.25rem;" id="season-selector-container"></div>
-    <div id="scores-root"><p class="loading">Loading scores…</p></div>
+  <div class="container page-shell">
+    <div class="page-header">
+      <div class="page-eyebrow">Finished Games</div>
+      <h1>Recent Scores</h1>
+      <p class="page-subtitle">Catch up on the latest final results and open any matchup for full box scores and stat breakdowns.</p>
+      <div style="margin-bottom:0;" id="season-selector-container"></div>
+    </div>
+    <div id="scores-root" class="surface-card" style="padding:1rem 1.1rem;"><p class="loading">Loading scores…</p></div>
   </div>
 
   <script src="season-selector.js"></script>

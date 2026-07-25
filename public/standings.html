@@ -70,15 +70,19 @@
     <a href="register.html" class="nav-portal">Player Portal</a>
   </nav>
 
-  <div class="container">
-    <h1 id="page-title">League Standings</h1>
-    <div style="margin-bottom:1.25rem;display:flex;align-items:center;gap:1.5rem;flex-wrap:wrap;">
+  <div class="container page-shell">
+    <div class="page-header">
+      <div class="page-eyebrow">Season Race</div>
+      <h1 id="page-title">League Standings</h1>
+      <p class="page-subtitle">Follow the playoff picture, compare clubs across conferences, and switch into the bracket view when the postseason begins.</p>
+      <div style="margin-bottom:0;display:flex;align-items:center;gap:1.5rem;flex-wrap:wrap;">
       <div id="season-selector-container"></div>
       <div id="standings-view-container" style="display:flex;align-items:center;gap:0.5rem;"></div>
+      </div>
     </div>
 
-    <div id="standings-root"><p class="loading">Loading standings…</p></div>
-    <div id="playoff-root" style="display:none;"><p class="loading">Loading playoff bracket…</p></div>
+    <div id="standings-root" class="surface-card" style="padding:1rem 1.1rem;"><p class="loading">Loading standings…</p></div>
+    <div id="playoff-root" class="surface-card" style="display:none;padding:1rem 1.1rem;"><p class="loading">Loading playoff bracket…</p></div>
   </div>
 
   <!-- Series detail panel (used by playoffs view) -->

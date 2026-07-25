@@ -8,9 +8,15 @@ let adminLeagueFilter = localStorage.getItem('ehl_admin_league') || 'threes';
 
 // ── Admin season filter (null = all seasons) ───────────────────────────────
 let adminSeasonFilter = null;
+let adminSearchDebounce = null;
+let adminSearchRunId = 0;
+let adminGamesSearchCache = null;
+const ADMIN_SEARCH_MIN = 2;
+const ADMIN_SEARCH_RESULTS_LIMIT = 8;
 
 function setAdminSeason(id) {
   adminSeasonFilter = id ? Number(id) : null;
+  adminGamesSearchCache = null;
   // Pre-select in game form season dropdown
   const gameSeason = document.getElementById('game-season');
   if (gameSeason && adminSeasonFilter) gameSeason.value = adminSeasonFilter;
@@ -31,6 +37,7 @@ function _syncLeagueFormDefaults(league) {
 function setAdminLeague(league) {
   adminLeagueFilter = league;
   adminSeasonFilter = null; // reset season when league changes
+  adminGamesSearchCache = null;
   localStorage.setItem('ehl_admin_league', league);
   document.querySelectorAll('.admin-league-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.league === league);
@@ -163,6 +170,7 @@ function showAdminPanel(role, username) {
   });
 
   // Load data and navigate to the appropriate starting tab
+  adminGamesSearchCache = null;
   loadTeams();
   loadSeasons();
   loadGames();
@@ -174,6 +182,7 @@ function showAdminPanel(role, username) {
     loadGameAdmins();
     loadNameChangeRequests();
     showAdminTab('seasons');
+    _refreshAdminGlobalSearchIfActive();
   } else {
     // game_admin: games are managed from the Schedule page now
     window.location.href = 'schedule.html';
@@ -188,6 +197,137 @@ function showAdminTab(name) {
   const sec = document.getElementById(`admin-tab-${name}`);
   if (sec) sec.classList.add('active');
   if (name === 'records-settings') loadRecordsSettings();
+  _refreshAdminGlobalSearchIfActive();
+}
+
+function _adminSearchQuery() {
+  return (document.getElementById('admin-global-search')?.value || '').trim();
+}
+
+function _matchAndToggle(nodes, query) {
+  let count = 0;
+  const samples = [];
+  nodes.forEach(node => {
+    const text = (node.textContent || '').replace(/\s+/g, ' ').trim();
+    const match = !query || text.toLowerCase().includes(query);
+    node.style.display = match ? '' : 'none';
+    if (match) {
+      count++;
+      if (samples.length < 2 && text) samples.push(text.slice(0, 90));
+    }
+  });
+  return { count, samples };
+}
+
+function _applyAdminGlobalSearchFilter(query) {
+  const sections = [
+    { label: 'Seasons', tab: 'seasons', nodes: [...document.querySelectorAll('#seasons-list .season-item')] },
+    { label: 'Teams', tab: 'teams', nodes: [...document.querySelectorAll('#teams-table tbody tr')] },
+    { label: 'Registered Players', tab: 'reg-players', nodes: [...document.querySelectorAll('#reg-players-table tbody tr')] },
+    { label: 'Players', tab: 'players', nodes: [...document.querySelectorAll('#players-table tbody tr')] },
+    { label: 'Game Admins', tab: 'game-admins', nodes: [...document.querySelectorAll('#game-admins-list tbody tr')] },
+  ];
+  return sections.map(section => {
+    const { count, samples } = _matchAndToggle(section.nodes, query);
+    return { ...section, count, samples };
+  });
+}
+
+async function _searchAdminGames(query) {
+  if (!query) return [];
+  if (!adminGamesSearchCache) {
+    try {
+      const res = await fetch(`${API}/games`);
+      adminGamesSearchCache = res.ok ? await res.json() : [];
+    } catch {
+      adminGamesSearchCache = [];
+    }
+  }
+  const seasonNameById = Object.fromEntries((allSeasons || []).map(s => [s.id, s.name]));
+  return (adminGamesSearchCache || [])
+    .filter(g => {
+      const haystack = [
+        g.date,
+        g.home_team_name,
+        g.away_team_name,
+        g.status,
+        g.season_id ? seasonNameById[g.season_id] : '',
+      ].join(' ').toLowerCase();
+      return haystack.includes(query);
+    })
+    .slice(0, 3)
+    .map(g => ({
+      id: g.id,
+      title: `${g.home_team_name} vs ${g.away_team_name}`,
+      subtitle: `${g.date} • ${seasonNameById[g.season_id] || `Season #${g.season_id || 'N/A'}`}`,
+    }));
+}
+
+async function runAdminGlobalSearch(rawQuery, { preserveInput = false } = {}) {
+  const input = document.getElementById('admin-global-search');
+  const meta = document.getElementById('admin-global-search-meta');
+  const results = document.getElementById('admin-global-search-results');
+  if (!input || !meta || !results) return;
+  if (!preserveInput) input.value = rawQuery ?? '';
+  const query = String(rawQuery || '').trim().toLowerCase();
+  const runId = ++adminSearchRunId;
+
+  if (query.length < ADMIN_SEARCH_MIN) {
+    _applyAdminGlobalSearchFilter('');
+    results.style.display = 'none';
+    results.className = '';
+    results.innerHTML = '';
+    meta.textContent = 'Type at least 2 characters to search across admin data.';
+    return;
+  }
+
+  const localSections = _applyAdminGlobalSearchFilter(query);
+  const totalLocal = localSections.reduce((sum, s) => sum + s.count, 0);
+  const localHits = localSections
+    .filter(s => s.count > 0)
+    .slice(0, ADMIN_SEARCH_RESULTS_LIMIT)
+    .map(s => `<div class="admin-search-result-row">
+      <div class="admin-search-result-copy"><strong>${s.label}</strong> • ${s.count} match${s.count === 1 ? '' : 'es'}</div>
+      <button class="btn-secondary" style="padding:0.2rem 0.55rem;font-size:0.76rem;" onclick="adminSearchJump('${s.tab}')">Open</button>
+    </div>`);
+
+  const gameHits = await _searchAdminGames(query);
+  if (runId !== adminSearchRunId) return;
+  const gameHtml = gameHits.map(g => `<div class="admin-search-result-row">
+    <div class="admin-search-result-copy"><strong>Game</strong> • ${escAttr(g.title)}<br><span style="color:#8b949e;font-size:0.75rem;">${escAttr(g.subtitle)}</span></div>
+    <a class="btn-secondary" href="schedule.html?g=${g.id}" style="padding:0.2rem 0.55rem;font-size:0.76rem;">Open</a>
+  </div>`);
+
+  const total = totalLocal + gameHits.length;
+  meta.textContent = `${total} result${total === 1 ? '' : 's'} for "${rawQuery.trim()}"`;
+  const body = [...localHits, ...gameHtml].slice(0, ADMIN_SEARCH_RESULTS_LIMIT).join('');
+  if (body) {
+    results.style.display = 'block';
+    results.className = 'admin-global-search-results';
+    results.innerHTML = body;
+  } else {
+    results.style.display = 'none';
+    results.className = '';
+    results.innerHTML = '';
+  }
+}
+
+function handleAdminGlobalSearchInput(rawQuery) {
+  clearTimeout(adminSearchDebounce);
+  adminSearchDebounce = setTimeout(() => {
+    runAdminGlobalSearch(rawQuery);
+  }, 140);
+}
+
+function adminSearchJump(tab) {
+  showAdminTab(tab);
+  const q = _adminSearchQuery();
+  if (q.length >= ADMIN_SEARCH_MIN) runAdminGlobalSearch(q, { preserveInput: true });
+}
+
+function _refreshAdminGlobalSearchIfActive() {
+  const q = _adminSearchQuery();
+  if (q.length >= ADMIN_SEARCH_MIN) runAdminGlobalSearch(q, { preserveInput: true });
 }
 
 async function adminLogout() {
@@ -213,7 +353,7 @@ async function loadGameAdmins() {
       container.innerHTML = '<p style="color:#8b949e;font-size:0.88rem;">No game admins yet. Search for a user above to add one.</p>';
       return;
     }
-    container.innerHTML = `<table style="width:100%;max-width:500px;border-collapse:collapse;">
+    container.innerHTML = `<div class="admin-table-wrap"><table style="width:100%;max-width:500px;border-collapse:collapse;">
       <thead><tr style="color:#8b949e;font-size:0.82rem;">
         <th style="text-align:left;padding:0.35rem 0.5rem;">Gamertag</th>
         <th style="text-align:left;padding:0.35rem 0.5rem;">Discord</th>
@@ -231,7 +371,8 @@ async function loadGameAdmins() {
           </td>
         </tr>`).join('')}
       </tbody>
-    </table>`;
+    </table></div>`;
+    _refreshAdminGlobalSearchIfActive();
   } catch { container.innerHTML = '<p style="color:#f85149;font-size:0.88rem;">Failed to load game admins.</p>'; }
 }
 
@@ -387,6 +528,7 @@ async function loadSeasons() {
     copyFromSel.innerHTML = '<option value="">— None —</option>' +
       allRegular.map(s => `<option value="${s.id}">${s.name} (${typeLabel(s.league_type)})</option>`).join('');
   }
+  _refreshAdminGlobalSearchIfActive();
 }
 
 document.getElementById('season-form').addEventListener('submit', async e => {
@@ -720,6 +862,7 @@ async function loadTeams() {
   const mTgt = document.getElementById('merge-team-target');
   if (mSrc) mSrc.innerHTML = mergeOpts;
   if (mTgt) mTgt.innerHTML = mergeOpts;
+  _refreshAdminGlobalSearchIfActive();
 }
 
 // ── Roster Management ─────────────────────────────────────────────────────
@@ -1096,6 +1239,7 @@ async function loadPlayers() {
   const mpTgt = document.getElementById('merge-player-target');
   if (mpSrc) mpSrc.innerHTML = mergePlayerOpts;
   if (mpTgt) mpTgt.innerHTML = mergePlayerOpts;
+  _refreshAdminGlobalSearchIfActive();
 }
 
 document.getElementById('player-form').addEventListener('submit', async e => {
@@ -1248,6 +1392,7 @@ async function loadRegPlayers() {
     const owner = sd.staff && sd.staff.find(s => s.role === 'owner');
     cell.textContent = owner ? `👑 ${owner.username}` : '—';
   }
+  _refreshAdminGlobalSearchIfActive();
 }
 
 async function assignOwner(userId) {
@@ -2091,7 +2236,7 @@ async function loadNameChangeRequests() {
       container.innerHTML = '<p style="color:#8b949e;font-size:0.88rem;">No pending name change requests.</p>';
       return;
     }
-    container.innerHTML = `<table style="width:100%;border-collapse:collapse;">
+    container.innerHTML = `<div class="admin-table-wrap"><table style="width:100%;border-collapse:collapse;">
       <thead><tr style="color:#8b949e;font-size:0.82rem;">
         <th style="text-align:left;padding:0.35rem 0.5rem;">User</th>
         <th style="text-align:left;padding:0.35rem 0.5rem;">Old Name</th>
@@ -2111,7 +2256,8 @@ async function loadNameChangeRequests() {
           </td>
         </tr>`).join('')}
       </tbody>
-    </table>`;
+    </table></div>`;
+    _refreshAdminGlobalSearchIfActive();
   } catch { container.innerHTML = '<p style="color:#f85149;font-size:0.88rem;">Failed to load name change requests.</p>'; }
 }
 

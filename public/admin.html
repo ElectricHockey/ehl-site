@@ -66,10 +66,23 @@
   </div>
 
   <div id="admin-panel" style="display:none;">
-    <div class="container">
+    <div class="container page-shell">
       <div class="logged-in-bar">🔑 <span id="logged-in-name">Admin</span> <button onclick="adminLogout()">Logout</button></div>
 
-      <h1 style="margin-bottom:1rem;">Admin Panel</h1>
+      <div class="page-header">
+        <div class="page-eyebrow">Control Center</div>
+        <h1 style="margin-bottom:0.55rem;">Admin Panel</h1>
+        <p class="page-subtitle">Manage seasons, teams, rosters, schedule data, playoff structure, historical imports, and site settings.</p>
+      </div>
+
+      <div class="admin-global-search" style="display:flex;flex-direction:column;gap:0.4rem;">
+        <label for="admin-global-search" style="font-size:0.82rem;color:#8b949e;">Quick Search</label>
+        <input type="text" id="admin-global-search" placeholder="Search seasons, teams, players, registered players, game admins, or games…"
+          oninput="handleAdminGlobalSearchInput(this.value)"
+          style="background:#21262d;border:1px solid #30363d;border-radius:10px;color:#e6edf3;padding:0.55rem 0.8rem;font-size:0.9rem;max-width:620px;" />
+        <div id="admin-global-search-meta" style="font-size:0.8rem;color:#8b949e;">Type at least 2 characters to search across admin data.</div>
+        <div id="admin-global-search-results" style="display:none;"></div>
+      </div>
 
       <!-- ── League switcher ─────────────────────────────────── -->
       <div class="admin-league-bar" id="admin-league-bar">
@@ -200,10 +213,12 @@
             <button type="submit">Add Team</button>
           </form>
         </div>
-        <table id="teams-table">
-          <thead><tr><th>Logo</th><th>Colors</th><th>Name</th><th>Type</th><th>Conference</th><th>Division</th><th>EA Club ID</th><th>Owner</th><th>Action</th></tr></thead>
-          <tbody></tbody>
-        </table>
+        <div class="admin-table-wrap">
+          <table id="teams-table">
+            <thead><tr><th>Logo</th><th>Colors</th><th>Name</th><th>Type</th><th>Conference</th><th>Division</th><th>EA Club ID</th><th>Owner</th><th>Action</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
         <div class="form-section" style="margin-top:1.5rem;border-top:1px solid #30363d;padding-top:1rem;">
           <h3 style="margin-bottom:0.75rem;">🔀 Merge Teams</h3>
           <p style="color:#8b949e;font-size:0.85rem;margin-bottom:0.75rem;">
@@ -244,10 +259,12 @@
       <div id="admin-tab-reg-players" class="admin-section">
         <h2>Registered Players <span id="unrostered-badge" style="display:none;background:#4b1f1f;color:#f85149;font-size:0.75rem;border-radius:10px;padding:0.15rem 0.55rem;font-weight:600;margin-left:0.4rem;"></span></h2>
         <div id="unrostered-warning" style="display:none;background:#2d1b00;border:1px solid #9e6a03;border-radius:8px;padding:0.75rem 1rem;margin-bottom:1rem;color:#e3b341;font-size:0.88rem;"></div>
-        <table id="reg-players-table">
-          <thead><tr><th>Gamertag</th><th>Position</th><th>Platform</th><th>Discord</th><th>Team</th><th>Rostered</th><th>Assign Owner</th><th>Edit</th></tr></thead>
-          <tbody></tbody>
-        </table>
+        <div class="admin-table-wrap">
+          <table id="reg-players-table">
+            <thead><tr><th>Gamertag</th><th>Position</th><th>Platform</th><th>Discord</th><th>Team</th><th>Rostered</th><th>Assign Owner</th><th>Edit</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
       </div>
 
       <!-- ── Players tab ────────────────────────────────── -->
@@ -263,10 +280,12 @@
             <button type="submit">Add Player</button>
           </form>
         </div>
-        <table id="players-table">
-          <thead><tr><th>ID</th><th>#</th><th>Name</th><th>Position</th><th>Team</th><th>Discord</th><th>Actions</th></tr></thead>
-          <tbody></tbody>
-        </table>
+        <div class="admin-table-wrap">
+          <table id="players-table">
+            <thead><tr><th>ID</th><th>#</th><th>Name</th><th>Position</th><th>Team</th><th>Discord</th><th>Actions</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
         <div class="form-section" style="margin-top:1.5rem;border-top:1px solid #30363d;padding-top:1rem;">
           <h3 style="margin-bottom:0.75rem;">🔀 Merge Players</h3>
           <p style="color:#8b949e;font-size:0.85rem;margin-bottom:0.75rem;">
