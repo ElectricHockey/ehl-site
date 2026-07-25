@@ -21,6 +21,7 @@ document.addEventListener('click', e => {
 (function () {
   const STORAGE_TYPE = 'ehl_league_type';
   const VALID_TYPES = ['threes', 'sixes'];
+  const MOBILE_BREAKPOINT = 900;
 
   const queryLeague = new URLSearchParams(window.location.search).get('league');
   if (VALID_TYPES.includes(queryLeague)) {
@@ -81,6 +82,32 @@ document.addEventListener('click', e => {
   ).join('');
   nav.insertAdjacentElement('afterend', subnav);
 
+  const mobileBackdrop = document.createElement('div');
+  mobileBackdrop.className = 'nav-mobile-backdrop';
+  document.body.appendChild(mobileBackdrop);
+
+  const mobileToggle = document.createElement('button');
+  mobileToggle.className = 'nav-mobile-toggle';
+  mobileToggle.type = 'button';
+  mobileToggle.setAttribute('aria-label', 'Toggle navigation menu');
+  mobileToggle.setAttribute('aria-expanded', 'false');
+  mobileToggle.innerHTML = '☰';
+  nav.insertBefore(mobileToggle, portalLink || switcher);
+
+  function setMobileMenuOpen(open) {
+    document.body.classList.toggle('nav-mobile-open', open);
+    mobileToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    mobileToggle.innerHTML = open ? '✕' : '☰';
+  }
+
+  function closeMobileMenu() {
+    setMobileMenuOpen(false);
+  }
+
+  function isMobile() {
+    return window.innerWidth <= MOBILE_BREAKPOINT;
+  }
+
   function renderLeagueNav() {
     const active = getActiveLeague();
     switcher.querySelectorAll('.league-nav-btn').forEach(btn => {
@@ -109,6 +136,33 @@ document.addEventListener('click', e => {
       }
       renderLeagueNav();
     });
+  });
+
+  mobileToggle.addEventListener('click', () => {
+    if (!isMobile()) return;
+    setMobileMenuOpen(!document.body.classList.contains('nav-mobile-open'));
+  });
+
+  mobileBackdrop.addEventListener('click', closeMobileMenu);
+
+  subnav.querySelectorAll('a').forEach(a => {
+    a.addEventListener('click', closeMobileMenu);
+  });
+
+  nav.addEventListener('click', e => {
+    if (!isMobile()) return;
+    const targetLink = e.target.closest('a');
+    if (targetLink && (targetLink.classList.contains('nav-portal') || targetLink.id === 'nav-admin-link')) {
+      closeMobileMenu();
+    }
+  });
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closeMobileMenu();
+  });
+
+  window.addEventListener('resize', () => {
+    if (!isMobile()) closeMobileMenu();
   });
 
   renderLeagueNav();
