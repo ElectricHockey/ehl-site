@@ -35,6 +35,8 @@ body {
     linear-gradient(180deg, #0b1017 0%, #0d1117 32%, #091018 100%);
   color: var(--text);
   min-height: 100vh;
+  display: flex;
+  flex-direction: column;
   overflow-x: hidden;
   line-height: 1.5;
   text-rendering: optimizeLegibility;
@@ -84,7 +86,8 @@ nav .brand {
 nav .brand:hover { text-decoration: none; opacity: 0.96; }
 nav .brand-logo {
   height: 46px;
-  width: auto;
+  width: 46px;
+  object-fit: contain;
   display: block;
   filter: drop-shadow(0 8px 18px rgba(0, 0, 0, 0.35));
 }
@@ -243,6 +246,24 @@ nav.league-nav-mode {
   display: flex;
   flex-direction: column;
   gap: 1.3rem;
+}
+
+/* ── Shared Footer ─────────────────────────────────────────── */
+.site-footer {
+  width: 100%;
+  margin-top: auto;
+  padding: 1.35rem 1.5rem;
+  border-top: 1px solid var(--border);
+  background: rgba(9, 14, 22, 0.9);
+  color: var(--muted);
+  text-align: center;
+  font-size: 0.84rem;
+  contain: layout paint style;
+}
+
+.site-footer-content {
+  max-width: var(--content-width);
+  margin: 0 auto;
 }
 
 .page-header {

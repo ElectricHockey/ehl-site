@@ -156,6 +156,12 @@ function drawBracketLines(rounds) {
   svg.setAttribute('height', svgH);
 
   const paths = [];
+  const seriesRects = new Map(
+    [...grid.querySelectorAll('[data-series-id]')].map(element => [
+      element.dataset.seriesId,
+      element.getBoundingClientRect(),
+    ])
+  );
 
   for (let r = 1; r < numRounds; r++) {
     const curSeries  = (rounds[r]   || []).slice().sort((a,b) => a.series_number - b.series_number);
@@ -167,14 +173,10 @@ function drawBracketLines(rounds) {
       const t  = nextSeries[i];
       if (!s1 || !s2 || !t) continue;
 
-      const el1 = document.querySelector(`[data-series-id="${s1.id}"]`);
-      const el2 = document.querySelector(`[data-series-id="${s2.id}"]`);
-      const elT = document.querySelector(`[data-series-id="${t.id}"]`);
-      if (!el1 || !el2 || !elT) continue;
-
-      const r1 = el1.getBoundingClientRect();
-      const r2 = el2.getBoundingClientRect();
-      const rT = elT.getBoundingClientRect();
+      const r1 = seriesRects.get(String(s1.id));
+      const r2 = seriesRects.get(String(s2.id));
+      const rT = seriesRects.get(String(t.id));
+      if (!r1 || !r2 || !rT) continue;
       const ox = gridRect.left;
       const oy = gridRect.top;
 

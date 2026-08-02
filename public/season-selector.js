@@ -103,14 +103,9 @@ const SeasonSelector = (() => {
     const container = document.getElementById(containerId || 'season-selector-container');
     if (!container) return;
     try {
-      const [r3, r6] = await Promise.all([
-        fetch('/api/seasons?type=threes'),
-        fetch('/api/seasons?type=sixes'),
-      ]);
-      _seasonsCache.threes = r3.ok ? await r3.json() : [];
-      _seasonsCache.sixes  = r6.ok ? await r6.json() : [];
-
       const savedType = getSelectedLeagueType();
+      const response = await fetch(`/api/seasons?type=${savedType}`);
+      _seasonsCache[savedType] = response.ok ? await response.json() : [];
 
       container.innerHTML = `
         <div class="league-tabs-row">
