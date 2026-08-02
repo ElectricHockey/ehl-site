@@ -54,6 +54,21 @@
     .series-games-table tr:last-child td { border-bottom:none; }
     .series-games-table tr:hover td { background:#1c2128; cursor:pointer; }
     .bracket-empty { background:#161b22; border:1px dashed #30363d; border-radius:10px; padding:2.5rem; text-align:center; color:#8b949e; }
+
+    /* ── Standings table row colours ───────────────────────────── */
+    /* All rows: alternating grey base with team colour1 fading in on the left */
+    #standings-root tbody tr.team-row {
+      background-color: rgba(22, 27, 34, 0.75);
+      background-image: linear-gradient(90deg, rgba(var(--c1),0.28) 0%, transparent 50%);
+    }
+    #standings-root tbody tr.team-row:nth-child(even) {
+      background-color: rgba(10, 14, 20, 0.85);
+    }
+    #standings-root tbody tr.team-row:hover {
+      background-color: rgba(33, 38, 45, 0.95) !important;
+      background-image: linear-gradient(90deg, rgba(var(--c1),0.42) 0%, transparent 50%) !important;
+    }
+    /* First place — no special treatment; same as every other row */
   </style>
 </head>
 <body>

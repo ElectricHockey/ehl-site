@@ -635,8 +635,13 @@ async function loadPlayer() {
 
   try {
     const encodedName = encodeURIComponent(name);
+    const selectedSeasonId = params.get('season_id');
+    const profileQs = new URLSearchParams();
+    if (selectedSeasonId) profileQs.set('season_id', selectedSeasonId);
+    if (preferredLt) profileQs.set('league_type', preferredLt);
+    const profileUrl = `${API}/players/profile/${encodedName}${profileQs.toString() ? `?${profileQs.toString()}` : ''}`;
     const [res, recordsRes, awardsRes] = await Promise.all([
-      fetch(`${API}/players/profile/${encodedName}`),
+      fetch(profileUrl),
       fetch(`${API}/players/records/${encodedName}`).catch(() => null),
       fetch(`${API}/players/awards/${encodedName}`).catch(() => null),
     ]);
@@ -645,7 +650,7 @@ async function loadPlayer() {
       root.innerHTML = `<p class="error">${err.error || 'Player not found.'}</p>`;
       return;
     }
-    const { player, isGoalie, skaterStats, goalieStats, seasonTeamStats, lastGames } = await res.json();
+    const { player, seasonProfileTeam, isGoalie, skaterStats, goalieStats, seasonTeamStats, lastGames } = await res.json();
 
     const recordsData = recordsRes && recordsRes.ok ? await recordsRes.json().catch(() => null) : null;
     const holdings = recordsData ? recordsData.holdings : [];
@@ -688,16 +693,33 @@ async function loadPlayer() {
     const c1 = player?.color1 || '#1c2128';
     const c2 = player?.color2 || '#0d1117';
 
+    const displayTeam = (seasonProfileTeam && seasonProfileTeam.team_id)
+      ? {
+          team_id: seasonProfileTeam.team_id,
+          team_name: seasonProfileTeam.team_name,
+          team_logo: seasonProfileTeam.team_logo,
+          is_rostered: 1,
+          season_id: seasonProfileTeam.season_id,
+        }
+      : (player?.team_id && player?.is_rostered)
+        ? {
+            team_id: player.team_id,
+            team_name: player.team_name,
+            team_logo: player.team_logo,
+            is_rostered: player.is_rostered,
+          }
+        : null;
+
     // Hero team logo or placeholder
-    const heroLogo = (player?.team_logo)
-      ? `<img src="${player.team_logo}" class="phl-hero-logo" alt="${player.team_name || ''}">`
+    const heroLogo = (displayTeam?.team_logo)
+      ? `<img src="${displayTeam.team_logo}" class="phl-hero-logo" alt="${displayTeam.team_name || ''}">`
       : `<div class="phl-hero-logo-ph">🏒</div>`;
 
     // Sidebar: team badge link or FA
-    const sideTeam = (player?.team_id && player?.is_rostered)
-      ? `<a href="team.html?id=${player.team_id}" class="phl-team-link">
-           ${player.team_logo ? `<img src="${player.team_logo}" alt="${player.team_name}">` : ''}
-           ${player.team_name}
+    const sideTeam = (displayTeam?.team_id && displayTeam?.is_rostered)
+      ? `<a href="team.html?id=${displayTeam.team_id}${displayTeam.season_id ? `&season_id=${displayTeam.season_id}` : ''}" class="phl-team-link">
+           ${displayTeam.team_logo ? `<img src="${displayTeam.team_logo}" alt="${displayTeam.team_name}">` : ''}
+           ${displayTeam.team_name}
          </a>`
       : `<p class="phl-fa">Free Agent</p>`;
 
@@ -730,7 +752,7 @@ async function loadPlayer() {
         <div class="phl-hero-info">
           <div class="phl-hero-pos">${isGoalie ? 'G' : pos}</div>
           <h1 class="phl-hero-name">${name}</h1>
-          <div class="phl-hero-team">${player?.team_name || 'Free Agent'}</div>
+          <div class="phl-hero-team">${displayTeam?.team_name || 'Free Agent'}</div>
         </div>
         <div class="phl-hero-stats">
           ${statBoxes.map(s => `<div class="phl-stat-box"><div class="phl-stat-label">${s.label}</div><div class="phl-stat-val">${s.value ?? '–'}</div></div>`).join('')}

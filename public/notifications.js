@@ -54,7 +54,7 @@
 
     if (offers.length === 0) {
       badge.style.display = 'none';
-      dd.innerHTML = '<p class="notif-empty">No pending offers.</p>';
+      dd.innerHTML = '<p class="notif-empty">No notifications.</p>';
       return;
     }
 

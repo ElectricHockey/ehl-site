@@ -464,22 +464,14 @@
   // ── Combined skater + goalie tables (both teams in one table each) ───────
 
   function renderCombinedTables(game, homeNorm, awayNorm) {
-    const SKATER_COLS = 22;
+    const SKATER_COLS = 21;
     const GOALIE_COLS = 11;
 
-    const hLogo = game.home_team.logo_url
-      ? `<img src="${game.home_team.logo_url}" class="gs-row-logo" alt="" />`
-      : '';
-    const aLogo = game.away_team.logo_url
-      ? `<img src="${game.away_team.logo_url}" class="gs-row-logo" alt="" />`
-      : '';
-
-    function playerCell(p, logoHtml) {
+    function playerCell(p) {
       const ovr = computeOvr(p);
       return `<div class="gs-player-cell">
         <div class="gs-ovr-badge" style="${ovrBadgeStyle(ovr)}">${ovr || '–'}</div>
         ${renderRatingBars(p)}
-        ${logoHtml}
         <div class="gs-player-name-wrap">
           <a href="player.html?name=${encodeURIComponent(p.name)}" class="player-link gs-pname">${p.name}</a>
           <span class="gs-pos-tag">${p.position || ''}</span>
@@ -487,11 +479,11 @@
       </div>`;
     }
 
-    function skaterRow(p, logoHtml) {
+    function skaterRow(p) {
       const pm = p.plus_minus;
       const shotsDisplay = `${p.shots}/${p.shot_attempts}`;
       return `<tr class="gs-table-row">
-        <td class="gs-col-player">${playerCell(p, logoHtml)}</td>
+        <td class="gs-col-player">${playerCell(p)}</td>
         <td class="gs-num">${p.goals}</td>
         <td class="gs-num">${p.assists}</td>
         <td class="gs-num"><strong>${p.points}</strong></td>
@@ -515,9 +507,9 @@
       </tr>`;
     }
 
-    function goalieRow(p, logoHtml) {
+    function goalieRow(p) {
       return `<tr class="gs-table-row">
-        <td class="gs-col-player">${playerCell(p, logoHtml)}</td>
+        <td class="gs-col-player">${playerCell(p)}</td>
         <td class="gs-num">${p.shots_against}</td>
         <td class="gs-num"><strong>${pct3(p.save_pct)}</strong></td>
         <td class="gs-num">${p.goals_against}</td>
@@ -531,9 +523,17 @@
       </tr>`;
     }
 
-    function teamHeaderRow(cols, teamName) {
+    function teamHeaderRow(cols, teamName, logoUrl) {
+      const logo = logoUrl
+        ? `<img src="${logoUrl}" class="gs-team-header-logo" alt="${teamName}" />`
+        : '';
       return `<tr class="gs-team-header-row">
-        <td colspan="${cols}"><span class="gs-team-header-name">${teamName}</span></td>
+        <td colspan="${cols}">
+          <div class="gs-team-header-inner">
+            <span class="gs-team-header-name">${teamName}</span>
+            ${logo}
+          </div>
+        </td>
       </tr>`;
     }
 
@@ -577,10 +577,10 @@
           </tr>
         </thead>
         <tbody>
-          ${teamHeaderRow(SKATER_COLS, game.home_team.name)}
-          ${hSkaters.map(p => skaterRow(p, hLogo)).join('')}
-          ${teamHeaderRow(SKATER_COLS, game.away_team.name)}
-          ${aSkaters.map(p => skaterRow(p, aLogo)).join('')}
+          ${teamHeaderRow(SKATER_COLS, game.home_team.name, game.home_team.logo_url)}
+          ${hSkaters.map(p => skaterRow(p)).join('')}
+          ${teamHeaderRow(SKATER_COLS, game.away_team.name, game.away_team.logo_url)}
+          ${aSkaters.map(p => skaterRow(p)).join('')}
         </tbody>
       </table></div>` : '';
 
@@ -603,10 +603,10 @@
           </tr>
         </thead>
         <tbody>
-          ${teamHeaderRow(GOALIE_COLS, game.home_team.name)}
-          ${hGoalies.map(p => goalieRow(p, hLogo)).join('')}
-          ${teamHeaderRow(GOALIE_COLS, game.away_team.name)}
-          ${aGoalies.map(p => goalieRow(p, aLogo)).join('')}
+          ${teamHeaderRow(GOALIE_COLS, game.home_team.name, game.home_team.logo_url)}
+          ${hGoalies.map(p => goalieRow(p)).join('')}
+          ${teamHeaderRow(GOALIE_COLS, game.away_team.name, game.away_team.logo_url)}
+          ${aGoalies.map(p => goalieRow(p)).join('')}
         </tbody>
       </table></div>` : '';
 

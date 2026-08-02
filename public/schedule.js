@@ -13,6 +13,7 @@ let activeGameId = null;       // game detail
 let activePickerGameId = null; // picker
 let allGames = [];
 let currentPickerMatches = [];
+let currentPickerSelected = new Set();
 let scheduleTeamFilter = '';   // team id (as string) or '' for all
 let scheduleTimeFilter = 'all'; // 'all' | 'upcoming' | '15days'
 
@@ -207,9 +208,19 @@ function playoffRoundLabel(roundNum, totalRounds) {
 function formatGameTime(dateStr, timeStr) {
   if (!timeStr) return '';
   try {
-    const dt = new Date(dateStr + 'T' + timeStr + ':00Z');
-    return dt.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', timeZoneName: 'short' });
-  } catch { return timeStr + ' UTC'; }
+    const [h, m] = String(timeStr).split(':').map(Number);
+    if (!Number.isFinite(h) || !Number.isFinite(m)) return timeStr;
+    const dt = new Date();
+    dt.setHours(h, m, 0, 0);
+    return dt.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  } catch { return timeStr; }
+}
+
+function currentLocalTimeHHMM() {
+  const now = new Date();
+  const hh = String(now.getHours()).padStart(2, '0');
+  const mm = String(now.getMinutes()).padStart(2, '0');
+  return `${hh}:${mm}`;
 }
 
 function buildGameRow(g) {
@@ -512,6 +523,7 @@ function closePicker() {
   document.getElementById('ea-picker').classList.add('hidden');
   activePickerGameId = null;
   currentPickerMatches = [];
+  currentPickerSelected = new Set();
 }
 
 function closePickerAndEditManually(gameId) {
@@ -570,6 +582,10 @@ function mapEAPlayerFromRaw(player) {
   const goals = Number(readEAField(player, ['goals', 'skgoals'])) || 0;
   const assists = Number(readEAField(player, ['assists', 'skassists'])) || 0;
 
+  const passAttempts = Number(readEAField(player, ['passAttempts', 'skpassattempts'])) || 0;
+  const passPct = readEAField(player, ['passPct', 'skpasspct']) != null ? parseFloat(readEAField(player, ['passPct', 'skpasspct'])) : null;
+  const passCompletions = passPct !== null ? Math.round(passAttempts * passPct / 100) : 0;
+
   return {
     name: readEAField(player, ['playerName', 'name']) || 'Unknown',
     position,
@@ -577,10 +593,19 @@ function mapEAPlayerFromRaw(player) {
     assists,
     points: goals + assists,
     shots: Number(readEAField(player, ['shots', 'skshots'])) || 0,
+    shotAttempts: Number(readEAField(player, ['shotAttempts', 'skshotattempts'])) || 0,
     hits: Number(readEAField(player, ['hits', 'skhits'])) || 0,
     plusMinus: Number(readEAField(player, ['plusMinus', 'skplusmin'])) || 0,
     pim: Number(readEAField(player, ['pim', 'skpim'])) || 0,
     blockedShots: Number(readEAField(player, ['blockedShots', 'skblockedshots'])) || 0,
+    takeaways: Number(readEAField(player, ['takeaways', 'sktakeaways'])) || 0,
+    giveaways: Number(readEAField(player, ['giveaways', 'skgiveaways'])) || 0,
+    possessionSecs: Number(readEAField(player, ['possessionSecs', 'skpossession'])) || 0,
+    passAttempts,
+    passPct,
+    passCompletions,
+    faceoffWins: Number(readEAField(player, ['faceoffWins', 'skfow'])) || 0,
+    faceoffLosses: Number(readEAField(player, ['faceoffLosses', 'skfol'])) || 0,
     toi: Number(readEAField(player, ['toi', 'sktoi'])) || 0,
     saves: Number(readEAField(player, ['saves', 'glsaves'])) || 0,
     savesPct: readEAField(player, ['savesPct', 'glsavepct']) != null ? parseFloat(readEAField(player, ['savesPct', 'glsavepct'])) : null,
@@ -639,6 +664,112 @@ function processEAMatchesInBrowser(raw, game) {
     .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
 }
 
+function normalizePlayerKey(player) {
+  return String(player?.name || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+function mergePlayerStats(players) {
+  const merged = new Map();
+  const numericKeys = [
+    'goals', 'assists', 'points', 'shots', 'hits', 'plusMinus', 'pim', 'blockedShots',
+    'shotAttempts', 'takeaways', 'giveaways', 'possessionSecs',
+    'passAttempts', 'passCompletions', 'faceoffWins', 'faceoffLosses',
+    'ppGoals', 'shGoals', 'gwg', 'penaltiesDrawn', 'deflections', 'interceptions',
+    'hatTricks', 'saucerPasses', 'pkClears',
+    'toi', 'saves', 'goalsAgainst', 'shotsAgainst',
+    'penaltyShotAttempts', 'penaltyShotGa', 'breakawayShots', 'breakawaySaves',
+    'desperationSaves', 'pokeCheckSaves',
+  ];
+
+  for (const p of players || []) {
+    const key = normalizePlayerKey(p);
+    if (!key) continue;
+    if (!merged.has(key)) {
+      merged.set(key, {
+        name: p.name || 'Unknown',
+        position: p.position || '',
+        goals: 0,
+        assists: 0,
+        points: 0,
+        shots: 0,
+        shotAttempts: 0,
+        hits: 0,
+        plusMinus: 0,
+        pim: 0,
+        blockedShots: 0,
+        takeaways: 0,
+        giveaways: 0,
+        possessionSecs: 0,
+        passAttempts: 0,
+        passCompletions: 0,
+        passPct: null,
+        faceoffWins: 0,
+        faceoffLosses: 0,
+        ppGoals: 0,
+        shGoals: 0,
+        gwg: 0,
+        penaltiesDrawn: 0,
+        deflections: 0,
+        interceptions: 0,
+        hatTricks: 0,
+        saucerPasses: 0,
+        pkClears: 0,
+        toi: 0,
+        saves: 0,
+        savesPct: null,
+        goalsAgainst: 0,
+        shotsAgainst: 0,
+        penaltyShotAttempts: 0,
+        penaltyShotGa: 0,
+        breakawayShots: 0,
+        breakawaySaves: 0,
+        desperationSaves: 0,
+        pokeCheckSaves: 0,
+      });
+    }
+    const row = merged.get(key);
+    if (!row.position && p.position) row.position = p.position;
+    for (const k of numericKeys) row[k] += Number(p[k]) || 0;
+  }
+
+  const out = [...merged.values()];
+  for (const p of out) {
+    p.points = (Number(p.goals) || 0) + (Number(p.assists) || 0);
+    p.savesPct = p.shotsAgainst > 0 ? (p.saves / p.shotsAgainst) : null;
+    p.passPct = p.passAttempts > 0 ? (p.passCompletions * 100 / p.passAttempts) : null;
+  }
+  return out;
+}
+
+function getSelectedPickerMatches() {
+  const indices = [...currentPickerSelected]
+    .map(v => Number(v))
+    .filter(v => Number.isInteger(v) && v >= 0 && v < currentPickerMatches.length);
+  return indices.map(idx => currentPickerMatches[idx]).filter(Boolean);
+}
+
+function mergeSelectedMatches() {
+  const selected = getSelectedPickerMatches();
+  if (selected.length === 0) return null;
+  const sumOrNull = (rows, key) => {
+    const vals = rows.map(r => r[key]).filter(v => v !== null && v !== undefined);
+    if (vals.length === 0) return null;
+    return vals.reduce((t, v) => t + (Number(v) || 0), 0);
+  };
+  return {
+    matchIds: selected.map(m => String(m.matchId)),
+    homeScore: selected.reduce((t, m) => t + (Number(m.homeScore) || 0), 0),
+    awayScore: selected.reduce((t, m) => t + (Number(m.awayScore) || 0), 0),
+    homeShots: sumOrNull(selected, 'homeShots'),
+    awayShots: sumOrNull(selected, 'awayShots'),
+    homePlayers: mergePlayerStats(selected.flatMap(m => m.players || [])),
+    awayPlayers: mergePlayerStats(selected.flatMap(m => m.awayPlayers || [])),
+  };
+}
+
 async function submitPastedEAJson(gameId) {
   const textarea = document.getElementById('paste-ea-json');
   const errSpan = document.getElementById('paste-ea-error');
@@ -663,6 +794,45 @@ async function submitPastedEAJson(gameId) {
     renderPickerMatches(data, gameId);
   } catch (err) {
     if (errSpan) { errSpan.textContent = `Error: ${err.message}`; errSpan.style.display = ''; }
+  }
+}
+
+async function importEAFromClipboard(gameId) {
+  const errSpan = document.getElementById('paste-ea-error');
+  try {
+    if (!navigator.clipboard || typeof navigator.clipboard.readText !== 'function') {
+      throw new Error('Clipboard access is not available in this browser');
+    }
+    const txt = (await navigator.clipboard.readText() || '').trim();
+    if (!txt) throw new Error('Clipboard is empty');
+    const rawEa = JSON.parse(txt);
+    const game = allGames.find(g => g.id === gameId);
+    if (!game) throw new Error('Game not found');
+    const gameData = buildPickerGameData(game);
+    const matches = processEAMatchesInBrowser(rawEa, gameData);
+    renderPickerMatches({ game: gameData, matches }, gameId);
+    if (errSpan) errSpan.style.display = 'none';
+  } catch (err) {
+    if (errSpan) {
+      errSpan.textContent = `Clipboard import failed: ${err.message}`;
+      errSpan.style.display = '';
+    }
+  }
+}
+
+async function tryBrowserFetchEA(eaUrl) {
+  const res = await fetch(eaUrl, {
+    method: 'GET',
+    credentials: 'omit',
+    cache: 'no-store',
+  });
+  if (!res.ok) throw new Error(`EA request failed (${res.status})`);
+  const text = await res.text();
+  if (!text || !text.trim()) throw new Error('EA response was empty');
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error('EA response was not valid JSON');
   }
 }
 
@@ -693,8 +863,6 @@ async function openPicker(gameId) {
   picker.classList.remove('hidden');
   picker.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
-  // Strategy: try fetching EA data directly from the user's browser first
-  // (avoids Vercel IP blocks). Fall back to server proxy, then manual entry.
   const homeEaClubId = game && game.home_ea_club_id;
   if (!homeEaClubId) {
     body.innerHTML = `<p class="picker-error">⚠️ Home team has no EA club ID configured</p>
@@ -702,23 +870,25 @@ async function openPicker(gameId) {
     return;
   }
 
-  const eaUrl = `https://proclubs.ea.com/api/nhl/clubs/matches?matchType=club_private&platform=common-gen5&clubIds=${homeEaClubId}`;
-
-  body.innerHTML = `<p class="picker-empty">This picker now uses local browser JSON only (no EA/proxy API calls).</p>
-    <p style="color:#8b949e;font-size:0.82rem;text-align:center;margin:0.35rem 1rem 0.75rem;">
-      Open <a href="${eaUrl}" target="_blank" style="color:#58a6ff;">EA match data for club ${homeEaClubId}</a>, copy the JSON, and paste it below.
-    </p>
-    <p style="text-align:center;margin:0.5rem 0;">
-      <button onclick="closePickerAndEditManually(${gameId})" style="padding:0.35rem 0.9rem;background:#238636;border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:0.85rem;">✏️ Enter Stats Manually</button>
-    </p>
-    ${pasteEAJsonUI(gameId)}`;
+  try {
+    const res = await fetch(`${API}/games/${gameId}/ea-matches`, { cache: 'no-store' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error || `Failed to load EA matches (HTTP ${res.status})`);
+    }
+    renderPickerMatches(data, gameId);
+  } catch (err) {
+    body.innerHTML = `<p class="picker-error">⚠️ ${err.message || 'Failed to load EA matches.'}</p>`;
+  }
 }
 
 function renderPickerMatches(data, gameId) {
   const body = document.getElementById('picker-body');
   const { game, matches } = data;
   const currentEaMatchId = game.ea_match_id;
+  const linkedIds = new Set(String(currentEaMatchId || '').split(',').map(s => s.trim()).filter(Boolean));
   currentPickerMatches = matches;
+  currentPickerSelected = new Set();
 
   if (matches.length === 0) {
     body.innerHTML = `<p class="picker-empty">No recent EA private matches found for <strong>${game.home_team.name}</strong>. Check that the EA Club ID is correct in the Admin Panel, or enter stats manually.</p>`;
@@ -730,13 +900,17 @@ function renderPickerMatches(data, gameId) {
     : `<p style="color:#8b949e;font-size:0.82rem;padding:0.5rem 1rem 0;">Tip: set ${game.away_team.name}'s EA Club ID to auto-highlight.</p>`;
 
   const items = matches.map((m, idx) => {
-    const isAssigned = currentEaMatchId && String(currentEaMatchId) === String(m.matchId);
+    const isAssigned = linkedIds.has(String(m.matchId));
     const cls = ['ea-match-item', m.isScheduledOpponent ? 'highlight' : '', isAssigned ? 'assigned' : ''].filter(Boolean).join(' ');
     const statsId = `stats-${gameId}-${idx}`;
     const awayStatsId = `away-stats-${gameId}-${idx}`;
     return `
       <div class="${cls}">
         <div class="ea-match-info">
+          <label style="display:flex;align-items:center;gap:0.4rem;margin-bottom:0.35rem;font-size:0.8rem;color:#8b949e;">
+            <input type="checkbox" data-action="select-match" data-match-idx="${idx}" ${isAssigned ? 'checked' : ''} />
+            Select for merged assign
+          </label>
           <div class="ea-match-score">
             ${resultBadge(m.result)}
             <span style="margin-left:0.4rem;">${m.homeScore} – ${m.awayScore}</span>
@@ -766,7 +940,24 @@ function renderPickerMatches(data, gameId) {
       </div>`;
   }).join('');
 
-  body.innerHTML = hint + `<div class="ea-match-list">${items}</div>`;
+  body.innerHTML = hint + `
+    <div style="padding:0.45rem 1rem 0;display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
+      <button class="btn-assign" data-action="assign-selected" data-game-id="${gameId}" style="padding:0.35rem 0.85rem;">Assign selected (merged)</button>
+      <button class="btn-secondary" data-action="clear-selected" style="padding:0.35rem 0.85rem;">Clear selection</button>
+      <span id="picker-selected-count" style="font-size:0.8rem;color:#8b949e;">0 selected</span>
+    </div>
+    <div class="ea-match-list">${items}</div>`;
+
+  for (let i = 0; i < matches.length; i++) {
+    if (linkedIds.has(String(matches[i].matchId))) currentPickerSelected.add(i);
+  }
+  updatePickerSelectedCount();
+}
+
+function updatePickerSelectedCount() {
+  const el = document.getElementById('picker-selected-count');
+  if (!el) return;
+  el.textContent = `${currentPickerSelected.size} selected`;
 }
 
 function toggleStats(statsId, btn) {
@@ -796,7 +987,38 @@ document.getElementById('ea-picker').addEventListener('click', e => {
     clearAssignment(parseInt(btn.dataset.gameId, 10));
   } else if (action === 'toggle-stats') {
     toggleStats(btn.dataset.statsId, btn);
+  } else if (action === 'assign-selected') {
+    const gameId = parseInt(btn.dataset.gameId, 10);
+    const merged = mergeSelectedMatches();
+    if (!merged) {
+      alert('Select one or more EA matches first.');
+      return;
+    }
+    assignMatch(
+      gameId,
+      merged.matchIds.join(','),
+      merged.homeScore,
+      merged.awayScore,
+      merged.homePlayers,
+      merged.awayPlayers,
+      merged.homeShots,
+      merged.awayShots,
+    );
+  } else if (action === 'clear-selected') {
+    currentPickerSelected.clear();
+    document.querySelectorAll('#ea-picker input[data-action="select-match"]').forEach(cb => { cb.checked = false; });
+    updatePickerSelectedCount();
   }
+});
+
+document.getElementById('ea-picker').addEventListener('change', e => {
+  const cb = e.target.closest('input[data-action="select-match"]');
+  if (!cb) return;
+  const idx = parseInt(cb.dataset.matchIdx, 10);
+  if (Number.isNaN(idx)) return;
+  if (cb.checked) currentPickerSelected.add(idx);
+  else currentPickerSelected.delete(idx);
+  updatePickerSelectedCount();
 });
 
 // ── Assign / Clear ─────────────────────────────────────────────────────────
@@ -810,6 +1032,8 @@ async function assignMatch(gameId, matchId, homeScore, awayScore, homePlayers, a
         ea_match_id: matchId,
         home_score: homeScore,
         away_score: awayScore,
+        status: 'complete',
+        is_forfeit: 0,
         home_shots: homeShots != null ? homeShots : undefined,
         away_shots: awayShots != null ? awayShots : undefined,
         player_stats: { home_players: homePlayers, away_players: awayPlayers },
@@ -962,7 +1186,8 @@ async function deleteGame(gameId, event) {
     const away_score = parseInt(document.getElementById('sg-away-score').value, 10) || 0;
     const status = document.getElementById('sg-status').value;
     const is_overtime = document.getElementById('sg-overtime').checked ? 1 : 0;
-    const game_time = document.getElementById('sg-time').value || null;
+    const timeInput = document.getElementById('sg-time');
+    const game_time = (timeInput && timeInput.value) ? timeInput.value : currentLocalTimeHHMM();
     try {
       const res = await fetch(`${API}/games`, {
         method: 'POST',
@@ -974,6 +1199,7 @@ async function deleteGame(gameId, event) {
         throw new Error(err.error || `HTTP ${res.status}`);
       }
       e.target.reset();
+      if (timeInput) timeInput.value = currentLocalTimeHHMM();
       showAddGameStatus('✅ Game added.', true);
       await loadSchedule();
     } catch (err) {
@@ -993,6 +1219,8 @@ async function deleteGame(gameId, event) {
     await loadSchedule();
     updateAddGameVisibility();
     if (isAdmin) await populateAddGameTeams();
+    const timeInput = document.getElementById('sg-time');
+    if (timeInput && !timeInput.value) timeInput.value = currentLocalTimeHHMM();
   } catch (err) {
     console.error('[schedule] init error:', err);
     const root = document.getElementById('schedule-root');

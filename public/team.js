@@ -77,6 +77,9 @@ function pct3(v) {
   const frac = num > 1 ? num / 100 : num;
   return frac.toFixed(3).replace(/^0(?=\.)/, '');
 }
+function normalizeName(v) {
+  return String(v || '').trim().toLowerCase();
+}
 
 // ── Sort callbacks ────────────────────────────────────────────────────────
 const SKATER_SORT_KEYS = new Set(
@@ -320,11 +323,10 @@ async function loadTeamPage() {
         ${c1 ? `<div style="position:absolute;top:-30px;right:-20px;width:220px;height:220px;border-radius:50%;background:radial-gradient(circle,rgba(${c1},0.18) 0%,transparent 70%);pointer-events:none;z-index:0;"></div>` : ''}
       </div>
 
-      <div id="season-selector-container" style="margin-bottom:1rem;"></div>
-
       <div style="display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:1.25rem;align-items:start;" class="team-page-grid">
         <!-- LEFT: Roster + Stats -->
-        <div style="min-width:0;overflow:hidden;">`;
+        <div style="min-width:0;overflow:hidden;">
+          <div id="season-selector-container" style="margin-bottom:1rem;"></div>`;
 
     // ── ROSTER (grouped by position) ──
     const posOrder = { C: 0, LW: 1, RW: 2, LD: 3, RD: 4, G: 5 };
@@ -353,19 +355,47 @@ async function loadTeamPage() {
       return '';
     }
 
+    const gm1 = gms[0] ? gms[0].username : 'N/A';
+    const gm2 = gms[1] ? gms[1].username : 'N/A';
+    const ownerName = owner ? owner.username : 'N/A';
+    html += `
+      <div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:0.7rem 0.9rem;margin-bottom:0.85rem;">
+        <div style="display:grid;grid-template-columns:1fr 1.2fr 1fr;gap:0.6rem;align-items:center;text-align:center;">
+          <div>
+            <div style="font-size:0.68rem;color:#8b949e;text-transform:uppercase;letter-spacing:0.06em;">GM</div>
+            <div style="font-size:0.92rem;font-weight:700;color:#e6edf3;">${gm1}</div>
+          </div>
+          <div>
+            <div style="font-size:0.68rem;color:#8b949e;text-transform:uppercase;letter-spacing:0.06em;">Owner</div>
+            <div style="font-size:0.98rem;font-weight:800;color:#58a6ff;">${ownerName}</div>
+          </div>
+          <div>
+            <div style="font-size:0.68rem;color:#8b949e;text-transform:uppercase;letter-spacing:0.06em;">GM</div>
+            <div style="font-size:0.92rem;font-weight:700;color:#e6edf3;">${gm2}</div>
+          </div>
+        </div>
+      </div>`;
+
+    const excludedRosterNames = new Set(
+      [owner ? owner.username : null, ...gms.map(g => g.username)]
+        .filter(Boolean)
+        .map(normalizeName)
+    );
+    const rosterForDisplay = sorted.filter(p => !excludedRosterNames.has(normalizeName(p.name)));
+
     const groups = [
       { label: 'Forward',  positions: ['C','LW','RW'] },
       { label: 'Defender', positions: ['LD','RD'] },
       { label: 'Goalie',   positions: ['G'] },
     ];
 
-    html += `<h2 style="color:#58a6ff;margin-bottom:0.5rem;">Roster${rosterLimit ? ` <span style="font-size:0.8rem;color:#8b949e;font-weight:400;">(${roster.length}/${rosterLimit})</span>` : ''}</h2>`;
+    html += `<h2 style="color:#58a6ff;margin-bottom:0.5rem;">Roster${rosterLimit ? ` <span style="font-size:0.8rem;color:#8b949e;font-weight:400;">(${rosterForDisplay.length}/${rosterLimit})</span>` : ''}</h2>`;
 
-    if (roster.length === 0) {
+    if (rosterForDisplay.length === 0) {
       html += '<p class="no-stats">No rostered players.</p>';
     } else {
       for (const grp of groups) {
-        const grpPlayers = sorted.filter(p => grp.positions.includes(p.position));
+        const grpPlayers = rosterForDisplay.filter(p => grp.positions.includes(p.position));
         if (grpPlayers.length === 0) continue;
 
         html += `<div style="margin-bottom:1.25rem;">

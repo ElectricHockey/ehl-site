@@ -339,7 +339,7 @@ async function loadPlayoff() {
   if (document.title.includes('Playoffs') && !document.getElementById('standings-root')) {
     try {
       if (typeof SeasonSelector !== 'undefined') {
-        await SeasonSelector.init('season-selector-container');
+        await SeasonSelector.init('season-selector-container', { noAllTime: true, seasonFilter: 'playoff' });
         SeasonSelector.onSeasonChange(() => loadPlayoff());
       }
       loadPlayoff();

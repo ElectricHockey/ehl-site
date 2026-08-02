@@ -81,19 +81,27 @@ async function loadMiniStandings(seasonId, rootId) {
     const data = await res.json();
     const teams = data.teams || data;   // handle both {teams,...} and bare array
     if (!teams || !teams.length) { root.innerHTML = '<p style="color:#8b949e;font-size:0.88rem;">No standings data yet.</p>'; return; }
-    const sorted = [...teams].sort((a, b) => b.pts - a.pts || b.w - a.w).slice(0, 8);
+    const sorted = [...teams].sort((a, b) => b.pts - a.pts || b.w - a.w).slice(0, 16);
     root.innerHTML = `<div style="overflow-x:auto;"><table class="home-standings-table">
-      <thead><tr><th>Team</th><th>GP</th><th>W</th><th>L</th><th>OTL</th><th>PTS</th></tr></thead>
+      <thead><tr><th>Team</th><th>GP</th><th>W</th><th>L</th><th>OTL</th><th>PTS</th><th>GF</th><th>GA</th><th>DIFF</th><th>STK</th></tr></thead>
       <tbody>${sorted.map((t, i) => {
         const c1 = hexToRgbStr(t.color1);
         const c2 = hexToRgbStr(t.color2) || c1;
         const rowStyle = c1 ? ` class="team-row" style="--c1:${c1};--c2:${c2};"` : '';
-        const logo = t.logo_url ? `<img src="${t.logo_url}" style="width:16px;height:16px;object-fit:contain;vertical-align:middle;margin-right:0.3rem;border-radius:2px;" />` : '';
+        const logo = t.logo_url ? `<img src="${t.logo_url}" style="width:16px;height:16px;object-fit:contain;vertical-align:middle;margin-right:0.3rem;border-radius:2px;" decoding="async" loading="lazy">` : '';
+        const diff = (t.gf || 0) - (t.ga || 0);
+        const diffStr = diff > 0 ? `+${diff}` : String(diff);
+        const diffColor = diff > 0 ? '#3fb950' : diff < 0 ? '#f85149' : '#8b949e';
+        const stkColor = t.streak && t.streak.startsWith('W') ? '#3fb950' : '#f85149';
         return `<tr${rowStyle}>
           <td>${logo}<a href="team.html?id=${t.id}" style="color:#58a6ff;text-decoration:none;">${t.name}</a></td>
           <td>${t.gp}</td><td>${t.w}</td><td>${t.l}</td>
           <td style="color:#8b949e;">${t.otl}</td>
           <td><strong>${t.pts}</strong></td>
+          <td style="color:#8b949e;">${t.gf || 0}</td>
+          <td style="color:#8b949e;">${t.ga || 0}</td>
+          <td style="color:${diffColor};font-weight:600;">${diffStr}</td>
+          <td style="color:${stkColor};font-weight:600;">${t.streak || '—'}</td>
         </tr>`;
       }).join('')}</tbody>
     </table></div>
@@ -175,6 +183,95 @@ async function loadStatsLeaders(seasonId, rootId) {
   }
 }
 
+// ── Games Carousel ──────────────────────────────────────────────────────────
+
+let _carouselTimer = null;
+
+async function loadCarousel(seasonId) {
+  const track = document.getElementById('games-carousel');
+  if (!track) return;
+
+  let completed = [], scheduled = [];
+  try {
+    const [rRes, uRes] = await Promise.all([
+      fetch(`${API}/games?status=complete&season_id=${seasonId}&limit=10&order=desc`),
+      fetch(`${API}/games?status=scheduled&season_id=${seasonId}&limit=10&order=asc`),
+    ]);
+    if (rRes.ok) completed = await rRes.json();
+    if (uRes.ok) scheduled = await uRes.json();
+  } catch { /* silent */ }
+
+  const cards = [
+    ...completed.map(g => buildCarouselCard(g, 'final')),
+    ...scheduled.map(g => buildCarouselCard(g, 'upcoming')),
+  ];
+
+  if (!cards.length) {
+    track.innerHTML = '<div class="carousel-loading">No games to display.</div>';
+    return;
+  }
+
+  track.innerHTML = cards.join('');
+
+  const wrap = document.getElementById('games-carousel-wrap');
+  if (wrap) wrap.style.display = '';
+
+  setupCarousel(track);
+}
+
+function buildCarouselCard(g, type) {
+  const homeLogo = g.home_logo
+    ? `<img src="${g.home_logo}" class="carousel-logo" alt="${g.home_team_name}" />`
+    : `<span class="carousel-logo-placeholder"></span>`;
+  const awayLogo = g.away_logo
+    ? `<img src="${g.away_logo}" class="carousel-logo" alt="${g.away_team_name}" />`
+    : `<span class="carousel-logo-placeholder"></span>`;
+  const ot = g.is_overtime ? '<span class="carousel-ot">OT</span>' : '';
+
+  if (type === 'final') {
+    return `<a href="game.html?id=${g.id}" class="carousel-card">
+      <span class="carousel-badge carousel-badge-final">FINAL</span>
+      <div class="carousel-teams">
+        <div class="carousel-team">${homeLogo}<span>${g.home_team_name}</span></div>
+        <div class="carousel-score">${g.home_score}${ot}&nbsp;–&nbsp;${g.away_score}</div>
+        <div class="carousel-team carousel-team-away">${awayLogo}<span>${g.away_team_name}</span></div>
+      </div>
+      <div class="carousel-date">${g.date || ''}</div>
+    </a>`;
+  }
+  return `<a href="game.html?id=${g.id}" class="carousel-card carousel-card-upcoming">
+    <span class="carousel-badge carousel-badge-upcoming">UPCOMING</span>
+    <div class="carousel-teams">
+      <div class="carousel-team">${homeLogo}<span>${g.home_team_name}</span></div>
+      <div class="carousel-vs">VS</div>
+      <div class="carousel-team carousel-team-away">${awayLogo}<span>${g.away_team_name}</span></div>
+    </div>
+    <div class="carousel-date">${g.date || ''}${g.game_time ? ' · ' + g.game_time : ''}</div>
+  </a>`;
+}
+
+function setupCarousel(track) {
+  const cards = track.querySelectorAll('.carousel-card');
+  if (!cards.length) return;
+  const prevBtn = document.getElementById('carousel-prev');
+  const nextBtn = document.getElementById('carousel-next');
+  let idx = 0;
+
+  function scrollTo(i) {
+    idx = ((i % cards.length) + cards.length) % cards.length;
+    cards[idx].scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+  }
+
+  if (prevBtn) prevBtn.onclick = () => { scrollTo(idx - 1); resetTimer(); };
+  if (nextBtn) nextBtn.onclick = () => { scrollTo(idx + 1); resetTimer(); };
+
+  function resetTimer() {
+    clearInterval(_carouselTimer);
+    _carouselTimer = setInterval(() => scrollTo(idx + 1), 4000);
+  }
+  resetTimer();
+}
+
 // ── Bootstrap ───────────────────────────────────────────────────────────────
 
 async function initHome() {
@@ -200,7 +297,7 @@ async function initHome() {
   }
 
   await Promise.all([
-    loadRecentScores(seasonId, `home-recent-scores-${suffix}`),
+    loadCarousel(seasonId),
     loadMiniStandings(seasonId, `home-standings-${suffix}`),
     loadStatsLeaders(seasonId, `home-leaders-${suffix}`),
   ]);
