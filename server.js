@@ -1,3 +1,6 @@
+// Load .env in local development (no-op on Vercel where env vars are injected)
+if (!process.env.VERCEL) { try { require('dotenv').config(); } catch (_) {} }
+
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
