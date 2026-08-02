@@ -525,7 +525,7 @@ function renderPlayerRecords(holdings, leagueType) {
 
 // ── League-type tab rendering ──────────────────────────────────────────────
 
-function renderLeagueSections(seasonTeamStats, lastGames, isGoalie, holdings, preferredLt) {
+function renderLeagueSections(seasonTeamStats, lastGames, isGoalie, holdings, preferredLt, playerAwards) {
   const selectedLt = LT_TABS.some(t => t.key === preferredLt) ? preferredLt : LT_THREES;
   const filteredStats = seasonTeamStats.filter(r => (r.league_type || '') === selectedLt);
   const filteredGames = lastGames.filter(g => (g.league_type || '') === selectedLt);
@@ -545,6 +545,11 @@ function renderLeagueSections(seasonTeamStats, lastGames, isGoalie, holdings, pr
     `<button class="lt-tab" data-lt="awards">Awards</button>`,
   ].join('');
 
+  const filteredAwards = (playerAwards || []).filter(a => (a.league_type || '') === selectedLt);
+  const awardsContent = filteredAwards.length > 0
+    ? renderPlayerAwards(filteredAwards)
+    : '<p style="color:#8b949e;padding:1.5rem 0;">No awards on file for this league.</p>';
+
   return `<div class="lt-tabs">${tabButtons}</div>
     <div class="lt-panel" id="lt-panel-stats">
       ${statsContent}
@@ -553,13 +558,42 @@ function renderLeagueSections(seasonTeamStats, lastGames, isGoalie, holdings, pr
       ${renderPlayerRecords(holdings || [], selectedLt)}
     </div>
     <div class="lt-panel" id="lt-panel-awards" style="display:none;">
-      <p style="color:#8b949e;padding:1.5rem 0;">No awards on file.</p>
+      ${awardsContent}
     </div>`;
+}
+
+function renderPlayerAwards(awards) {
+  if (!awards || awards.length === 0) return '<p style="color:#8b949e;padding:1.5rem 0;">No awards on file.</p>';
+
+  // Group by season
+  const bySeason = {};
+  for (const a of awards) {
+    const key = a.season_id;
+    if (!bySeason[key]) bySeason[key] = { season_name: a.season_name, awards: [] };
+    bySeason[key].awards.push(a);
+  }
+
+  return Object.values(bySeason).map(s => `
+    <h3 style="font-size:0.88rem;text-transform:uppercase;letter-spacing:0.08em;color:#8b949e;margin:1.25rem 0 0.6rem;">${s.season_name}</h3>
+    <div style="display:flex;flex-wrap:wrap;gap:0.75rem;">
+      ${s.awards.map(a => `
+        <div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:0.6rem 0.8rem;display:flex;align-items:center;gap:0.6rem;min-width:160px;max-width:220px;">
+          ${a.award_image_url
+            ? `<img src="${a.award_image_url}" style="width:36px;height:36px;object-fit:contain;border-radius:4px;background:#21262d;flex-shrink:0;" alt="" />`
+            : `<div style="width:36px;height:36px;flex-shrink:0;background:#21262d;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:1.2rem;">🏆</div>`}
+          <div>
+            <div style="font-weight:700;font-size:0.85rem;color:#e6edf3;line-height:1.2;">${a.award_name}</div>
+            ${a.notes ? `<div style="font-size:0.74rem;color:#8b949e;">${a.notes}</div>` : ''}
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `).join('');
 }
 
 // ── Skater / Goalie tab switcher ───────────────────────────────────────────
 
-function renderPlayerModeTabs(skaterStats, goalieStats, lastGames, defaultIsGoalie, holdings, preferredLt) {
+function renderPlayerModeTabs(skaterStats, goalieStats, lastGames, defaultIsGoalie, holdings, preferredLt, playerAwards) {
   const hasSkater = skaterStats.length > 0;
   const hasGoalie = goalieStats.length > 0;
 
@@ -570,11 +604,11 @@ function renderPlayerModeTabs(skaterStats, goalieStats, lastGames, defaultIsGoal
   const goalieBtnClass = `sg-tab${goalieActive ? ' sg-tab-active' : ''}`;
 
   const skaterContent = hasSkater
-    ? renderLeagueSections(skaterStats, lastGames, false, holdings, preferredLt)
+    ? renderLeagueSections(skaterStats, lastGames, false, holdings, preferredLt, playerAwards)
     : '<p style="color:#8b949e;padding:1rem 0;">No skater stats on file.</p>';
 
   const goalieContent = hasGoalie
-    ? renderLeagueSections(goalieStats, lastGames, true, holdings, preferredLt)
+    ? renderLeagueSections(goalieStats, lastGames, true, holdings, preferredLt, playerAwards)
     : '<p style="color:#8b949e;padding:1rem 0;">No goalie stats on file.</p>';
 
   return `
@@ -601,9 +635,10 @@ async function loadPlayer() {
 
   try {
     const encodedName = encodeURIComponent(name);
-    const [res, recordsRes] = await Promise.all([
+    const [res, recordsRes, awardsRes] = await Promise.all([
       fetch(`${API}/players/profile/${encodedName}`),
       fetch(`${API}/players/records/${encodedName}`).catch(() => null),
+      fetch(`${API}/players/awards/${encodedName}`).catch(() => null),
     ]);
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -614,6 +649,7 @@ async function loadPlayer() {
 
     const recordsData = recordsRes && recordsRes.ok ? await recordsRes.json().catch(() => null) : null;
     const holdings = recordsData ? recordsData.holdings : [];
+    const playerAwards = awardsRes && awardsRes.ok ? await awardsRes.json().catch(() => []) : [];
 
     document.title = `${name} – EHL`;
 
@@ -683,6 +719,11 @@ async function loadPlayer() {
       ? `<div class="phl-info-row"><span class="phl-info-label">Records</span><span class="phl-info-value" style="color:#e3b341;">🏆 ${holdings.length} held</span></div>`
       : '';
 
+    // Sidebar awards summary
+    const awardsInfoHtml = playerAwards.length > 0
+      ? `<div class="phl-info-row"><span class="phl-info-label">Awards</span><span class="phl-info-value" style="color:#e3b341;">🥇 ${playerAwards.length} won</span></div>`
+      : '';
+
     const html = `
       <div class="phl-hero" style="--c1:${c1};--c2:${c2};">
         ${heroLogo}
@@ -706,10 +747,11 @@ async function loadPlayer() {
             <h3 class="phl-card-heading">Career Info</h3>
             ${infoHtml}
             ${recordsInfoHtml}
+            ${awardsInfoHtml}
           </div>
         </aside>
         <div class="phl-main">
-          ${renderPlayerModeTabs(skaterStats || [], goalieStats || [], lastGames, isGoalie, holdings, preferredLt)}
+          ${renderPlayerModeTabs(skaterStats || [], goalieStats || [], lastGames, isGoalie, holdings, preferredLt, playerAwards)}
         </div>
       </div>
     `;
