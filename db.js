@@ -45,7 +45,7 @@ const pool = new Pool({
 
 // Bump this whenever initSchema or seed data changes. The marker prevents every
 // serverless cold start from replaying dozens of already-applied DDL statements.
-const SCHEMA_VERSION = '2026-08-01.2';
+const SCHEMA_VERSION = '2026-08-01.3';
 const SCHEMA_LOCK_ID = 4540492; // "EHL" as a stable PostgreSQL advisory-lock key
 
 // Critical: handle idle connection errors so they don't crash the process.
@@ -460,6 +460,13 @@ async function initSchema() {
       created_at  TIMESTAMPTZ DEFAULT NOW(),
       UNIQUE(season_id, award_key, player_name)
     )`,
+    `CREATE TABLE IF NOT EXISTS season_award_teams (
+      season_id   INTEGER NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+      award_key   TEXT NOT NULL,
+      team_id     INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+      notes       TEXT,
+      PRIMARY KEY (season_id, award_key)
+    )`,
   ];
 
   for (const sql of tables) {
@@ -498,6 +505,7 @@ async function initSchema() {
     'CREATE INDEX IF NOT EXISTS idx_transactions_created ON transactions(created_at DESC)',
     'CREATE INDEX IF NOT EXISTS idx_season_awards_season  ON season_awards(season_id)',
     'CREATE INDEX IF NOT EXISTS idx_season_awards_player  ON season_awards(player_name)',
+    'CREATE INDEX IF NOT EXISTS idx_season_award_teams_season ON season_award_teams(season_id)',
   ];
 
   for (const sql of indexes) {
@@ -644,20 +652,19 @@ async function initSchema() {
 
   // Seed default NHL award definitions (INSERT OR IGNORE so admin edits are preserved)
   const DEFAULT_AWARDS = [
-    { key: 'hart',            name: 'Hart Trophy',                   description: 'Most Valuable Player',                              is_auto: 0, sort_order: 1 },
-    { key: 'art_ross',        name: 'Art Ross Trophy',               description: 'Regular Season Points Leader',                      is_auto: 1, sort_order: 2 },
-    { key: 'rocket_richard',  name: 'Maurice Richard Trophy',        description: 'Regular Season Goals Leader',                       is_auto: 1, sort_order: 3 },
-    { key: 'vezina',          name: 'Vezina Trophy',                 description: 'Best Goaltender',                                   is_auto: 0, sort_order: 4 },
-    { key: 'calder',          name: 'Calder Memorial Trophy',        description: 'Best Rookie',                                       is_auto: 0, sort_order: 5 },
-    { key: 'norris',          name: 'James Norris Trophy',           description: 'Best Defenseman',                                   is_auto: 0, sort_order: 6 },
-    { key: 'selke',           name: 'Frank J. Selke Trophy',         description: 'Best Defensive Forward',                            is_auto: 0, sort_order: 7 },
-    { key: 'lady_byng',       name: 'Lady Byng Memorial Trophy',     description: 'Most Gentlemanly Player',                           is_auto: 0, sort_order: 8 },
-    { key: 'conn_smythe',     name: 'Conn Smythe Trophy',            description: 'Playoff MVP',                                       is_auto: 0, sort_order: 9 },
-    { key: 'jennings',        name: 'William M. Jennings Trophy',    description: 'Goaltender(s) on team allowing fewest goals',       is_auto: 1, sort_order: 10 },
-    { key: 'masterton',       name: 'Bill Masterton Memorial Trophy', description: 'Perseverance and dedication to hockey',            is_auto: 0, sort_order: 11 },
-    { key: 'jack_adams',      name: 'Jack Adams Award',              description: 'Best Coach',                                        is_auto: 0, sort_order: 12 },
-    { key: 'champion',        name: 'Champion',                      description: 'Playoff Champion — eligible roster players',        is_auto: 1, sort_order: 13 },
-    { key: 'presidents_trophy', name: "President's Trophy",          description: 'Best Regular Season Record — eligible roster players', is_auto: 1, sort_order: 14 },
+    { key: 'hart',            name: 'Hart Trophy',                   description: 'Most Valuable Player',                                 is_auto: 0, sort_order: 1 },
+    { key: 'art_ross',        name: 'Art Ross Trophy',               description: 'Regular Season Points Leader',                         is_auto: 1, sort_order: 2 },
+    { key: 'rocket_richard',  name: 'Maurice Richard Trophy',        description: 'Regular Season Goals Leader',                          is_auto: 1, sort_order: 3 },
+    { key: 'vezina',          name: 'Vezina Trophy',                 description: 'Best Goaltender',                                      is_auto: 0, sort_order: 4 },
+    { key: 'calder',          name: 'Calder Memorial Trophy',        description: 'Best Rookie',                                          is_auto: 0, sort_order: 5 },
+    { key: 'norris',          name: 'James Norris Trophy',           description: 'Best Defenseman',                                      is_auto: 0, sort_order: 6 },
+    { key: 'selke',           name: 'Frank J. Selke Trophy',         description: 'Best Defensive Forward',                               is_auto: 0, sort_order: 7 },
+    { key: 'lady_byng',       name: 'Lady Byng Memorial Trophy',     description: 'Most Gentlemanly Player',                              is_auto: 0, sort_order: 8 },
+    { key: 'conn_smythe',     name: 'Conn Smythe Trophy',            description: 'Playoff MVP',                                          is_auto: 0, sort_order: 9 },
+    { key: 'jennings',        name: 'William M. Jennings Trophy',    description: 'Goaltender(s) on team allowing fewest goals',          is_auto: 1, sort_order: 10 },
+    { key: 'jack_adams',      name: 'Jack Adams Award',              description: 'Best Coach',                                           is_auto: 0, sort_order: 11 },
+    { key: 'champion',        name: 'Champion',                      description: 'Playoff Champion',                                     is_auto: 1, sort_order: 12 },
+    { key: 'presidents_trophy', name: "President's Trophy",          description: 'Best Regular Season Record',                           is_auto: 1, sort_order: 13 },
   ];
   for (const a of DEFAULT_AWARDS) {
     try {
@@ -670,6 +677,13 @@ async function initSchema() {
     } catch (err) {
       console.warn(`[db] Migration warning (award_defs seed ${a.key}):`, err.message);
     }
+  }
+
+  // Remove Bill Masterton award (no longer used)
+  try {
+    await pool.query(`DELETE FROM award_defs WHERE key = 'masterton'`);
+  } catch (err) {
+    console.warn('[db] Migration warning (delete masterton):', err.message);
   }
 
   console.log('[db] Schema initialised.');

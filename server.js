@@ -5059,7 +5059,46 @@ app.get('/api/awards', async (_req, res) => {
   res.json(awards);
 });
 
-// PATCH /api/admin/awards/:key – update award name / image (owner only)
+// GET /api/awards/season/:seasonId/team-awards – get team-based award entries for a season
+app.get('/api/awards/season/:seasonId/team-awards', async (req, res) => {
+  const rows = await db.prepare(`
+    SELECT sat.season_id, sat.award_key, sat.team_id, sat.notes,
+           t.name AS team_name, t.logo_url AS team_logo_url,
+           ad.name AS award_name
+    FROM season_award_teams sat
+    JOIN teams t ON sat.team_id = t.id
+    JOIN award_defs ad ON sat.award_key = ad.key
+    WHERE sat.season_id = ?
+  `).all(req.params.seasonId);
+  res.json(rows);
+});
+
+// POST /api/admin/awards/season/:seasonId/team – set team winner for champion/presidents
+app.post('/api/admin/awards/season/:seasonId/team', requireOwner, async (req, res) => {
+  const { award_key, team_id, notes } = req.body;
+  if (!award_key || !team_id) return res.status(400).json({ error: 'award_key and team_id are required' });
+  const season = await db.prepare('SELECT id FROM seasons WHERE id = ?').get(req.params.seasonId);
+  if (!season) return res.status(404).json({ error: 'Season not found' });
+  const award = await db.prepare('SELECT key FROM award_defs WHERE key = ?').get(award_key);
+  if (!award) return res.status(404).json({ error: 'Award not found' });
+  const team = await db.prepare('SELECT id FROM teams WHERE id = ?').get(team_id);
+  if (!team) return res.status(404).json({ error: 'Team not found' });
+  await db.prepare(`
+    INSERT INTO season_award_teams (season_id, award_key, team_id, notes)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT (season_id, award_key) DO UPDATE SET team_id = EXCLUDED.team_id, notes = EXCLUDED.notes
+  `).run(req.params.seasonId, award_key, team_id, notes || null);
+  res.json({ ok: true });
+});
+
+// DELETE /api/admin/awards/season/:seasonId/team/:awardKey – remove team selection
+app.delete('/api/admin/awards/season/:seasonId/team/:awardKey', requireOwner, async (req, res) => {
+  await db.prepare('DELETE FROM season_award_teams WHERE season_id = ? AND award_key = ?')
+    .run(req.params.seasonId, req.params.awardKey);
+  res.json({ ok: true });
+});
+
+// PATCH /api/admin/awards/:key – update award name / description / image (owner only)
 app.patch('/api/admin/awards/:key', requireOwner, logoUpload.single('image'), async (req, res) => {
   const award = await db.prepare('SELECT * FROM award_defs WHERE key = ?').get(req.params.key);
   if (!award) return res.status(404).json({ error: 'Award not found' });
@@ -5307,12 +5346,9 @@ app.post('/api/admin/awards/season/:seasonId/auto-compute', requireOwner, async 
     } catch (e) { result.errors.push({ award: 'jennings', error: e.message }); }
   }
 
-  // ── Champion: players on winning playoff team with min games ─────────────
+  // ── Champion: store winning playoff team in season_award_teams ──────────
   if (toCompute.includes('champion')) {
     try {
-      const champMinGPRow = await db.prepare("SELECT value FROM settings WHERE key = 'award_champ_min_gp'").get();
-      const champMinGP = parseInt(champMinGPRow ? champMinGPRow.value : '6', 10);
-
       // Find the playoff bracket linked to this season
       const playoff = await db.prepare('SELECT * FROM playoffs WHERE season_id = ?').get(seasonId);
       if (!playoff) { result.errors.push({ award: 'champion', error: 'No playoff bracket for this season' }); }
@@ -5329,49 +5365,23 @@ app.post('/api/admin/awards/season/:seasonId/auto-compute', requireOwner, async 
           result.errors.push({ award: 'champion', error: 'Playoff bracket has no winner yet' });
         } else {
           const winnerTeamId = finalSeries.winner_id;
+          const teamRow = await db.prepare('SELECT name FROM teams WHERE id = ?').get(winnerTeamId);
 
-          // Get the playoff season id (games are in a separate season for playoffs)
-          const playoffSeasonId = playoff.playoff_season_id || seasonId;
+          await db.prepare(`
+            INSERT INTO season_award_teams (season_id, award_key, team_id, notes)
+            VALUES (?, 'champion', ?, ?)
+            ON CONFLICT (season_id, award_key) DO UPDATE SET team_id = EXCLUDED.team_id, notes = EXCLUDED.notes
+          `).run(seasonId, winnerTeamId, 'Playoff Champion');
 
-          // Find eligible players: on winner's roster AND played min games across regular + playoffs
-          const eligiblePlayers = await db.prepare(`
-            SELECT gps.player_name, COUNT(DISTINCT gps.game_id) AS total_gp
-            FROM game_player_stats gps
-            JOIN games g ON gps.game_id = g.id
-            WHERE gps.team_id = ? AND g.status IN ('complete','forfeit')
-              AND (g.season_id = ? OR g.season_id = ?)
-            GROUP BY gps.player_name
-            HAVING COUNT(DISTINCT gps.game_id) >= ?
-          `).all(winnerTeamId, seasonId, playoffSeasonId, champMinGP);
-
-          // Also check they are on the final roster (season_rosters for the regular season)
-          const rosterRows = await db.prepare(`
-            SELECT p.name FROM season_rosters sr
-            JOIN players p ON sr.player_id = p.id
-            WHERE sr.season_id = ? AND sr.team_id = ?
-          `).all(seasonId, winnerTeamId);
-          const rosterNames = new Set(rosterRows.map(r => r.name));
-
-          // Clear existing champion winners for this season
-          await db.prepare("DELETE FROM season_awards WHERE season_id = ? AND award_key = 'champion'").run(seasonId);
-
-          for (const p of eligiblePlayers) {
-            if (!rosterNames.has(p.player_name)) continue;
-            await db.prepare(`INSERT INTO season_awards (season_id, award_key, player_name, notes) VALUES (?, 'champion', ?, ?) ON CONFLICT (season_id, award_key, player_name) DO NOTHING`)
-              .run(seasonId, p.player_name, `${p.total_gp} GP`);
-            result.computed.push({ award: 'champion', player: p.player_name });
-          }
+          result.computed.push({ award: 'champion', team: teamRow?.name || winnerTeamId });
         }
       }
     } catch (e) { result.errors.push({ award: 'champion', error: e.message }); }
   }
 
-  // ── Presidents Trophy: players on team with best regular-season record ───
+  // ── Presidents Trophy: store team with best regular-season record ────────
   if (toCompute.includes('presidents_trophy')) {
     try {
-      const presMinGPRow = await db.prepare("SELECT value FROM settings WHERE key = 'award_pres_min_gp'").get();
-      const presMinGP = parseInt(presMinGPRow ? presMinGPRow.value : '6', 10);
-
       // Calculate regular season points (2pts win, 1pt OT loss, 0pt loss) per team
       const games = await db.prepare(`
         SELECT home_team_id, away_team_id, home_score, away_score, is_overtime, is_forfeit
@@ -5394,35 +5404,16 @@ app.post('/api/admin/awards/season/:seasonId/auto-compute', requireOwner, async 
       if (Object.keys(teamPts).length > 0) {
         const maxPts = Math.max(...Object.values(teamPts));
         const winningTeamIds = Object.keys(teamPts).filter(tid => teamPts[tid] === maxPts).map(Number);
+        const topTeamId = winningTeamIds[0];
+        const teamRow = await db.prepare('SELECT name FROM teams WHERE id = ?').get(topTeamId);
 
-        await db.prepare("DELETE FROM season_awards WHERE season_id = ? AND award_key = 'presidents_trophy'").run(seasonId);
+        await db.prepare(`
+          INSERT INTO season_award_teams (season_id, award_key, team_id, notes)
+          VALUES (?, 'presidents_trophy', ?, ?)
+          ON CONFLICT (season_id, award_key) DO UPDATE SET team_id = EXCLUDED.team_id, notes = EXCLUDED.notes
+        `).run(seasonId, topTeamId, `${maxPts} pts`);
 
-        for (const teamId of winningTeamIds) {
-          // Find players with min regular season games for the team, on the final roster
-          const eligiblePlayers = await db.prepare(`
-            SELECT gps.player_name, COUNT(DISTINCT gps.game_id) AS reg_gp
-            FROM game_player_stats gps
-            JOIN games g ON gps.game_id = g.id
-            WHERE gps.team_id = ? AND g.season_id = ? AND g.playoff_series_id IS NULL
-              AND g.status IN ('complete','forfeit')
-            GROUP BY gps.player_name
-            HAVING COUNT(DISTINCT gps.game_id) >= ?
-          `).all(teamId, seasonId, presMinGP);
-
-          const rosterRows = await db.prepare(`
-            SELECT p.name FROM season_rosters sr
-            JOIN players p ON sr.player_id = p.id
-            WHERE sr.season_id = ? AND sr.team_id = ?
-          `).all(seasonId, teamId);
-          const rosterNames = new Set(rosterRows.map(r => r.name));
-
-          for (const p of eligiblePlayers) {
-            if (!rosterNames.has(p.player_name)) continue;
-            await db.prepare(`INSERT INTO season_awards (season_id, award_key, player_name, notes) VALUES (?, 'presidents_trophy', ?, ?) ON CONFLICT (season_id, award_key, player_name) DO NOTHING`)
-              .run(seasonId, p.player_name, `${teamPts[teamId]} pts`);
-            result.computed.push({ award: 'presidents_trophy', player: p.player_name, team_id: teamId });
-          }
-        }
+        result.computed.push({ award: 'presidents_trophy', team: teamRow?.name || topTeamId, pts: maxPts });
       }
     } catch (e) { result.errors.push({ award: 'presidents_trophy', error: e.message }); }
   }

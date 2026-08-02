@@ -2286,7 +2286,9 @@ async function declineNameChange(id) {
 let awardsTabData = {
   awardDefs: [],       // all award_defs rows
   seasonWinners: [],   // season_awards rows for current season
+  teamAwards: [],      // season_award_teams rows for current season
   allPlayers: [],      // all player names for search
+  allTeams: [],        // all teams
   calderEligible: [],  // Calder-eligible players
   currentAwardKey: null,
   currentAwardName: '',
@@ -2327,14 +2329,18 @@ async function loadAwardsTab() {
   if (seasonLabel) seasonLabel.textContent = `Showing awards for: ${seasonName}`;
 
   try {
-    const [defsRes, winnersRes, settingsRes] = await Promise.all([
+    const [defsRes, winnersRes, settingsRes, teamAwardsRes, teamsRes] = await Promise.all([
       fetch(`${API}/awards`, { headers: adminHeaders() }),
       fetch(`${API}/awards/season/${seasonId}`, { headers: adminHeaders() }),
       fetch(`${API}/admin/awards/settings`, { headers: adminHeaders() }),
+      fetch(`${API}/awards/season/${seasonId}/team-awards`, { headers: adminHeaders() }),
+      fetch(`${API}/teams`, { headers: adminHeaders() }),
     ]);
     awardsTabData.awardDefs = defsRes.ok ? await defsRes.json() : [];
     awardsTabData.seasonWinners = winnersRes.ok ? await winnersRes.json() : [];
     awardsTabData.settings = settingsRes.ok ? await settingsRes.json() : { champ_min_gp: 6, pres_min_gp: 6, calder_max_prior_gp: 6 };
+    awardsTabData.teamAwards = teamAwardsRes.ok ? await teamAwardsRes.json() : [];
+    awardsTabData.allTeams = teamsRes.ok ? await teamsRes.json() : [];
 
     // Populate settings form
     const champEl = document.getElementById('award-champ-min-gp');
@@ -2356,22 +2362,47 @@ function renderAwardsGrid() {
 
   const defs = awardsTabData.awardDefs;
   const winners = awardsTabData.seasonWinners;
+  const teamAwards = awardsTabData.teamAwards || [];
 
-  // Group winners by award key
+  // Group player winners by award key
   const winnersByKey = {};
   for (const w of winners) {
     if (!winnersByKey[w.award_key]) winnersByKey[w.award_key] = [];
     winnersByKey[w.award_key].push(w);
   }
 
+  // Index team awards by key
+  const teamByKey = {};
+  for (const t of teamAwards) teamByKey[t.award_key] = t;
+
+  const TEAM_AWARDS = ['champion', 'presidents_trophy'];
+
   grid.innerHTML = defs.map(def => {
     const keyWinners = winnersByKey[def.key] || [];
-    const winnerHtml = keyWinners.length > 0
-      ? keyWinners.map(w => `
-          <span class="award-card-winner-name">${escAttr(w.player_name)}</span>
-          ${w.notes ? `<span style="color:#8b949e;font-size:0.78rem;"> (${escAttr(w.notes)})</span>` : ''}
-        `).join('<br>')
-      : '<span style="color:#484f58;font-style:italic;font-size:0.82rem;">Not yet awarded</span>';
+    const teamAward = teamByKey[def.key];
+    const isTeamAward = TEAM_AWARDS.includes(def.key);
+
+    let winnerHtml = '';
+    if (isTeamAward) {
+      if (teamAward) {
+        const logoHtml = teamAward.team_logo_url
+          ? `<img src="${escAttr(teamAward.team_logo_url)}" style="height:22px;width:22px;object-fit:contain;border-radius:3px;margin-right:0.3rem;vertical-align:middle;" alt="">`
+          : '';
+        winnerHtml = `<div style="font-weight:700;color:#f0a500;font-size:0.95rem;">${logoHtml}🏆 ${escAttr(teamAward.team_name)}</div>`;
+        if (keyWinners.length > 0) {
+          winnerHtml += `<div style="margin-top:0.3rem;font-size:0.8rem;color:#8b949e;">Players: ${keyWinners.map(w => escAttr(w.player_name)).join(', ')}</div>`;
+        }
+      } else {
+        winnerHtml = '<span style="color:#484f58;font-style:italic;font-size:0.82rem;">No team selected yet</span>';
+      }
+    } else {
+      winnerHtml = keyWinners.length > 0
+        ? keyWinners.map(w => `
+            <span class="award-card-winner-name">${escAttr(w.player_name)}</span>
+            ${w.notes ? `<span style="color:#8b949e;font-size:0.78rem;"> (${escAttr(w.notes)})</span>` : ''}
+          `).join('<br>')
+        : '<span style="color:#484f58;font-style:italic;font-size:0.82rem;">Not yet awarded</span>';
+    }
 
     const imgHtml = def.image_url
       ? `<img src="${escAttr(def.image_url)}" class="award-card-img" alt="" />`
@@ -2406,18 +2437,50 @@ async function openAwardModal(awardKey) {
   const titleEl = document.getElementById('award-modal-title');
   const descEl = document.getElementById('award-modal-desc');
   const editNameEl = document.getElementById('award-edit-name');
+  const editDescEl = document.getElementById('award-edit-description');
   const calderNote = document.getElementById('award-calder-note');
   const calderThreshold = document.getElementById('award-calder-threshold');
   const setLabel = document.getElementById('award-set-label');
+  const winnersLabel = document.getElementById('award-winners-label');
   const searchInput = document.getElementById('award-player-search');
+  const teamSection = document.getElementById('award-team-section');
+
+  const TEAM_AWARDS = ['champion', 'presidents_trophy'];
+  const isTeamAward = TEAM_AWARDS.includes(awardKey);
 
   if (titleEl) titleEl.textContent = def.name;
   if (descEl) descEl.textContent = def.description;
   if (editNameEl) editNameEl.value = def.name;
+  if (editDescEl) editDescEl.value = def.description || '';
   const previewImg = document.getElementById('award-edit-preview');
   if (previewImg) {
     previewImg.src = def.image_url || '';
     previewImg.style.display = def.image_url ? 'block' : 'none';
+  }
+
+  // Show/hide team section
+  if (teamSection) teamSection.style.display = isTeamAward ? '' : 'none';
+
+  if (isTeamAward) {
+    if (setLabel) setLabel.textContent = 'Add Individual Players (Optional)';
+    if (winnersLabel) winnersLabel.textContent = 'Players Awarded';
+
+    // Populate team dropdown
+    const teamSelect = document.getElementById('award-team-select');
+    if (teamSelect) {
+      teamSelect.innerHTML = '<option value="">— Select team —</option>' +
+        (awardsTabData.allTeams || []).map(t =>
+          `<option value="${escAttr(String(t.id))}">${escAttr(t.name)}</option>`
+        ).join('');
+      // Pre-select current team
+      const currentTeam = (awardsTabData.teamAwards || []).find(ta => ta.award_key === awardKey);
+      if (currentTeam) teamSelect.value = String(currentTeam.team_id);
+    }
+    // Render current team
+    renderAwardTeamCurrent();
+  } else {
+    if (setLabel) setLabel.textContent = 'Add Player';
+    if (winnersLabel) winnersLabel.textContent = 'Current Winner(s)';
   }
 
   // Hide/show Calder note
@@ -2458,7 +2521,7 @@ async function openAwardModal(awardKey) {
     }
   } catch { awardsTabData.allPlayers = []; }
 
-  // Render current winners
+  // Render current player winners
   renderAwardModalWinners();
 
   // Reset search
@@ -2470,6 +2533,57 @@ async function openAwardModal(awardKey) {
   if (msgEl) { msgEl.style.display = 'none'; msgEl.textContent = ''; }
 
   if (overlay) overlay.style.display = 'flex';
+}
+
+function renderAwardTeamCurrent() {
+  const container = document.getElementById('award-team-current');
+  if (!container) return;
+  const awardKey = awardsTabData.currentAwardKey;
+  const teamAward = (awardsTabData.teamAwards || []).find(ta => ta.award_key === awardKey);
+  if (!teamAward) {
+    container.innerHTML = '<span style="color:#484f58;font-style:italic;font-size:0.85rem;">No team selected.</span>';
+    return;
+  }
+  const logoHtml = teamAward.team_logo_url
+    ? `<img src="${escAttr(teamAward.team_logo_url)}" style="height:24px;width:24px;object-fit:contain;border-radius:3px;margin-right:0.4rem;vertical-align:middle;" alt="">`
+    : '';
+  container.innerHTML = `
+    <div style="display:flex;align-items:center;gap:0.5rem;padding:0.3rem 0;border-bottom:1px solid #21262d;">
+      <span style="flex:1;font-weight:700;color:#f0a500;font-size:1rem;">${logoHtml}🏆 ${escAttr(teamAward.team_name)}</span>
+      <button onclick="removeAwardTeam()" style="background:#4b1f1f;color:#f85149;border:1px solid #f85149;border-radius:4px;padding:0.1rem 0.4rem;font-size:0.76rem;cursor:pointer;">✕</button>
+    </div>`;
+}
+
+async function saveAwardTeam() {
+  const teamSelect = document.getElementById('award-team-select');
+  const teamId = teamSelect ? teamSelect.value : '';
+  if (!teamId) { _awardWinnerMsg('Select a team first', true); return; }
+  const awardKey = awardsTabData.currentAwardKey;
+  if (!awardKey || !awardsTabData.currentSeasonId) return;
+
+  const res = await fetch(`${API}/admin/awards/season/${awardsTabData.currentSeasonId}/team`, {
+    method: 'POST',
+    headers: { ...adminJsonHeaders() },
+    body: JSON.stringify({ award_key: awardKey, team_id: Number(teamId) }),
+  });
+  if (!res.ok) { const e = await res.json().catch(()=>({})); _awardWinnerMsg(e.error || 'Failed to set team', true); return; }
+
+  await _refreshSeasonWinners();
+  renderAwardTeamCurrent();
+  renderAwardsGrid();
+  _awardWinnerMsg('Team set!', false);
+}
+
+async function removeAwardTeam() {
+  if (!confirm('Remove the team from this award?')) return;
+  const awardKey = awardsTabData.currentAwardKey;
+  const res = await fetch(`${API}/admin/awards/season/${awardsTabData.currentSeasonId}/team/${awardKey}`, {
+    method: 'DELETE', headers: adminHeaders(),
+  });
+  if (!res.ok) { const e = await res.json().catch(()=>({})); _awardWinnerMsg(e.error || 'Failed to remove team', true); return; }
+  await _refreshSeasonWinners();
+  renderAwardTeamCurrent();
+  renderAwardsGrid();
 }
 
 function renderAwardModalWinners() {
@@ -2568,8 +2682,12 @@ async function removeAwardWinner(playerName) {
 }
 
 async function _refreshSeasonWinners() {
-  const r = await fetch(`${API}/awards/season/${awardsTabData.currentSeasonId}`, { headers: adminHeaders() });
+  const [r, tr] = await Promise.all([
+    fetch(`${API}/awards/season/${awardsTabData.currentSeasonId}`, { headers: adminHeaders() }),
+    fetch(`${API}/awards/season/${awardsTabData.currentSeasonId}/team-awards`, { headers: adminHeaders() }),
+  ]);
   awardsTabData.seasonWinners = r.ok ? await r.json() : [];
+  awardsTabData.teamAwards = tr.ok ? await tr.json() : [];
 }
 
 function _awardWinnerMsg(text, isError) {
@@ -2589,11 +2707,13 @@ async function saveAwardDef() {
   const awardKey = awardsTabData.currentAwardKey;
   if (!awardKey) return;
   const name = document.getElementById('award-edit-name')?.value?.trim();
+  const description = document.getElementById('award-edit-description')?.value ?? '';
   const imageFile = document.getElementById('award-edit-image')?.files?.[0];
   const msgEl = document.getElementById('award-edit-msg');
 
   const form = new FormData();
   if (name) form.append('name', name);
+  form.append('description', description);
   if (imageFile) form.append('image', imageFile);
 
   const res = await fetch(`${API}/admin/awards/${awardKey}`, {
@@ -2612,11 +2732,13 @@ async function saveAwardDef() {
   const defsRes = await fetch(`${API}/awards`, { headers: adminHeaders() });
   awardsTabData.awardDefs = defsRes.ok ? await defsRes.json() : awardsTabData.awardDefs;
 
-  // Update modal title
+  // Update modal title and desc
   const newDef = awardsTabData.awardDefs.find(d => d.key === awardKey);
   if (newDef) {
     const titleEl = document.getElementById('award-modal-title');
+    const descEl = document.getElementById('award-modal-desc');
     if (titleEl) titleEl.textContent = newDef.name;
+    if (descEl) descEl.textContent = newDef.description;
     awardsTabData.currentAwardName = newDef.name;
   }
 
