@@ -232,6 +232,7 @@ function renderRecordsTable(recs, mode) {
 
 // ── Records tab switcher (global callback) ─────────────────────────────────
 let _recordsData = null;
+let _recordsPromise = null;
 function switchRecordsTab(mode) {
   if (!_recordsData) return;
   document.querySelectorAll('.rec-tab').forEach(b => {
@@ -252,9 +253,20 @@ async function loadTeamPage() {
   try {
     const sid = _teamSelectedSeasonId;
     const url = sid ? `${API}/teams/${id}/stats?season_id=${sid}` : `${API}/teams/${id}/stats`;
-    const [statsRes, recordsRes] = await Promise.all([
+    if (!_recordsPromise) {
+      _recordsPromise = fetch(`${API}/teams/${id}/records`)
+        .then(response => {
+          if (!response.ok) throw new Error(`Records request failed (${response.status})`);
+          return response.json();
+        })
+        .catch(() => {
+          _recordsPromise = null;
+          return null;
+        });
+    }
+    const [statsRes, recordsData] = await Promise.all([
       fetch(url),
-      fetch(`${API}/teams/${id}/records`).catch(() => null),
+      _recordsPromise,
     ]);
     if (!statsRes.ok) {
       root.innerHTML = `<p class="error">${(await statsRes.json().catch(()=>({}))).error || 'Team not found.'}</p>`;
@@ -262,7 +274,7 @@ async function loadTeamPage() {
     }
 
     const { team, roster, skaterStats, goalieStats, recentGames, staff, record, transactions, upcoming } = await statsRes.json();
-    _recordsData = recordsRes && recordsRes.ok ? await recordsRes.json().catch(() => null) : null;
+    _recordsData = recordsData;
     document.title = `${team.name} – EHL`;
 
     _teamColors = team;

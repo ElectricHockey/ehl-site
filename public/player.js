@@ -600,7 +600,11 @@ async function loadPlayer() {
   }
 
   try {
-    const res = await fetch(`${API}/players/profile/${encodeURIComponent(name)}`);
+    const encodedName = encodeURIComponent(name);
+    const [res, recordsRes] = await Promise.all([
+      fetch(`${API}/players/profile/${encodedName}`),
+      fetch(`${API}/players/records/${encodedName}`).catch(() => null),
+    ]);
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       root.innerHTML = `<p class="error">${err.error || 'Player not found.'}</p>`;
@@ -608,8 +612,6 @@ async function loadPlayer() {
     }
     const { player, isGoalie, skaterStats, goalieStats, seasonTeamStats, lastGames } = await res.json();
 
-    // Also fetch record holdings (non-blocking)
-    const recordsRes = await fetch(`${API}/players/records/${encodeURIComponent(name)}`).catch(() => null);
     const recordsData = recordsRes && recordsRes.ok ? await recordsRes.json().catch(() => null) : null;
     const holdings = recordsData ? recordsData.holdings : [];
 

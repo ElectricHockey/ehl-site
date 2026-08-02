@@ -178,53 +178,32 @@ async function loadStatsLeaders(seasonId, rootId) {
 // ── Bootstrap ───────────────────────────────────────────────────────────────
 
 async function initHome() {
-  applyHomeLeagueView(getSelectedLeagueType());
+  const leagueType = getSelectedLeagueType();
+  const suffix = leagueType === 'sixes' ? 'sixes' : 'threes';
+  applyHomeLeagueView(leagueType);
 
-  // Load active seasons for both league types in parallel
-  let threesSeasonId = null;
-  let sixesSeasonId  = null;
-
+  let seasonId = null;
   try {
-    const [r3, r6] = await Promise.all([
-      fetch(`${API}/seasons?type=threes`),
-      fetch(`${API}/seasons?type=sixes`),
-    ]);
-    if (r3.ok) {
-      const seasons3 = await r3.json();
-      const active3 = seasons3.find(s => s.is_active) || seasons3[0];
-      if (active3) threesSeasonId = active3.id;
-    }
-    if (r6.ok) {
-      const seasons6 = await r6.json();
-      const active6 = seasons6.find(s => s.is_active) || seasons6[0];
-      if (active6) sixesSeasonId = active6.id;
+    const response = await fetch(`${API}/seasons?type=${leagueType}`);
+    if (response.ok) {
+      const seasons = await response.json();
+      const active = seasons.find(s => s.is_active) || seasons[0];
+      if (active) seasonId = active.id;
     }
   } catch {}
 
-  // If no 3's data available, hide that section
-  const threesHeader = document.getElementById('home-threes-header');
-  const threesPanel  = document.getElementById('home-panels-threes');
-  if (!threesSeasonId && threesHeader && threesPanel) {
-    threesPanel.innerHTML = '<p style="color:#8b949e;font-size:0.88rem;padding:0.5rem 0;">No active 3\'s season.</p>';
-  }
-
-  // If no 6's data available, hide that section
-  const sixesHeader = document.getElementById('home-sixes-header');
-  const sixesPanel  = document.getElementById('home-panels-sixes');
-  if (!sixesSeasonId && sixesHeader && sixesPanel) {
-    sixesPanel.innerHTML = '<p style="color:#8b949e;font-size:0.88rem;padding:0.5rem 0;">No active 6\'s season.</p>';
+  const activePanel = document.getElementById(`home-panels-${suffix}`);
+  if (!seasonId && activePanel) {
+    const leagueLabel = leagueType === 'sixes' ? "6's" : "3's";
+    activePanel.innerHTML = `<p style="color:#8b949e;font-size:0.88rem;padding:0.5rem 0;">No active ${leagueLabel} season.</p>`;
+    return;
   }
 
   await Promise.all([
-    loadRecentScores(threesSeasonId, 'home-recent-scores-threes'),
-    loadMiniStandings(threesSeasonId, 'home-standings-threes'),
-    loadStatsLeaders(threesSeasonId,  'home-leaders-threes'),
-    loadRecentScores(sixesSeasonId,   'home-recent-scores-sixes'),
-    loadMiniStandings(sixesSeasonId,  'home-standings-sixes'),
-    loadStatsLeaders(sixesSeasonId,   'home-leaders-sixes'),
+    loadRecentScores(seasonId, `home-recent-scores-${suffix}`),
+    loadMiniStandings(seasonId, `home-standings-${suffix}`),
+    loadStatsLeaders(seasonId, `home-leaders-${suffix}`),
   ]);
-
-  applyHomeLeagueView(getSelectedLeagueType());
 }
 
 initHome();

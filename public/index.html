@@ -5,11 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>EHL – Electric Hockey League</title>
   <link rel="stylesheet" href="style.css" />
+  <link rel="preload" href="/api/site-logo" as="image" fetchpriority="high" />
+  <script src="nav.js" defer></script>
+  <script src="notifications.js" defer></script>
+  <script src="index.js" defer></script>
 </head>
 <body>
   <nav>
     <a href="index.html" class="brand">
-      <img src="/api/site-logo" alt="EHL" class="brand-logo" />
+      <img src="/api/site-logo" alt="EHL" class="brand-logo" width="46" height="46" decoding="async" fetchpriority="high" />
 
     </a>
     <a href="index.html" class="active">Home</a>
@@ -63,7 +67,7 @@
   <div class="container page-shell">
     <!-- 3's League Column -->
     <div class="home-league-header" id="home-threes-header">
-      <img src="/api/site-logo" alt="EHL" class="home-league-logo" />
+      <img src="/api/site-logo?type=threes" alt="EHL" class="home-league-logo" width="40" height="40" loading="lazy" decoding="async" />
       <h2 class="home-league-title">3's League</h2>
     </div>
     <div class="home-panels" id="home-panels-threes">
@@ -92,7 +96,7 @@
 
     <!-- 6's League Column -->
     <div class="home-league-header" id="home-sixes-header" style="margin-top:2.5rem;">
-      <img src="/api/site-logo" alt="EHL" class="home-league-logo" />
+      <img src="/api/site-logo?type=sixes" alt="EHL" class="home-league-logo" width="40" height="40" loading="lazy" decoding="async" />
       <h2 class="home-league-title">6's League</h2>
     </div>
     <div class="home-panels" id="home-panels-sixes">
@@ -120,8 +124,5 @@
     </div>
   </div>
 
-  <script src="notifications.js"></script>
-  <script src="nav.js"></script>
-  <script src="index.js"></script>
 </body>
 </html>

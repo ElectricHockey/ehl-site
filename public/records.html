@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Records – EHL</title>
   <link rel="stylesheet" href="style.css" />
+  <link rel="preload" href="/api/site-logo" as="image" fetchpriority="high" />
+  <script src="nav.js" defer></script>
+  <script src="records.js" defer></script>
   <style>
     .records-page { max-width: 900px; margin: 0 auto; padding: 1.5rem 1rem; }
     .records-page h1 { color: #58a6ff; margin-bottom: 1rem; }
@@ -38,7 +41,7 @@
 <body>
   <nav>
     <a href="index.html" class="brand">
-      <img src="/api/site-logo" alt="EHL" class="brand-logo" />
+      <img src="/api/site-logo" alt="EHL" class="brand-logo" width="46" height="46" decoding="async" fetchpriority="high" />
     </a>
     <a href="index.html">Home</a>
     <a href="schedule.html">Schedule</a>
@@ -73,7 +76,5 @@
     <div id="records-root"><p class="loading">Loading…</p></div>
   </div>
 
-  <script src="nav.js"></script>
-  <script src="records.js"></script>
 </body>
 </html>

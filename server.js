@@ -6,10 +6,8 @@ const https = require('https');
 const http = require('http');
 const rateLimit = require('express-rate-limit');
 const crypto = require('crypto');
-const multer = require('multer');
+const compression = require('compression');
 const { promisify } = require('util');
-const ExcelJS = require('exceljs');
-const { createClient } = require('@supabase/supabase-js');
 const db = require('./db');
 const EA_STATS_MAP = require('./ea-stats-map');
 
@@ -36,10 +34,19 @@ function _isHttpUrl(s) {
   try { const u = new URL(s); return u.protocol === 'http:' || u.protocol === 'https:'; } catch { return false; }
 }
 let supabase = null;
-if (_isHttpUrl(SUPABASE_URL) && SUPABASE_SERVICE_KEY) {
-  try { supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY); } catch (e) {
-    console.warn('[supabase] createClient failed:', e.message);
+let supabaseInitialised = false;
+function getSupabaseClient() {
+  if (supabaseInitialised) return supabase;
+  supabaseInitialised = true;
+  if (_isHttpUrl(SUPABASE_URL) && SUPABASE_SERVICE_KEY) {
+    try {
+      const { createClient } = require('@supabase/supabase-js');
+      supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+    } catch (e) {
+      console.warn('[supabase] createClient failed:', e.message);
+    }
   }
+  return supabase;
 }
 const STORAGE_BUCKET = 'uploads';
 
@@ -48,12 +55,13 @@ const STORAGE_BUCKET = 'uploads';
  * Falls back to local disk if Supabase is not configured.
  */
 async function uploadToStorage(buffer, filename, contentType) {
-  if (supabase) {
-    const { error } = await supabase.storage
+  const storageClient = getSupabaseClient();
+  if (storageClient) {
+    const { error } = await storageClient.storage
       .from(STORAGE_BUCKET)
       .upload(filename, buffer, { contentType, upsert: true });
     if (error) throw new Error(`Storage upload failed: ${error.message}`);
-    const { data } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(filename);
+    const { data } = storageClient.storage.from(STORAGE_BUCKET).getPublicUrl(filename);
     return data.publicUrl;
   }
   // Fallback: save to local public/uploads
@@ -68,11 +76,12 @@ async function uploadToStorage(buffer, filename, contentType) {
  */
 async function deleteFromStorage(urlOrPath) {
   if (!urlOrPath) return;
-  if (supabase && urlOrPath.includes(SUPABASE_URL)) {
+  const storageClient = getSupabaseClient();
+  if (storageClient && urlOrPath.includes(SUPABASE_URL)) {
     // Extract the path after /object/public/uploads/
     const match = urlOrPath.match(/\/object\/public\/uploads\/(.+)$/);
     if (match) {
-      await supabase.storage.from(STORAGE_BUCKET).remove([match[1]]);
+      await storageClient.storage.from(STORAGE_BUCKET).remove([match[1]]);
     }
   } else if (urlOrPath.startsWith('/uploads/')) {
     const filePath = path.join(__dirname, 'public', urlOrPath);
@@ -96,26 +105,52 @@ async function verifyPassword(password, stored) {
 
 // ── Uploads (memory storage — files go to Supabase Storage) ──────────────
 
-const logoUpload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 },
-  fileFilter: (_req, file, cb) => {
-    const ok = /^image\/(jpeg|png|gif|webp|svg\+xml)$/.test(file.mimetype);
-    cb(ok ? null : new Error('Only image files are allowed'), ok);
+function lazySingleUpload(createUploader, field) {
+  let middleware = null;
+  return (req, res, next) => {
+    try {
+      if (!middleware) middleware = createUploader().single(field);
+      return middleware(req, res, next);
+    } catch (err) {
+      return next(err);
+    }
+  };
+}
+
+const logoUpload = {
+  single(field) {
+    return lazySingleUpload(() => {
+      const multer = require('multer');
+      return multer({
+        storage: multer.memoryStorage(),
+        limits: { fileSize: 10 * 1024 * 1024 },
+        fileFilter: (_req, file, cb) => {
+          const ok = /^image\/(jpeg|png|gif|webp|svg\+xml)$/.test(file.mimetype);
+          cb(ok ? null : new Error('Only image files are allowed'), ok);
+        },
+      });
+    }, field);
   },
-});
+};
 
 // Memory-storage uploader for Excel schedule imports (no files saved to disk)
-const excelUpload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 20 * 1024 * 1024 },
-  fileFilter: (_req, file, cb) => {
-    const ok = /\.(xlsx|xls)$/i.test(file.originalname) ||
-               file.mimetype === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
-               file.mimetype === 'application/vnd.ms-excel';
-    cb(ok ? null : new Error('Only Excel files (.xlsx / .xls) are allowed'), ok);
+const excelUpload = {
+  single(field) {
+    return lazySingleUpload(() => {
+      const multer = require('multer');
+      return multer({
+        storage: multer.memoryStorage(),
+        limits: { fileSize: 20 * 1024 * 1024 },
+        fileFilter: (_req, file, cb) => {
+          const ok = /\.(xlsx|xls)$/i.test(file.originalname) ||
+                     file.mimetype === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+                     file.mimetype === 'application/vnd.ms-excel';
+          cb(ok ? null : new Error('Only Excel files (.xlsx / .xls) are allowed'), ok);
+        },
+      });
+    }, field);
   },
-});
+};
 
 // ── Async error handling (Express 4 doesn't catch async errors by default) ──
 // Replace Express Router's handle_request so rejected Promises from async route
@@ -139,16 +174,93 @@ const excelUpload = multer({
   };
 }
 
+async function runWithConcurrency(tasks, limit = 3) {
+  if (!tasks.length) return [];
+  const results = new Array(tasks.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < tasks.length) {
+      const index = nextIndex++;
+      results[index] = await tasks[index]();
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(limit, tasks.length) }, () => worker());
+  await Promise.all(workers);
+  return results;
+}
+
 // ── Rate limiting ──────────────────────────────────────────────────────────
 
 const apiLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 300, standardHeaders: true, legacyHeaders: false, validate: { ip: false } });
 
+const PUBLIC_API_CACHE_RULES = [
+  { match: /^\/api\/site-logo$/, browser: 60, edge: 300, stale: 3600 },
+  { match: /^\/api\/teams$/, browser: 30, edge: 300, stale: 900 },
+  { match: /^\/api\/teams\/[^/]+\/(?:stats|seasons|records)$/, browser: 20, edge: 120, stale: 600 },
+  { match: /^\/api\/players$/, browser: 30, edge: 300, stale: 900 },
+  { match: /^\/api\/players\/(?:profile|records)\/[^/]+$/, browser: 30, edge: 300, stale: 1800 },
+  { match: /^\/api\/games$/, browser: 15, edge: 60, stale: 300 },
+  { match: /^\/api\/games\/[^/]+\/stats$/, browser: 30, edge: 300, stale: 1800 },
+  { match: /^\/api\/stats\/leaders$/, browser: 20, edge: 120, stale: 600 },
+  { match: /^\/api\/standings$/, browser: 20, edge: 120, stale: 600 },
+  { match: /^\/api\/records$/, browser: 60, edge: 300, stale: 1800 },
+  { match: /^\/api\/transactions$/, browser: 20, edge: 120, stale: 600 },
+  { match: /^\/api\/playoffs\/by-(?:season|playoff-season)\/[^/]+$/, browser: 20, edge: 120, stale: 600 },
+  { match: /^\/api\/playoff-series\/[^/]+\/games$/, browser: 20, edge: 120, stale: 600 },
+];
+
+function setPublicCacheHeaders(res, browserSeconds, edgeSeconds, staleSeconds) {
+  res.set('Cache-Control', `public, max-age=${browserSeconds}, s-maxage=${edgeSeconds}, stale-while-revalidate=${staleSeconds}`);
+  res.set('CDN-Cache-Control', `public, s-maxage=${edgeSeconds}, stale-while-revalidate=${staleSeconds}`);
+  res.set('Vercel-CDN-Cache-Control', `public, s-maxage=${edgeSeconds}, stale-while-revalidate=${staleSeconds}`);
+}
+
+function preventErrorCaching(res) {
+  const writeHead = res.writeHead;
+  res.writeHead = function guardedWriteHead(statusCode, ...args) {
+    if (Number(statusCode) >= 400) {
+      this.setHeader('Cache-Control', 'private, no-store');
+      this.removeHeader('CDN-Cache-Control');
+      this.removeHeader('Vercel-CDN-Cache-Control');
+    }
+    return writeHead.call(this, statusCode, ...args);
+  };
+}
+
 app.set('trust proxy', 1); // trust first proxy so req.ip reflects real client IP
 app.use(cors());
+app.use(compression({ threshold: 1024 }));
 app.use(express.json({ limit: '50mb' }));
 app.use('/api', apiLimiter);
+app.use((req, res, next) => {
+  if (req.method !== 'GET') return next();
+  const rule = PUBLIC_API_CACHE_RULES.find(candidate => candidate.match.test(req.path));
+  if (!rule) return next();
+  if (req.headers.authorization || req.headers['x-admin-token'] || req.headers['x-player-token']) {
+    res.set('Cache-Control', 'private, no-store');
+    return next();
+  }
+  preventErrorCaching(res);
+  setPublicCacheHeaders(res, rule.browser, rule.edge, rule.stale);
+  return next();
+});
 if (!process.env.VERCEL) {
-  app.use(express.static(path.join(__dirname, 'public')));
+  app.use(express.static(path.join(__dirname, 'public'), {
+    etag: true,
+    maxAge: '1h',
+    setHeaders(res, filePath) {
+      const ext = path.extname(filePath).toLowerCase();
+      if (ext === '.html') {
+        res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');
+      } else if (['.svg', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif', '.ico'].includes(ext)) {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      } else {
+        res.setHeader('Cache-Control', 'public, max-age=300, must-revalidate');
+      }
+    },
+  }));
 }
 
 // ── Run async initialisation (schema + seed teams) ───────────────────────
@@ -158,16 +270,14 @@ if (!process.env.VERCEL) {
 let initError = null;
 const dbReady = (async () => {
   try {
-    await db.initSchema();
-    await db.seedTeams();
-    console.log('[db] init: schema + seed OK');
+    const updated = await db.ensureSchema();
+    console.log(`[db] init: schema ${updated ? 'updated' : 'ready'}`);
   } catch (firstErr) {
     console.warn('[db] init attempt 1 failed, retrying in 500ms:', firstErr.message);
     await new Promise(r => setTimeout(r, 500));
     try {
-      await db.initSchema();
-      await db.seedTeams();
-      console.log('[db] init: schema + seed OK (retry)');
+      const updated = await db.ensureSchema();
+      console.log(`[db] init: schema ${updated ? 'updated' : 'ready'} (retry)`);
     } catch (retryErr) {
       console.error('[db] init permanently failed:', retryErr.message);
       throw retryErr;
@@ -183,6 +293,9 @@ const dbReady = (async () => {
 app.use((_req, res, next) => {
   dbReady.then(() => {
     if (initError) {
+      res.set('Cache-Control', 'private, no-store');
+      res.removeHeader('CDN-Cache-Control');
+      res.removeHeader('Vercel-CDN-Cache-Control');
       return res.status(503).json({
         error: 'Database initialisation failed',
         detail: initError.message,
@@ -529,6 +642,12 @@ app.get('/api/seasons', async (req, res) => {
   // Check if requester is an admin (can see disabled seasons)
   const adminToken = req.headers['x-admin-token'];
   const isAdmin = !!(adminToken && _verifyAdminToken(adminToken));
+  res.vary('X-Admin-Token');
+  if (isAdmin) {
+    res.set('Cache-Control', 'private, no-store');
+  } else {
+    setPublicCacheHeaders(res, 30, 300, 900);
+  }
   const disabledFilter = isAdmin ? '' : 'AND (s.is_disabled IS NULL OR s.is_disabled = 0)';
   const seasons = type
     ? await db.prepare(`SELECT s.*, p.season_id AS parent_season_id FROM seasons s LEFT JOIN playoffs p ON s.id = p.playoff_season_id WHERE s.league_type = ? ${disabledFilter} ORDER BY s.sort_order ASC, s.id ASC`).all(type)
@@ -710,16 +829,31 @@ app.post('/api/seasons/:id/reorder', requireOwner, async (req, res) => {
 // GET /api/site-logo  – redirect to the current site logo file
 // Optional query param: ?type=threes|sixes to get the league-specific logo
 // Falls back to the main site logo if no league-specific one is set.
+const siteLogoCache = new Map();
 app.get('/api/site-logo', async (req, res) => {
   const lt = req.query.type; // 'threes', 'sixes', or undefined
+  const cacheKey = lt === 'threes' || lt === 'sixes' ? lt : 'default';
+  const cached = siteLogoCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return res.redirect(302, cached.url);
+  }
+
+  let url = null;
   if (lt === 'threes' || lt === 'sixes') {
     const key = `site_logo_url_${lt}`;
-    const row = await db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
-    if (row && row.value) return res.redirect(302, row.value);
-    // Fall through to main logo below
+    const row = await db.prepare(`
+      SELECT value FROM settings
+      WHERE key IN (?, 'site_logo_url') AND value != ''
+      ORDER BY CASE WHEN key = ? THEN 0 ELSE 1 END
+      LIMIT 1
+    `).get(key, key);
+    url = row && row.value;
+  } else {
+    const row = await db.prepare("SELECT value FROM settings WHERE key = 'site_logo_url'").get();
+    url = row && row.value;
   }
-  const row = await db.prepare("SELECT value FROM settings WHERE key = 'site_logo_url'").get();
-  const url = (row && row.value) ? row.value : '/logo.svg';
+  url = url || '/logo.svg';
+  siteLogoCache.set(cacheKey, { url, expiresAt: Date.now() + 5 * 60 * 1000 });
   res.redirect(302, url);
 });
 
@@ -741,6 +875,7 @@ app.post('/api/admin/site-logo', requireOwner, logoUpload.single('logo'), async 
   }
   await db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
     .run(key, newUrl);
+  siteLogoCache.clear();
   res.json({ url: newUrl });
 });
 
@@ -1360,8 +1495,8 @@ app.get('/api/teams/:id/stats', async (req, res) => {
 
   // Fetch rostered players – when a specific season is selected, derive from game stats
   // so historical rosters reflect who actually played that season
-  const roster = seasonId
-    ? await db.prepare(`
+  const rosterPromise = seasonId
+    ? db.prepare(`
         SELECT DISTINCT ON (gps.player_name)
           gps.player_name AS name, gps.position,
           p.id, p.number, p.user_id, u.platform
@@ -1372,78 +1507,71 @@ app.get('/api/teams/:id/stats', async (req, res) => {
         WHERE gps.team_id = ? AND g.season_id = ? AND g.status IN ('complete','forfeit')
         ORDER BY gps.player_name
       `).all(req.params.id, seasonId)
-    : await db.prepare(`
+    : db.prepare(`
         SELECT p.id, p.name, p.position, p.number, p.user_id, u.platform
         FROM players p LEFT JOIN users u ON p.user_id = u.id
         WHERE p.team_id = ? AND p.is_rostered = 1 ORDER BY p.name
       `).all(req.params.id);
 
-  const skaterStats = await db.prepare(`
-    SELECT ${SKATER_SELECT}
-    FROM game_player_stats gps JOIN teams t ON gps.team_id = t.id JOIN games g ON gps.game_id = g.id
-    WHERE gps.team_id = ? AND gps.position != 'G' AND g.status IN ('complete','forfeit') ${sf}
-    GROUP BY gps.player_name ORDER BY points DESC, goals DESC
-  `).all(...params);
-
-  const goalieStats = await db.prepare(`
-    SELECT ${GOALIE_SELECT}
-    FROM game_player_stats gps JOIN teams t ON gps.team_id = t.id JOIN games g ON gps.game_id = g.id
-    WHERE gps.team_id = ? AND gps.position = 'G' AND g.status IN ('complete','forfeit') ${sf}
-    GROUP BY gps.player_name ORDER BY save_pct DESC
-  `).all(...params);
-
-  const recentGames = await db.prepare(`
-    SELECT g.id, g.date, g.home_score, g.away_score, g.status, g.is_overtime, g.season_id,
-      ht.id AS home_team_id, ht.name AS home_team_name, ht.logo_url AS home_logo,
-      at.id AS away_team_id, at.name AS away_team_name, at.logo_url AS away_logo
-    FROM games g JOIN teams ht ON g.home_team_id = ht.id JOIN teams at ON g.away_team_id = at.id
-    WHERE (g.home_team_id = ? OR g.away_team_id = ?) AND g.status IN ('complete','forfeit') ${seasonId ? 'AND g.season_id = ?' : ''}
-    ORDER BY g.date DESC LIMIT 10
-  `).all(...rp);
-
-  // Staff
-  const staff = await db.prepare(`
-    SELECT ts.role, u.id AS user_id, u.username, u.platform
-    FROM team_staff ts JOIN users u ON ts.user_id = u.id
-    WHERE ts.team_id = ? ORDER BY ts.role
-  `).all(req.params.id);
-
-  // W-L-OT record for selected season (or all-time)
-  const record = await db.prepare(`
-    SELECT
-      SUM(CASE WHEN (home_team_id=@id AND home_score>away_score) OR (away_team_id=@id AND away_score>home_score) THEN 1 ELSE 0 END) AS wins,
-      SUM(CASE WHEN (home_team_id=@id AND home_score<away_score AND is_overtime=0) OR (away_team_id=@id AND away_score<home_score AND is_overtime=0) THEN 1 ELSE 0 END) AS losses,
-      SUM(CASE WHEN (home_team_id=@id AND home_score<away_score AND is_overtime=1) OR (away_team_id=@id AND away_score<home_score AND is_overtime=1) THEN 1 ELSE 0 END) AS otl
-    FROM games
-    WHERE (home_team_id=@id OR away_team_id=@id) AND status IN ('complete','forfeit')
-    ${seasonId ? 'AND season_id=@sid' : ''}
-  `).get(seasonId ? { id: req.params.id, sid: seasonId } : { id: req.params.id });
-
-  // Latest 5 transactions for this team
-  const transactions = await db.prepare(`
-    SELECT so.id, so.created_at, u.username AS player_name,
-      ft.id AS from_team_id, ft.name AS from_team_name, ft.logo_url AS from_team_logo,
-      t.id AS to_team_id, t.name AS to_team_name, t.logo_url AS to_team_logo
-    FROM signing_offers so
-    JOIN users u ON so.user_id = u.id
-    JOIN teams t ON so.team_id = t.id
-    LEFT JOIN players p ON p.user_id = so.user_id AND p.is_rostered = 1 AND p.team_id != so.team_id
-    LEFT JOIN teams ft ON ft.id = p.team_id
-    WHERE so.team_id = ? AND so.status = 'accepted'
-    ORDER BY so.created_at DESC LIMIT 10
-  `).all(req.params.id);
-
-  // Upcoming games (scheduled, not yet played)
-  const upcoming = await db.prepare(`
-    SELECT g.id, g.date,
-      ht.id AS home_team_id, ht.name AS home_team_name, ht.logo_url AS home_logo,
-      at.id AS away_team_id, at.name AS away_team_name, at.logo_url AS away_logo
-    FROM games g
-    JOIN teams ht ON g.home_team_id = ht.id
-    JOIN teams at ON g.away_team_id = at.id
-    WHERE (g.home_team_id = ? OR g.away_team_id = ?) AND g.status = 'scheduled'
-    ORDER BY g.date ASC LIMIT 5
-  `).all(req.params.id, req.params.id);
+  const [roster, skaterStats, goalieStats, recentGames, staff, record, transactions, upcoming] = await Promise.all([
+    rosterPromise,
+    db.prepare(`
+      SELECT ${SKATER_SELECT}
+      FROM game_player_stats gps JOIN teams t ON gps.team_id = t.id JOIN games g ON gps.game_id = g.id
+      WHERE gps.team_id = ? AND gps.position != 'G' AND g.status IN ('complete','forfeit') ${sf}
+      GROUP BY gps.player_name ORDER BY points DESC, goals DESC
+    `).all(...params),
+    db.prepare(`
+      SELECT ${GOALIE_SELECT}
+      FROM game_player_stats gps JOIN teams t ON gps.team_id = t.id JOIN games g ON gps.game_id = g.id
+      WHERE gps.team_id = ? AND gps.position = 'G' AND g.status IN ('complete','forfeit') ${sf}
+      GROUP BY gps.player_name ORDER BY save_pct DESC
+    `).all(...params),
+    db.prepare(`
+      SELECT g.id, g.date, g.home_score, g.away_score, g.status, g.is_overtime, g.season_id,
+        ht.id AS home_team_id, ht.name AS home_team_name, ht.logo_url AS home_logo,
+        at.id AS away_team_id, at.name AS away_team_name, at.logo_url AS away_logo
+      FROM games g JOIN teams ht ON g.home_team_id = ht.id JOIN teams at ON g.away_team_id = at.id
+      WHERE (g.home_team_id = ? OR g.away_team_id = ?) AND g.status IN ('complete','forfeit') ${seasonId ? 'AND g.season_id = ?' : ''}
+      ORDER BY g.date DESC LIMIT 10
+    `).all(...rp),
+    db.prepare(`
+      SELECT ts.role, u.id AS user_id, u.username, u.platform
+      FROM team_staff ts JOIN users u ON ts.user_id = u.id
+      WHERE ts.team_id = ? ORDER BY ts.role
+    `).all(req.params.id),
+    db.prepare(`
+      SELECT
+        SUM(CASE WHEN (home_team_id=@id AND home_score>away_score) OR (away_team_id=@id AND away_score>home_score) THEN 1 ELSE 0 END) AS wins,
+        SUM(CASE WHEN (home_team_id=@id AND home_score<away_score AND is_overtime=0) OR (away_team_id=@id AND away_score<home_score AND is_overtime=0) THEN 1 ELSE 0 END) AS losses,
+        SUM(CASE WHEN (home_team_id=@id AND home_score<away_score AND is_overtime=1) OR (away_team_id=@id AND away_score<home_score AND is_overtime=1) THEN 1 ELSE 0 END) AS otl
+      FROM games
+      WHERE (home_team_id=@id OR away_team_id=@id) AND status IN ('complete','forfeit')
+      ${seasonId ? 'AND season_id=@sid' : ''}
+    `).get(seasonId ? { id: req.params.id, sid: seasonId } : { id: req.params.id }),
+    db.prepare(`
+      SELECT so.id, so.created_at, u.username AS player_name,
+        ft.id AS from_team_id, ft.name AS from_team_name, ft.logo_url AS from_team_logo,
+        t.id AS to_team_id, t.name AS to_team_name, t.logo_url AS to_team_logo
+      FROM signing_offers so
+      JOIN users u ON so.user_id = u.id
+      JOIN teams t ON so.team_id = t.id
+      LEFT JOIN players p ON p.user_id = so.user_id AND p.is_rostered = 1 AND p.team_id != so.team_id
+      LEFT JOIN teams ft ON ft.id = p.team_id
+      WHERE so.team_id = ? AND so.status = 'accepted'
+      ORDER BY so.created_at DESC LIMIT 10
+    `).all(req.params.id),
+    db.prepare(`
+      SELECT g.id, g.date,
+        ht.id AS home_team_id, ht.name AS home_team_name, ht.logo_url AS home_logo,
+        at.id AS away_team_id, at.name AS away_team_name, at.logo_url AS away_logo
+      FROM games g
+      JOIN teams ht ON g.home_team_id = ht.id
+      JOIN teams at ON g.away_team_id = at.id
+      WHERE (g.home_team_id = ? OR g.away_team_id = ?) AND g.status = 'scheduled'
+      ORDER BY g.date ASC LIMIT 5
+    `).all(req.params.id, req.params.id),
+  ]);
 
   res.json({ team, roster, skaterStats, goalieStats, recentGames, staff, record, transactions, upcoming });
 });
@@ -1504,22 +1632,39 @@ app.get('/api/teams/:id/records', async (req, res) => {
     `).get(...params);
   }
 
-  const career = {
-    pts:         await careerRecord('points',      "SUM(gps.goals + gps.assists)", 'S', 'DESC'),
-    goals:       await careerRecord('goals',       "SUM(gps.goals)",               'S', 'DESC'),
-    plus_minus:  await careerRecord('plus_minus',  "SUM(gps.plus_minus)",          'S', 'DESC'),
-    save_pct:    await careerRecord('save_pct',    "CASE WHEN SUM(gps.shots_against)>0 THEN ROUND(CAST(SUM(gps.saves) AS NUMERIC)/SUM(gps.shots_against),3) ELSE NULL END", 'G', 'DESC'),
-    gaa:         await careerRecord('gaa',         "CASE WHEN SUM(gps.toi)>0 THEN ROUND(SUM(gps.goals_against)*3600.0/SUM(gps.toi),2) ELSE NULL END",                    'G', 'ASC'),
-    goalie_wins: await careerRecord('goalie_wins', "SUM(gps.goalie_wins)",          'G', 'DESC'),
-  };
+  const [
+    careerPts, careerGoals, careerPlusMinus, careerSavePct, careerGaa, careerGoalieWins,
+    singlePts, singleGoals, singlePlusMinus, singleSavePct, singleGaa, singleGoalieWins,
+  ] = await Promise.all([
+    careerRecord('points',      "SUM(gps.goals + gps.assists)", 'S', 'DESC'),
+    careerRecord('goals',       "SUM(gps.goals)",               'S', 'DESC'),
+    careerRecord('plus_minus',  "SUM(gps.plus_minus)",          'S', 'DESC'),
+    careerRecord('save_pct',    "CASE WHEN SUM(gps.shots_against)>0 THEN ROUND(CAST(SUM(gps.saves) AS NUMERIC)/SUM(gps.shots_against),3) ELSE NULL END", 'G', 'DESC'),
+    careerRecord('gaa',         "CASE WHEN SUM(gps.toi)>0 THEN ROUND(SUM(gps.goals_against)*3600.0/SUM(gps.toi),2) ELSE NULL END",                    'G', 'ASC'),
+    careerRecord('goalie_wins', "SUM(gps.goalie_wins)",          'G', 'DESC'),
+    singleSeasonRecord('points',      "SUM(gps.goals + gps.assists)", 'S', 'DESC'),
+    singleSeasonRecord('goals',       "SUM(gps.goals)",               'S', 'DESC'),
+    singleSeasonRecord('plus_minus',  "SUM(gps.plus_minus)",          'S', 'DESC'),
+    singleSeasonRecord('save_pct',    "CASE WHEN SUM(gps.shots_against)>0 THEN ROUND(CAST(SUM(gps.saves) AS NUMERIC)/SUM(gps.shots_against),3) ELSE NULL END", 'G', 'DESC', goalieSeasonMinGP),
+    singleSeasonRecord('gaa',         "CASE WHEN SUM(gps.toi)>0 THEN ROUND(SUM(gps.goals_against)*3600.0/SUM(gps.toi),2) ELSE NULL END",                    'G', 'ASC',  goalieSeasonMinGP),
+    singleSeasonRecord('goalie_wins', "SUM(gps.goalie_wins)",          'G', 'DESC'),
+  ]);
 
+  const career = {
+    pts: careerPts,
+    goals: careerGoals,
+    plus_minus: careerPlusMinus,
+    save_pct: careerSavePct,
+    gaa: careerGaa,
+    goalie_wins: careerGoalieWins,
+  };
   const single = {
-    pts:         await singleSeasonRecord('points',      "SUM(gps.goals + gps.assists)", 'S', 'DESC'),
-    goals:       await singleSeasonRecord('goals',       "SUM(gps.goals)",               'S', 'DESC'),
-    plus_minus:  await singleSeasonRecord('plus_minus',  "SUM(gps.plus_minus)",          'S', 'DESC'),
-    save_pct:    await singleSeasonRecord('save_pct',    "CASE WHEN SUM(gps.shots_against)>0 THEN ROUND(CAST(SUM(gps.saves) AS NUMERIC)/SUM(gps.shots_against),3) ELSE NULL END", 'G', 'DESC', goalieSeasonMinGP),
-    gaa:         await singleSeasonRecord('gaa',         "CASE WHEN SUM(gps.toi)>0 THEN ROUND(SUM(gps.goals_against)*3600.0/SUM(gps.toi),2) ELSE NULL END",                    'G', 'ASC',  goalieSeasonMinGP),
-    goalie_wins: await singleSeasonRecord('goalie_wins', "SUM(gps.goalie_wins)",          'G', 'DESC'),
+    pts: singlePts,
+    goals: singleGoals,
+    plus_minus: singlePlusMinus,
+    save_pct: singleSavePct,
+    gaa: singleGaa,
+    goalie_wins: singleGoalieWins,
   };
 
   res.json({ career, single });
@@ -1606,130 +1751,147 @@ app.get('/api/records', async (req, res) => {
     `).all(...p1);
   }
 
-  // All-time skater records (GP included)
-  const career = {
-    gp:               await leagueCareerRecord("COUNT(DISTINCT gps.game_id)", 'S', 'DESC'),
-    pts:              await leagueCareerRecord("SUM(gps.goals+gps.assists)",  'S', 'DESC'),
-    goals:            await leagueCareerRecord("SUM(gps.goals)",              'S', 'DESC'),
-    assists:          await leagueCareerRecord("SUM(gps.assists)",            'S', 'DESC'),
-    plus_minus:       await leagueCareerRecord("SUM(gps.plus_minus)",         'S', 'DESC'),
-    hits:             await leagueCareerRecord("SUM(gps.hits)",               'S', 'DESC'),
-    shots:            await leagueCareerRecord("SUM(gps.shots)",              'S', 'DESC'),
-    shot_attempts:    await leagueCareerRecord("SUM(gps.shot_attempts)",      'S', 'DESC'),
-    blocked_shots:    await leagueCareerRecord("SUM(gps.blocked_shots)",      'S', 'DESC'),
-    pim:              await leagueCareerRecord("SUM(gps.pim)",                'S', 'DESC'),
-    pp_goals:         await leagueCareerRecord("SUM(gps.pp_goals)",           'S', 'DESC'),
-    sh_goals:         await leagueCareerRecord("SUM(gps.sh_goals)",           'S', 'DESC'),
-    gwg:              await leagueCareerRecord("SUM(gps.gwg)",                'S', 'DESC'),
-    hat_tricks:       await leagueCareerRecord("SUM(gps.hat_tricks)",         'S', 'DESC'),
-    faceoff_wins:     await leagueCareerRecord("SUM(gps.faceoff_wins)",       'S', 'DESC'),
-    deflections:      await leagueCareerRecord("SUM(gps.deflections)",        'S', 'DESC'),
-    interceptions:    await leagueCareerRecord("SUM(gps.interceptions)",      'S', 'DESC'),
-    takeaways:        await leagueCareerRecord("SUM(gps.takeaways)",          'S', 'DESC'),
-    giveaways:        await leagueCareerRecord("SUM(gps.giveaways)",          'S', 'DESC'),
-    pass_completions: await leagueCareerRecord("SUM(gps.pass_completions)",   'S', 'DESC'),
-    penalties_drawn:  await leagueCareerRecord("SUM(gps.penalties_drawn)",    'S', 'DESC'),
-    pk_clears:        await leagueCareerRecord("SUM(gps.pk_clears)",           'S', 'DESC'),
-    // Goalie all-time (GP included)
-    goalie_gp:        await leagueCareerRecord("COUNT(DISTINCT gps.game_id)", 'G', 'DESC'),
-    goalie_wins:      await leagueCareerRecord("SUM(gps.goalie_wins)",        'G', 'DESC'),
-    saves:            await leagueCareerRecord("SUM(gps.saves)",              'G', 'DESC'),
-    shutouts:         await leagueCareerRecord("SUM(gps.shutouts)",           'G', 'DESC'),
-    psa:              await leagueCareerRecord("SUM(gps.penalty_shot_attempts) - SUM(gps.penalty_shot_ga)", 'G', 'DESC'),
-    bksv:             await leagueCareerRecord("SUM(gps.breakaway_saves)",    'G', 'DESC'),
-    desperation_saves: await leagueCareerRecord("SUM(gps.desperation_saves)", 'G', 'DESC'),
-    poke_check_saves:  await leagueCareerRecord("SUM(gps.poke_check_saves)",  'G', 'DESC'),
-    goals_against:    await leagueCareerRecord("SUM(gps.goals_against)",      'G', 'DESC'),
-  };
+  const careerDefinitions = [
+    ['gp', "COUNT(DISTINCT gps.game_id)", 'S', 'DESC'],
+    ['pts', "SUM(gps.goals+gps.assists)", 'S', 'DESC'],
+    ['goals', "SUM(gps.goals)", 'S', 'DESC'],
+    ['assists', "SUM(gps.assists)", 'S', 'DESC'],
+    ['plus_minus', "SUM(gps.plus_minus)", 'S', 'DESC'],
+    ['hits', "SUM(gps.hits)", 'S', 'DESC'],
+    ['shots', "SUM(gps.shots)", 'S', 'DESC'],
+    ['shot_attempts', "SUM(gps.shot_attempts)", 'S', 'DESC'],
+    ['blocked_shots', "SUM(gps.blocked_shots)", 'S', 'DESC'],
+    ['pim', "SUM(gps.pim)", 'S', 'DESC'],
+    ['pp_goals', "SUM(gps.pp_goals)", 'S', 'DESC'],
+    ['sh_goals', "SUM(gps.sh_goals)", 'S', 'DESC'],
+    ['gwg', "SUM(gps.gwg)", 'S', 'DESC'],
+    ['hat_tricks', "SUM(gps.hat_tricks)", 'S', 'DESC'],
+    ['faceoff_wins', "SUM(gps.faceoff_wins)", 'S', 'DESC'],
+    ['deflections', "SUM(gps.deflections)", 'S', 'DESC'],
+    ['interceptions', "SUM(gps.interceptions)", 'S', 'DESC'],
+    ['takeaways', "SUM(gps.takeaways)", 'S', 'DESC'],
+    ['giveaways', "SUM(gps.giveaways)", 'S', 'DESC'],
+    ['pass_completions', "SUM(gps.pass_completions)", 'S', 'DESC'],
+    ['penalties_drawn', "SUM(gps.penalties_drawn)", 'S', 'DESC'],
+    ['pk_clears', "SUM(gps.pk_clears)", 'S', 'DESC'],
+    ['goalie_gp', "COUNT(DISTINCT gps.game_id)", 'G', 'DESC'],
+    ['goalie_wins', "SUM(gps.goalie_wins)", 'G', 'DESC'],
+    ['saves', "SUM(gps.saves)", 'G', 'DESC'],
+    ['shutouts', "SUM(gps.shutouts)", 'G', 'DESC'],
+    ['psa', "SUM(gps.penalty_shot_attempts) - SUM(gps.penalty_shot_ga)", 'G', 'DESC'],
+    ['bksv', "SUM(gps.breakaway_saves)", 'G', 'DESC'],
+    ['desperation_saves', "SUM(gps.desperation_saves)", 'G', 'DESC'],
+    ['poke_check_saves', "SUM(gps.poke_check_saves)", 'G', 'DESC'],
+    ['goals_against', "SUM(gps.goals_against)", 'G', 'DESC'],
+  ];
+  const seasonalDefinitions = [
+    ['pts', "SUM(gps.goals+gps.assists)", 'S', 'DESC'],
+    ['goals', "SUM(gps.goals)", 'S', 'DESC'],
+    ['assists', "SUM(gps.assists)", 'S', 'DESC'],
+    ['plus_minus', "SUM(gps.plus_minus)", 'S', 'DESC'],
+    ['hits', "SUM(gps.hits)", 'S', 'DESC'],
+    ['shots', "SUM(gps.shots)", 'S', 'DESC'],
+    ['shot_attempts', "SUM(gps.shot_attempts)", 'S', 'DESC'],
+    ['blocked_shots', "SUM(gps.blocked_shots)", 'S', 'DESC'],
+    ['pim', "SUM(gps.pim)", 'S', 'DESC'],
+    ['pp_goals', "SUM(gps.pp_goals)", 'S', 'DESC'],
+    ['sh_goals', "SUM(gps.sh_goals)", 'S', 'DESC'],
+    ['gwg', "SUM(gps.gwg)", 'S', 'DESC'],
+    ['hat_tricks', "SUM(gps.hat_tricks)", 'S', 'DESC'],
+    ['faceoff_wins', "SUM(gps.faceoff_wins)", 'S', 'DESC'],
+    ['deflections', "SUM(gps.deflections)", 'S', 'DESC'],
+    ['interceptions', "SUM(gps.interceptions)", 'S', 'DESC'],
+    ['takeaways', "SUM(gps.takeaways)", 'S', 'DESC'],
+    ['giveaways', "SUM(gps.giveaways)", 'S', 'DESC'],
+    ['pass_completions', "SUM(gps.pass_completions)", 'S', 'DESC'],
+    ['penalties_drawn', "SUM(gps.penalties_drawn)", 'S', 'DESC'],
+    ['pk_clears', "SUM(gps.pk_clears)", 'S', 'DESC'],
+    ['goalie_wins', "SUM(gps.goalie_wins)", 'G', 'DESC'],
+    ['saves', "SUM(gps.saves)", 'G', 'DESC'],
+    ['shutouts', "SUM(gps.shutouts)", 'G', 'DESC'],
+    ['psa', "SUM(gps.penalty_shot_attempts) - SUM(gps.penalty_shot_ga)", 'G', 'DESC'],
+    ['bksv', "SUM(gps.breakaway_saves)", 'G', 'DESC'],
+    ['desperation_saves', "SUM(gps.desperation_saves)", 'G', 'DESC'],
+    ['poke_check_saves', "SUM(gps.poke_check_saves)", 'G', 'DESC'],
+    ['goals_against', "SUM(gps.goals_against)", 'G', 'DESC'],
+    ['save_pct', "CASE WHEN SUM(gps.shots_against)>0 THEN ROUND(CAST(SUM(gps.saves) AS NUMERIC)/SUM(gps.shots_against),3) ELSE NULL END", 'G', 'DESC', goalieSeasonMinGP],
+  ];
+  const singleGameDefinitions = [
+    ['goals', 'goals', 'S', 'DESC'],
+    ['assists', 'assists', 'S', 'DESC'],
+    ['plus_minus', 'plus_minus', 'S', 'DESC'],
+    ['hits', 'hits', 'S', 'DESC'],
+    ['shots', 'shots', 'S', 'DESC'],
+    ['shot_attempts', 'shot_attempts', 'S', 'DESC'],
+    ['blocked_shots', 'blocked_shots', 'S', 'DESC'],
+    ['pim', 'pim', 'S', 'DESC'],
+    ['pp_goals', 'pp_goals', 'S', 'DESC'],
+    ['sh_goals', 'sh_goals', 'S', 'DESC'],
+    ['faceoff_wins', 'faceoff_wins', 'S', 'DESC'],
+    ['deflections', 'deflections', 'S', 'DESC'],
+    ['interceptions', 'interceptions', 'S', 'DESC'],
+    ['takeaways', 'takeaways', 'S', 'DESC'],
+    ['giveaways', 'giveaways', 'S', 'DESC'],
+    ['pass_completions', 'pass_completions', 'S', 'DESC'],
+    ['penalties_drawn', 'penalties_drawn', 'S', 'DESC'],
+    ['pk_clears', 'pk_clears', 'S', 'DESC'],
+    ['saves', 'saves', 'G', 'DESC'],
+    ['psa', 'penalty_shot_attempts - gps.penalty_shot_ga', 'G', 'DESC'],
+    ['bksv', 'breakaway_saves', 'G', 'DESC'],
+    ['desperation_saves', 'desperation_saves', 'G', 'DESC'],
+    ['poke_check_saves', 'poke_check_saves', 'G', 'DESC'],
+    ['goals_against', 'goals_against', 'G', 'DESC'],
+  ];
 
-  // Seasonal skater records (no GP)
-  const seasonal = {
-    pts:              await leagueSeasonRecord("SUM(gps.goals+gps.assists)",  'S', 'DESC'),
-    goals:            await leagueSeasonRecord("SUM(gps.goals)",              'S', 'DESC'),
-    assists:          await leagueSeasonRecord("SUM(gps.assists)",            'S', 'DESC'),
-    plus_minus:       await leagueSeasonRecord("SUM(gps.plus_minus)",         'S', 'DESC'),
-    hits:             await leagueSeasonRecord("SUM(gps.hits)",               'S', 'DESC'),
-    shots:            await leagueSeasonRecord("SUM(gps.shots)",              'S', 'DESC'),
-    shot_attempts:    await leagueSeasonRecord("SUM(gps.shot_attempts)",      'S', 'DESC'),
-    blocked_shots:    await leagueSeasonRecord("SUM(gps.blocked_shots)",      'S', 'DESC'),
-    pim:              await leagueSeasonRecord("SUM(gps.pim)",                'S', 'DESC'),
-    pp_goals:         await leagueSeasonRecord("SUM(gps.pp_goals)",           'S', 'DESC'),
-    sh_goals:         await leagueSeasonRecord("SUM(gps.sh_goals)",           'S', 'DESC'),
-    gwg:              await leagueSeasonRecord("SUM(gps.gwg)",                'S', 'DESC'),
-    hat_tricks:       await leagueSeasonRecord("SUM(gps.hat_tricks)",         'S', 'DESC'),
-    faceoff_wins:     await leagueSeasonRecord("SUM(gps.faceoff_wins)",       'S', 'DESC'),
-    deflections:      await leagueSeasonRecord("SUM(gps.deflections)",        'S', 'DESC'),
-    interceptions:    await leagueSeasonRecord("SUM(gps.interceptions)",      'S', 'DESC'),
-    takeaways:        await leagueSeasonRecord("SUM(gps.takeaways)",          'S', 'DESC'),
-    giveaways:        await leagueSeasonRecord("SUM(gps.giveaways)",          'S', 'DESC'),
-    pass_completions: await leagueSeasonRecord("SUM(gps.pass_completions)",   'S', 'DESC'),
-    penalties_drawn:  await leagueSeasonRecord("SUM(gps.penalties_drawn)",    'S', 'DESC'),
-    pk_clears:        await leagueSeasonRecord("SUM(gps.pk_clears)",           'S', 'DESC'),
-    // Goalie seasonal (no GP; Save% with min-GP filter)
-    goalie_wins:      await leagueSeasonRecord("SUM(gps.goalie_wins)",        'G', 'DESC'),
-    saves:            await leagueSeasonRecord("SUM(gps.saves)",              'G', 'DESC'),
-    shutouts:         await leagueSeasonRecord("SUM(gps.shutouts)",           'G', 'DESC'),
-    psa:              await leagueSeasonRecord("SUM(gps.penalty_shot_attempts) - SUM(gps.penalty_shot_ga)", 'G', 'DESC'),
-    bksv:             await leagueSeasonRecord("SUM(gps.breakaway_saves)",    'G', 'DESC'),
-    desperation_saves: await leagueSeasonRecord("SUM(gps.desperation_saves)", 'G', 'DESC'),
-    poke_check_saves:  await leagueSeasonRecord("SUM(gps.poke_check_saves)",  'G', 'DESC'),
-    goals_against:    await leagueSeasonRecord("SUM(gps.goals_against)",      'G', 'DESC'),
-    save_pct:         await leagueSeasonRecord(
-      "CASE WHEN SUM(gps.shots_against)>0 THEN ROUND(CAST(SUM(gps.saves) AS NUMERIC)/SUM(gps.shots_against),3) ELSE NULL END",
-      'G', 'DESC', goalieSeasonMinGP
-    ),
-  };
-
-  // Single-game skater records (no GP)
-  const singleGame = {
-    pts:              null, // computed below
-    goals:            await leagueSingleGameRecord('goals',              'S', 'DESC'),
-    assists:          await leagueSingleGameRecord('assists',            'S', 'DESC'),
-    plus_minus:       await leagueSingleGameRecord('plus_minus',         'S', 'DESC'),
-    hits:             await leagueSingleGameRecord('hits',               'S', 'DESC'),
-    shots:            await leagueSingleGameRecord('shots',              'S', 'DESC'),
-    shot_attempts:    await leagueSingleGameRecord('shot_attempts',      'S', 'DESC'),
-    blocked_shots:    await leagueSingleGameRecord('blocked_shots',      'S', 'DESC'),
-    pim:              await leagueSingleGameRecord('pim',                'S', 'DESC'),
-    pp_goals:         await leagueSingleGameRecord('pp_goals',           'S', 'DESC'),
-    sh_goals:         await leagueSingleGameRecord('sh_goals',           'S', 'DESC'),
-    faceoff_wins:     await leagueSingleGameRecord('faceoff_wins',       'S', 'DESC'),
-    deflections:      await leagueSingleGameRecord('deflections',        'S', 'DESC'),
-    interceptions:    await leagueSingleGameRecord('interceptions',      'S', 'DESC'),
-    takeaways:        await leagueSingleGameRecord('takeaways',          'S', 'DESC'),
-    giveaways:        await leagueSingleGameRecord('giveaways',          'S', 'DESC'),
-    pass_completions: await leagueSingleGameRecord('pass_completions',   'S', 'DESC'),
-    penalties_drawn:  await leagueSingleGameRecord('penalties_drawn',    'S', 'DESC'),
-    pk_clears:        await leagueSingleGameRecord('pk_clears',          'S', 'DESC'),
-    // Goalie single game
-    saves:            await leagueSingleGameRecord('saves',              'G', 'DESC'),
-    psa:              await leagueSingleGameRecord('penalty_shot_attempts - gps.penalty_shot_ga', 'G', 'DESC'),
-    bksv:             await leagueSingleGameRecord('breakaway_saves',    'G', 'DESC'),
-    desperation_saves: await leagueSingleGameRecord('desperation_saves', 'G', 'DESC'),
-    poke_check_saves:  await leagueSingleGameRecord('poke_check_saves',  'G', 'DESC'),
-    goals_against:    await leagueSingleGameRecord('goals_against',      'G', 'DESC'),
-  };
-
-  // Single-game pts (goals+assists in one game) – requires custom query
   const ltFilterSg = lt ? 'AND COALESCE(s.league_type,\'\') = ?' : '';
-  singleGame.pts = await db.prepare(`
-    WITH game_vals AS (
-      SELECT gps.player_name AS name, t.name AS team_name,
-        g.id AS game_id, g.date,
-        ht.name AS home_team, at2.name AS away_team,
-        (gps.goals + gps.assists) AS value
-      FROM game_player_stats gps
-      JOIN games g ON gps.game_id = g.id
-      JOIN teams t ON gps.team_id = t.id
-      JOIN teams ht ON g.home_team_id = ht.id
-      JOIN teams at2 ON g.away_team_id = at2.id
-      LEFT JOIN seasons s ON g.season_id = s.id
-      WHERE gps.position != 'G' AND g.status IN ('complete','forfeit') ${ltFilterSg} ${stFilter}
-    ),
-    top_val AS (SELECT value FROM game_vals ORDER BY value DESC LIMIT 1)
-    SELECT gv.* FROM game_vals gv WHERE gv.value = (SELECT value FROM top_val)
-    ORDER BY gv.date DESC
-  `).all(...p1);
+  const tasks = [
+    ...careerDefinitions.map(([key, ...args]) => async () => ({
+      group: 'career',
+      key,
+      value: await leagueCareerRecord(...args),
+    })),
+    ...seasonalDefinitions.map(([key, ...args]) => async () => ({
+      group: 'seasonal',
+      key,
+      value: await leagueSeasonRecord(...args),
+    })),
+    ...singleGameDefinitions.map(([key, ...args]) => async () => ({
+      group: 'singleGame',
+      key,
+      value: await leagueSingleGameRecord(...args),
+    })),
+    async () => ({
+      group: 'singleGame',
+      key: 'pts',
+      value: await db.prepare(`
+        WITH game_vals AS (
+          SELECT gps.player_name AS name, t.name AS team_name,
+            g.id AS game_id, g.date,
+            ht.name AS home_team, at2.name AS away_team,
+            (gps.goals + gps.assists) AS value
+          FROM game_player_stats gps
+          JOIN games g ON gps.game_id = g.id
+          JOIN teams t ON gps.team_id = t.id
+          JOIN teams ht ON g.home_team_id = ht.id
+          JOIN teams at2 ON g.away_team_id = at2.id
+          LEFT JOIN seasons s ON g.season_id = s.id
+          WHERE gps.position != 'G' AND g.status IN ('complete','forfeit') ${ltFilterSg} ${stFilter}
+        ),
+        top_val AS (SELECT value FROM game_vals ORDER BY value DESC LIMIT 1)
+        SELECT gv.* FROM game_vals gv WHERE gv.value = (SELECT value FROM top_val)
+        ORDER BY gv.date DESC
+      `).all(...p1),
+    }),
+  ];
+
+  const career = {};
+  const seasonal = {};
+  const singleGame = { pts: null };
+  for (const result of await runWithConcurrency(tasks, 3)) {
+    if (result.group === 'career') career[result.key] = result.value;
+    else if (result.group === 'seasonal') seasonal[result.key] = result.value;
+    else singleGame[result.key] = result.value;
+  }
 
   // Remove PP Goals / SH Goals from 3's league (not tracked in that format)
   if (lt === 'threes') {
@@ -1779,90 +1941,91 @@ app.post('/api/admin/records-settings', requireOwner, async (req, res) => {
 app.get('/api/players/records/:name', async (req, res) => {
   const name = req.params.name;
   const holdings = [];
+  const recordChecks = [];
 
   const minGPRow = await db.prepare("SELECT value FROM settings WHERE key = 'goalie_season_min_gp'").get();
   const goalieSeasonMinGP = minGPRow ? (parseInt(minGPRow.value, 10) || 16) : 16;
 
   // Helper: check if player holds a career (all-time) league record (handles ties)
-  async function checkLeagueRecord(label, agg, pos, orderDir, leagueType, category, stFilter, seasonType) {
-    const where = pos === 'G' ? "gps.position = 'G'" : "gps.position != 'G'";
-    const ltFilter = leagueType ? "AND COALESCE(s.league_type,'') = ?" : '';
-    const p = leagueType ? [leagueType] : [];
-    const rows = await db.prepare(`
-      WITH agg_vals AS (
-        SELECT gps.player_name AS name, ${agg} AS value, COUNT(DISTINCT gps.game_id) AS gp
-        FROM game_player_stats gps
-        JOIN games g ON gps.game_id = g.id
-        LEFT JOIN seasons s ON g.season_id = s.id
-        WHERE ${where} AND g.status IN ('complete','forfeit') ${ltFilter} ${stFilter}
-        GROUP BY gps.player_name
-      ),
-      top_val AS (SELECT value FROM agg_vals ORDER BY value ${orderDir} LIMIT 1)
-      SELECT * FROM agg_vals WHERE value = (SELECT value FROM top_val)
-      ORDER BY gp DESC
-    `).all(...p);
-    if (rows.some(r => r.name === name)) {
+  function checkLeagueRecord(label, agg, pos, orderDir, leagueType, category, stFilter, seasonType) {
+    recordChecks.push(async () => {
+      const where = pos === 'G' ? "gps.position = 'G'" : "gps.position != 'G'";
+      const ltFilter = leagueType ? "AND COALESCE(s.league_type,'') = ?" : '';
+      const p = leagueType ? [leagueType] : [];
+      const rows = await db.prepare(`
+        WITH agg_vals AS (
+          SELECT gps.player_name AS name, ${agg} AS value, COUNT(DISTINCT gps.game_id) AS gp
+          FROM game_player_stats gps
+          JOIN games g ON gps.game_id = g.id
+          LEFT JOIN seasons s ON g.season_id = s.id
+          WHERE ${where} AND g.status IN ('complete','forfeit') ${ltFilter} ${stFilter}
+          GROUP BY gps.player_name
+        ),
+        top_val AS (SELECT value FROM agg_vals ORDER BY value ${orderDir} LIMIT 1)
+        SELECT * FROM agg_vals WHERE value = (SELECT value FROM top_val)
+        ORDER BY gp DESC
+      `).all(...p);
       const myRow = rows.find(r => r.name === name);
-      if (myRow.value === 0 || myRow.value === null) return;
+      if (!myRow || myRow.value === 0 || myRow.value === null) return null;
       const co_holders = rows.filter(r => r.name !== name).map(r => r.name);
-      holdings.push({ category, label, value: myRow.value, league_type: leagueType || 'all', season_type: seasonType, scope: 'league', co_holders });
-    }
+      return { category, label, value: myRow.value, league_type: leagueType || 'all', season_type: seasonType, scope: 'league', co_holders };
+    });
   }
 
-  async function checkSeasonRecord(label, agg, pos, orderDir, leagueType, category, minGP, stFilter, seasonType) {
-    const where = pos === 'G' ? "gps.position = 'G'" : "gps.position != 'G'";
-    const ltFilter = leagueType ? "AND COALESCE(s.league_type,'') = ?" : '';
-    const p = leagueType ? [leagueType] : [];
-    const having = minGP ? 'HAVING COUNT(DISTINCT gps.game_id) >= ?' : '';
-    const params = minGP ? [...p, minGP] : p;
-    const rows = await db.prepare(`
-      WITH agg_vals AS (
-        SELECT gps.player_name AS name, g.season_id, MAX(COALESCE(s.name,'No Season')) AS season_name,
-          ${agg} AS value, COUNT(DISTINCT gps.game_id) AS gp
-        FROM game_player_stats gps
-        JOIN games g ON gps.game_id = g.id
-        LEFT JOIN seasons s ON g.season_id = s.id
-        WHERE ${where} AND g.status IN ('complete','forfeit') ${ltFilter} ${stFilter}
-        GROUP BY gps.player_name, g.season_id ${having}
-      ),
-      top_val AS (SELECT value FROM agg_vals ORDER BY value ${orderDir} LIMIT 1)
-      SELECT * FROM agg_vals WHERE value = (SELECT value FROM top_val)
-      ORDER BY gp DESC
-    `).all(...params);
-    if (rows.some(r => r.name === name)) {
+  function checkSeasonRecord(label, agg, pos, orderDir, leagueType, category, minGP, stFilter, seasonType) {
+    recordChecks.push(async () => {
+      const where = pos === 'G' ? "gps.position = 'G'" : "gps.position != 'G'";
+      const ltFilter = leagueType ? "AND COALESCE(s.league_type,'') = ?" : '';
+      const p = leagueType ? [leagueType] : [];
+      const having = minGP ? 'HAVING COUNT(DISTINCT gps.game_id) >= ?' : '';
+      const params = minGP ? [...p, minGP] : p;
+      const rows = await db.prepare(`
+        WITH agg_vals AS (
+          SELECT gps.player_name AS name, g.season_id, MAX(COALESCE(s.name,'No Season')) AS season_name,
+            ${agg} AS value, COUNT(DISTINCT gps.game_id) AS gp
+          FROM game_player_stats gps
+          JOIN games g ON gps.game_id = g.id
+          LEFT JOIN seasons s ON g.season_id = s.id
+          WHERE ${where} AND g.status IN ('complete','forfeit') ${ltFilter} ${stFilter}
+          GROUP BY gps.player_name, g.season_id ${having}
+        ),
+        top_val AS (SELECT value FROM agg_vals ORDER BY value ${orderDir} LIMIT 1)
+        SELECT * FROM agg_vals WHERE value = (SELECT value FROM top_val)
+        ORDER BY gp DESC
+      `).all(...params);
       const myRow = rows.find(r => r.name === name);
-      if (myRow.value === 0 || myRow.value === null) return;
+      if (!myRow || myRow.value === 0 || myRow.value === null) return null;
       const co_holders = rows.filter(r => r.name !== name).map(r => r.name);
-      holdings.push({ category, label, value: myRow.value, season_name: myRow.season_name, league_type: leagueType || 'all', season_type: seasonType, scope: 'league', co_holders });
-    }
+      return { category, label, value: myRow.value, season_name: myRow.season_name, league_type: leagueType || 'all', season_type: seasonType, scope: 'league', co_holders };
+    });
   }
 
-  async function checkSingleGameRecord(label, col, pos, orderDir, leagueType, category, stFilter, seasonType) {
-    const where = pos === 'G' ? "gps.position = 'G'" : "gps.position != 'G'";
-    const ltFilter = leagueType ? "AND COALESCE(s.league_type,'') = ?" : '';
-    const p = leagueType ? [leagueType] : [];
-    const rows = await db.prepare(`
-      WITH game_vals AS (
-        SELECT gps.player_name AS name, gps.${col} AS value,
-          g.id AS game_id, g.date,
-          ht.name AS home_team, at2.name AS away_team
-        FROM game_player_stats gps
-        JOIN games g ON gps.game_id = g.id
-        JOIN teams ht ON g.home_team_id = ht.id
-        JOIN teams at2 ON g.away_team_id = at2.id
-        LEFT JOIN seasons s ON g.season_id = s.id
-        WHERE ${where} AND g.status IN ('complete','forfeit') ${ltFilter} ${stFilter}
-      ),
-      top_val AS (SELECT value FROM game_vals ORDER BY value ${orderDir} LIMIT 1)
-      SELECT * FROM game_vals WHERE value = (SELECT value FROM top_val)
-      ORDER BY date DESC
-    `).all(...p);
-    if (rows.some(r => r.name === name)) {
+  function checkSingleGameRecord(label, col, pos, orderDir, leagueType, category, stFilter, seasonType) {
+    recordChecks.push(async () => {
+      const where = pos === 'G' ? "gps.position = 'G'" : "gps.position != 'G'";
+      const ltFilter = leagueType ? "AND COALESCE(s.league_type,'') = ?" : '';
+      const p = leagueType ? [leagueType] : [];
+      const rows = await db.prepare(`
+        WITH game_vals AS (
+          SELECT gps.player_name AS name, gps.${col} AS value,
+            g.id AS game_id, g.date,
+            ht.name AS home_team, at2.name AS away_team
+          FROM game_player_stats gps
+          JOIN games g ON gps.game_id = g.id
+          JOIN teams ht ON g.home_team_id = ht.id
+          JOIN teams at2 ON g.away_team_id = at2.id
+          LEFT JOIN seasons s ON g.season_id = s.id
+          WHERE ${where} AND g.status IN ('complete','forfeit') ${ltFilter} ${stFilter}
+        ),
+        top_val AS (SELECT value FROM game_vals ORDER BY value ${orderDir} LIMIT 1)
+        SELECT * FROM game_vals WHERE value = (SELECT value FROM top_val)
+        ORDER BY date DESC
+      `).all(...p);
       const myRow = rows.find(r => r.name === name);
-      if (myRow.value === 0 || myRow.value === null) return;
+      if (!myRow || myRow.value === 0 || myRow.value === null) return null;
       const co_holders = rows.filter(r => r.name !== name).map(r => r.name);
-      holdings.push({ category, label, value: myRow.value, game_id: myRow.game_id, home_team: myRow.home_team, away_team: myRow.away_team, date: myRow.date, league_type: leagueType || 'all', season_type: seasonType, scope: 'league', co_holders });
-    }
+      return { category, label, value: myRow.value, game_id: myRow.game_id, home_team: myRow.home_team, away_team: myRow.away_team, date: myRow.date, league_type: leagueType || 'all', season_type: seasonType, scope: 'league', co_holders };
+    });
   }
 
   // League records per league_type × season_type
@@ -1998,6 +2161,7 @@ app.get('/api/players/records/:name', async (req, res) => {
     }
   }
 
+  holdings.push(...(await runWithConcurrency(recordChecks, 3)).filter(Boolean));
   res.json({ holdings });
 });
 
@@ -2018,7 +2182,7 @@ app.get('/api/players/profile/:name', async (req, res) => {
   const name = req.params.name;
 
   // Current roster info + user account if linked
-  const player = await db.prepare(`
+  const playerPromise = db.prepare(`
     SELECT p.id, p.name, p.position AS player_position, p.is_rostered, p.number,
       t.id AS team_id, t.name AS team_name, t.logo_url AS team_logo, t.color1, t.color2,
       u.platform, u.position AS user_position, u.discord
@@ -2029,15 +2193,14 @@ app.get('/api/players/profile/:name', async (req, res) => {
   `).get(name);
 
   // Detect position from stats (majority position recorded in game logs)
-  const posRow = await db.prepare(`
+  const positionPromise = db.prepare(`
     SELECT position, COUNT(*) AS cnt
     FROM game_player_stats WHERE player_name = ?
     GROUP BY position ORDER BY cnt DESC LIMIT 1
   `).get(name);
-  const isGoalie = posRow && posRow.position === 'G';
 
   // Per-season per-team splits – always fetch both modes
-  const rawGoalieStats = await db.prepare(`
+  const goalieStatsPromise = db.prepare(`
       SELECT g.season_id, MAX(COALESCE(s.name,'No Season')) AS season_name,
         MAX(COALESCE(s.league_type,'')) AS league_type,
         MAX(COALESCE(s.sort_order, g.season_id)) AS _sort_order,
@@ -2052,7 +2215,7 @@ app.get('/api/players/profile/:name', async (req, res) => {
       ORDER BY MAX(COALESCE(s.sort_order, g.season_id)) DESC, CASE WHEN g.playoff_series_id IS NOT NULL THEN 1 ELSE 0 END
     `).all(name);
 
-  const rawSkaterStats = await db.prepare(`
+  const skaterStatsPromise = db.prepare(`
       SELECT g.season_id, MAX(COALESCE(s.name,'No Season')) AS season_name,
         MAX(COALESCE(s.league_type,'')) AS league_type,
         MAX(COALESCE(s.sort_order, g.season_id)) AS _sort_order,
@@ -2068,7 +2231,7 @@ app.get('/api/players/profile/:name', async (req, res) => {
     `).all(name);
 
   // Last 5 games
-  const lastGames = await db.prepare(`
+    const lastGamesPromise = db.prepare(`
     SELECT g.id AS game_id, g.date, g.home_score, g.away_score, g.is_overtime,
       ht.id AS home_team_id, ht.name AS home_team_name, ht.logo_url AS home_logo,
       at.id AS away_team_id, at.name AS away_team_name, at.logo_url AS away_logo,
@@ -2100,7 +2263,7 @@ app.get('/api/players/profile/:name', async (req, res) => {
   `).all(name);
 
   // Historical season stats (from season_player_stats, for imported seasons)
-  const historicalStats = await db.prepare(`
+  const historicalStatsPromise = db.prepare(`
     SELECT sps.season_id, COALESCE(s.name,'No Season') AS season_name,
       COALESCE(s.league_type,'') AS league_type,
       COALESCE(s.sort_order, sps.season_id) AS _sort_order,
@@ -2118,6 +2281,16 @@ app.get('/api/players/profile/:name', async (req, res) => {
     WHERE sps.player_name = ?
     ORDER BY COALESCE(s.sort_order, sps.season_id) DESC
   `).all(name);
+
+  const [player, posRow, rawGoalieStats, rawSkaterStats, lastGames, historicalStats] = await Promise.all([
+    playerPromise,
+    positionPromise,
+    goalieStatsPromise,
+    skaterStatsPromise,
+    lastGamesPromise,
+    historicalStatsPromise,
+  ]);
+  const isGoalie = posRow && posRow.position === 'G';
 
   // Merge historical rows for seasons not already covered by game stats
   async function mergeWithHistorical(gameStats, histFilter) {
@@ -2376,16 +2549,18 @@ app.patch('/api/games/:id', requireAdmin, async (req, res) => {
 // ── Saved game stats ───────────────────────────────────────────────────────
 
 app.get('/api/games/:id/stats', async (req, res) => {
-  const game = await db.prepare(`
-    SELECT g.*, ht.name AS home_team_name, ht.logo_url AS home_logo,
-      ht.color1 AS home_color1, ht.color2 AS home_color2,
-      at.name AS away_team_name, at.logo_url AS away_logo,
-      at.color1 AS away_color1, at.color2 AS away_color2
-    FROM games g JOIN teams ht ON g.home_team_id = ht.id JOIN teams at ON g.away_team_id = at.id
-    WHERE g.id = ?
-  `).get(req.params.id);
+  const [game, stats] = await Promise.all([
+    db.prepare(`
+      SELECT g.*, ht.name AS home_team_name, ht.logo_url AS home_logo,
+        ht.color1 AS home_color1, ht.color2 AS home_color2,
+        at.name AS away_team_name, at.logo_url AS away_logo,
+        at.color1 AS away_color1, at.color2 AS away_color2
+      FROM games g JOIN teams ht ON g.home_team_id = ht.id JOIN teams at ON g.away_team_id = at.id
+      WHERE g.id = ?
+    `).get(req.params.id),
+    db.prepare('SELECT * FROM game_player_stats WHERE game_id = ? ORDER BY position, goals DESC').all(req.params.id),
+  ]);
   if (!game) return res.status(404).json({ error: 'Game not found' });
-  const stats = await db.prepare('SELECT * FROM game_player_stats WHERE game_id = ? ORDER BY position, goals DESC').all(req.params.id);
   res.json({
     game: {
       id: game.id, date: game.date, status: game.status, season_id: game.season_id, is_overtime: game.is_overtime,
@@ -2437,7 +2612,7 @@ app.get('/api/stats/leaders', async (req, res) => {
     ORDER BY name, (user_id IS NOT NULL) DESC, id DESC
   ) rp`;
 
-  const skaters = await db.prepare(`
+  const skatersPromise = db.prepare(`
     SELECT
       gps.player_name AS name,
       MAX(rp.team_id) AS team_id,
@@ -2526,7 +2701,7 @@ app.get('/api/stats/leaders', async (req, res) => {
     GROUP BY gps.player_name ORDER BY points DESC, goals DESC
   `).all(...p);
 
-  const goalies = await db.prepare(`
+  const goaliesPromise = db.prepare(`
     SELECT
       gps.player_name AS name,
       MAX(rp.team_id) AS team_id,
@@ -2589,6 +2764,8 @@ app.get('/api/stats/leaders', async (req, res) => {
     GROUP BY gps.player_name ORDER BY save_pct DESC
   `).all(...p);
 
+  const [skaters, goalies] = await Promise.all([skatersPromise, goaliesPromise]);
+
   // Compute S/G (shots against per game) for goalies
   for (const g of goalies) {
     g.shots_per_game = g.gp > 0 ? Math.round((g.shots_against / g.gp) * 10) / 10 : null;
@@ -2597,7 +2774,7 @@ app.get('/api/stats/leaders', async (req, res) => {
   // If a specific season was requested and it has no game_player_stats,
   // fall back to season_player_stats (imported historical data).
   if (seasonId && skaters.length === 0 && goalies.length === 0) {
-    const histSkaters = await db.prepare(`
+    const histSkatersPromise = db.prepare(`
       SELECT sps.player_name AS name,
         sps.team_id, COALESCE(t.name,'FA') AS team_name,
         t.logo_url AS team_logo, t.color1 AS team_color1, t.color2 AS team_color2,
@@ -2618,7 +2795,7 @@ app.get('/api/stats/leaders', async (req, res) => {
       WHERE sps.season_id = ? AND (sps.position IS NULL OR sps.position != 'G')
       ORDER BY points DESC, goals DESC
     `).all(seasonId);
-    const histGoalies = await db.prepare(`
+    const histGoaliesPromise = db.prepare(`
       SELECT sps.player_name AS name,
         sps.team_id, COALESCE(t.name,'FA') AS team_name,
         t.logo_url AS team_logo, t.color1 AS team_color1, t.color2 AS team_color2,
@@ -2636,6 +2813,7 @@ app.get('/api/stats/leaders', async (req, res) => {
       WHERE sps.season_id = ? AND sps.position = 'G'
       ORDER BY sps.save_pct DESC
     `).all(seasonId);
+    const [histSkaters, histGoalies] = await Promise.all([histSkatersPromise, histGoaliesPromise]);
     return res.json({ skaters: histSkaters, goalies: histGoalies });
   }
 
@@ -2663,12 +2841,27 @@ async function calcStandings(seasonId) {
   const filter = seasonId
     ? "SELECT * FROM games WHERE status IN ('complete','forfeit') AND season_id = ? ORDER BY date ASC, id ASC"
     : "SELECT * FROM games WHERE status IN ('complete','forfeit') ORDER BY date ASC, id ASC";
-  const games = seasonId ? await db.prepare(filter).all(seasonId) : await db.prepare(filter).all();
+  const [games, scheduledGames, confOverrides, allTeams, pimRows] = await Promise.all([
+    seasonId ? db.prepare(filter).all(seasonId) : db.prepare(filter).all(),
+    seasonId
+      ? db.prepare("SELECT home_team_id, away_team_id FROM games WHERE season_id = ? AND status = 'scheduled'").all(seasonId)
+      : Promise.resolve([]),
+    seasonId
+      ? db.prepare('SELECT team_id, conference, division FROM season_team_conf WHERE season_id = ?').all(seasonId)
+      : Promise.resolve([]),
+    db.prepare('SELECT * FROM teams').all(),
+    seasonId
+      ? db.prepare(
+          `SELECT gps.team_id, SUM(gps.pim) AS pim_total
+           FROM game_player_stats gps
+           JOIN games g ON gps.game_id = g.id
+           WHERE g.season_id = ? AND g.status IN ('complete','forfeit')
+           GROUP BY gps.team_id`
+        ).all(seasonId)
+      : Promise.resolve([]),
+  ]);
 
   // Count remaining (scheduled) games per team — needed for clinch math
-  const scheduledGames = seasonId
-    ? await db.prepare("SELECT home_team_id, away_team_id FROM games WHERE season_id = ? AND status = 'scheduled'").all(seasonId)
-    : [];
   const remainingMap = {};
   for (const g of scheduledGames) {
     remainingMap[g.home_team_id] = (remainingMap[g.home_team_id] || 0) + 1;
@@ -2676,15 +2869,11 @@ async function calcStandings(seasonId) {
   }
 
   // Per-season conference/division overrides
-  const confOverrides = seasonId
-    ? await db.prepare('SELECT team_id, conference, division FROM season_team_conf WHERE season_id = ?').all(seasonId)
-    : [];
   const confMap = {};
   for (const r of confOverrides) confMap[r.team_id] = r;
 
   const teamIds = new Set();
   for (const g of games) { teamIds.add(g.home_team_id); teamIds.add(g.away_team_id); }
-  const allTeams = await db.prepare('SELECT * FROM teams').all();
   const teams = seasonId ? allTeams.filter(t => teamIds.has(t.id)) : allTeams;
   const stats = {};
   for (const t of teams) {
@@ -2728,13 +2917,6 @@ async function calcStandings(seasonId) {
 
   // Load penalty minutes per team for the season (tiebreaker #7)
   if (seasonId && teamIds.size > 0) {
-    const pimRows = await db.prepare(
-      `SELECT gps.team_id, SUM(gps.pim) AS pim_total
-       FROM game_player_stats gps
-       JOIN games g ON gps.game_id = g.id
-       WHERE g.season_id = ? AND g.status IN ('complete','forfeit')
-       GROUP BY gps.team_id`
-    ).all(seasonId);
     for (const row of pimRows) {
       if (stats[row.team_id]) stats[row.team_id].pim_for = row.pim_total || 0;
     }
@@ -2872,25 +3054,31 @@ async function calcStandings(seasonId) {
 
 app.get('/api/standings', async (req, res) => {
   const seasonId = req.query.season_id ? Number(req.query.season_id) : null;
-  const teams = await calcStandings(seasonId);
   let playoff_cutoff = null;
   let conf_cutoffs = {};
   let div_cutoffs = {};
+  let teams;
   if (seasonId) {
+    const [standings, pc, seasonRow, cutoffRows] = await Promise.all([
+      calcStandings(seasonId),
+      db.prepare('SELECT teams_qualify FROM playoffs WHERE season_id = ?').get(seasonId),
+      db.prepare('SELECT playoff_cutoff FROM seasons WHERE id = ?').get(seasonId),
+      db.prepare('SELECT scope, scope_name, cutoff FROM season_cutoffs WHERE season_id = ?').all(seasonId),
+    ]);
+    teams = standings;
     // Bracket-based cutoff takes precedence over manual cutoff
-    const pc = await db.prepare('SELECT teams_qualify FROM playoffs WHERE season_id = ?').get(seasonId);
-    const seasonRow = await db.prepare('SELECT playoff_cutoff FROM seasons WHERE id = ?').get(seasonId);
     if (pc) {
       playoff_cutoff = Math.min(pc.teams_qualify, teams.length);
     } else if (seasonRow && seasonRow.playoff_cutoff != null) {
       playoff_cutoff = Math.min(seasonRow.playoff_cutoff, teams.length);
     }
     // Load per-scope cutoffs from season_cutoffs table
-    const cutoffRows = await db.prepare('SELECT scope, scope_name, cutoff FROM season_cutoffs WHERE season_id = ?').all(seasonId);
     for (const row of cutoffRows) {
       if (row.scope === 'conference') conf_cutoffs[row.scope_name] = row.cutoff;
       else if (row.scope === 'division') div_cutoffs[row.scope_name] = row.cutoff;
     }
+  } else {
+    teams = await calcStandings(null);
   }
   res.json({ teams, playoff_cutoff, conf_cutoffs, div_cutoffs });
 });
@@ -4571,6 +4759,7 @@ app.post('/api/admin/import-excel', requireOwner, excelUpload.single('file'), as
   // ── Parse the workbook ─────────────────────────────────────────────────
   let workbook;
   try {
+    const ExcelJS = require('exceljs');
     workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(req.file.buffer);
   } catch (e) {
@@ -4864,6 +5053,9 @@ app.post('/api/admin/import-excel', requireOwner, excelUpload.single('file'), as
 // browser never sees a connection-reset "network error".
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
+  res.set('Cache-Control', 'private, no-store');
+  res.removeHeader('CDN-Cache-Control');
+  res.removeHeader('Vercel-CDN-Cache-Control');
   if (err && err.code === 'LIMIT_FILE_SIZE') {
     return res.status(413).json({ error: 'File too large. Maximum allowed size is 20 MB.' });
   }

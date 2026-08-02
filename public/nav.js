@@ -39,6 +39,7 @@ document.addEventListener('click', e => {
   const keepInTopBar = el =>
     el.classList.contains('brand') ||
     el.id === 'nav-admin-link' ||
+    el.id === 'notif-bell-wrap' ||
     el.classList.contains('nav-portal');
 
   [...nav.children].forEach(el => {
@@ -51,11 +52,11 @@ document.addEventListener('click', e => {
   switcher.className = 'league-nav-switch';
   switcher.innerHTML = `
     <button class="league-nav-btn" data-league="sixes">
-      <img src="/api/site-logo?type=sixes" alt="6's" class="league-nav-logo" />
+      <img src="/api/site-logo?type=sixes" alt="6's" class="league-nav-logo" width="20" height="20" decoding="async" />
       <span>6's</span>
     </button>
     <button class="league-nav-btn" data-league="threes">
-      <img src="/api/site-logo?type=threes" alt="3's" class="league-nav-logo" />
+      <img src="/api/site-logo?type=threes" alt="3's" class="league-nav-logo" width="20" height="20" decoding="async" />
       <span>3's</span>
     </button>
   `;
@@ -174,6 +175,7 @@ document.addEventListener('click', e => {
 (function () {
   const link = document.getElementById('nav-admin-link');
   if (!link) return;
+  const validationKey = 'ehl_admin_validated_at';
 
   function showAdminLink() { link.style.display = ''; }
   function hideAdminLink() { link.style.display = 'none'; }
@@ -182,10 +184,19 @@ document.addEventListener('click', e => {
     // 1. Validate any cached admin token
     const adminToken = localStorage.getItem('ehl_admin_token');
     if (adminToken) {
+      const validatedAt = Number(sessionStorage.getItem(validationKey)) || 0;
+      if (Date.now() - validatedAt < 60 * 1000) {
+        showAdminLink();
+        return;
+      }
       try {
         const res = await fetch('/api/auth/status', { headers: { 'X-Admin-Token': adminToken } });
         const data = await res.json();
-        if (data.loggedIn) { showAdminLink(); return; }
+        if (data.loggedIn) {
+          sessionStorage.setItem(validationKey, String(Date.now()));
+          showAdminLink();
+          return;
+        }
       } catch (e) {
         // Network error – fall through to player-token refresh
         console.debug('[nav] admin token validation failed:', e);
@@ -194,6 +205,7 @@ document.addEventListener('click', e => {
       localStorage.removeItem('ehl_admin_token');
       localStorage.removeItem('ehl_admin_role');
       localStorage.removeItem('ehl_admin_username');
+      sessionStorage.removeItem(validationKey);
     }
 
     // 2. Try to obtain a fresh admin token from the player session
@@ -209,6 +221,7 @@ document.addEventListener('click', e => {
           localStorage.setItem('ehl_admin_token', data.token);
           localStorage.setItem('ehl_admin_role', data.role);
           localStorage.setItem('ehl_admin_username', data.username);
+          sessionStorage.setItem(validationKey, String(Date.now()));
           showAdminLink();
           return;
         }
@@ -395,4 +408,37 @@ document.addEventListener('click', e => {
       hideTooltip();
     }
   });
+}());
+
+// ── Shared page shell and media defaults ────────────────────────────────────
+(function () {
+  function optimiseImage(img) {
+    if (!(img instanceof HTMLImageElement)) return;
+    if (!img.hasAttribute('decoding')) img.decoding = 'async';
+    const isAboveFold = !!img.closest('nav, .hero, .page-header, .team-banner, .phl-hero');
+    if (!isAboveFold && !img.hasAttribute('loading')) img.loading = 'lazy';
+  }
+
+  document.querySelectorAll('img').forEach(optimiseImage);
+  const imageObserver = new MutationObserver(mutations => {
+    for (const mutation of mutations) {
+      for (const node of mutation.addedNodes) {
+        if (!(node instanceof Element)) continue;
+        if (node.matches('img')) optimiseImage(node);
+        node.querySelectorAll('img').forEach(optimiseImage);
+      }
+    }
+  });
+  imageObserver.observe(document.body, { childList: true, subtree: true });
+
+  function appendFooter() {
+    if (document.querySelector('.site-footer')) return;
+    const footer = document.createElement('footer');
+    footer.className = 'site-footer';
+    footer.innerHTML = `<div class="site-footer-content">&copy; ${new Date().getFullYear()} Electric Hockey League. All rights reserved.</div>`;
+    document.body.appendChild(footer);
+  }
+
+  if (document.readyState === 'complete') appendFooter();
+  else document.addEventListener('DOMContentLoaded', appendFooter, { once: true });
 }());

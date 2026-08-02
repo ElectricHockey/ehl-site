@@ -5,6 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Player – EHL</title>
   <link rel="stylesheet" href="style.css" />
+  <link rel="preload" href="/api/site-logo" as="image" fetchpriority="high" />
+  <script src="nav.js" defer></script>
+  <script src="notifications.js" defer></script>
+  <script src="stats-config.js" defer></script>
+  <script src="player.js" defer></script>
   <style>
     /* ── Hero banner ──────────────────────────────────────────────────────── */
     .phl-hero {
@@ -146,7 +151,7 @@
 <body>
   <nav>
     <a href="index.html" class="brand">
-      <img src="/api/site-logo" alt="EHL" class="brand-logo" />
+      <img src="/api/site-logo" alt="EHL" class="brand-logo" width="46" height="46" decoding="async" fetchpriority="high" />
 
     </a>
     <a href="index.html">Home</a>
@@ -169,9 +174,5 @@
     <div id="player-root"><p class="loading">Loading player…</p></div>
   </div>
 
-  <script src="stats-config.js"></script>
-  <script src="player.js"></script>
-  <script src="notifications.js"></script>
-  <script src="nav.js"></script>
 </body>
 </html>

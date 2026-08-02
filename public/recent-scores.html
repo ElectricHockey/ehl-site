@@ -5,6 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Recent Scores – EHL</title>
   <link rel="stylesheet" href="style.css" />
+  <link rel="preload" href="/api/site-logo" as="image" fetchpriority="high" />
+  <script src="nav.js" defer></script>
+  <script src="notifications.js" defer></script>
+  <script src="season-selector.js" defer></script>
+  <script src="recent-scores.js" defer></script>
   <style>
     .score-card {
       background: #161b22;
@@ -57,7 +62,7 @@
 <body>
   <nav>
     <a href="index.html" class="brand">
-      <img src="/api/site-logo" alt="EHL" class="brand-logo" />
+      <img src="/api/site-logo" alt="EHL" class="brand-logo" width="46" height="46" decoding="async" fetchpriority="high" />
 
     </a>
     <a href="index.html">Home</a>
@@ -85,9 +90,5 @@
     <div id="scores-root" class="surface-card" style="padding:1rem 1.1rem;"><p class="loading">Loading scores…</p></div>
   </div>
 
-  <script src="season-selector.js"></script>
-  <script src="recent-scores.js"></script>
-  <script src="notifications.js"></script>
-  <script src="nav.js"></script>
 </body>
 </html>

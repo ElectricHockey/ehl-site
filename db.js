@@ -43,6 +43,11 @@ const pool = new Pool({
   ...(IS_SERVERLESS ? { max: 3, connectionTimeoutMillis: 5000, idleTimeoutMillis: 10000 } : {}),
 });
 
+// Bump this whenever initSchema or seed data changes. The marker prevents every
+// serverless cold start from replaying dozens of already-applied DDL statements.
+const SCHEMA_VERSION = '2026-08-01.1';
+const SCHEMA_LOCK_ID = 4540492; // "EHL" as a stable PostgreSQL advisory-lock key
+
 // Critical: handle idle connection errors so they don't crash the process.
 // Without this, Vercel functions get FUNCTION_INVOCATION_FAILED on stale connections.
 pool.on('error', (err) => {
@@ -456,16 +461,23 @@ async function initSchema() {
   const indexes = [
     'CREATE INDEX IF NOT EXISTS idx_games_season        ON games(season_id)',
     'CREATE INDEX IF NOT EXISTS idx_games_status         ON games(status)',
+    'CREATE INDEX IF NOT EXISTS idx_games_season_status  ON games(season_id, status, date DESC)',
+    "CREATE INDEX IF NOT EXISTS idx_games_complete_date  ON games(date DESC) WHERE status IN ('complete','forfeit')",
     'CREATE INDEX IF NOT EXISTS idx_games_home           ON games(home_team_id)',
     'CREATE INDEX IF NOT EXISTS idx_games_away           ON games(away_team_id)',
     'CREATE INDEX IF NOT EXISTS idx_games_playoff_series ON games(playoff_series_id)',
     'CREATE INDEX IF NOT EXISTS idx_gps_game             ON game_player_stats(game_id)',
     'CREATE INDEX IF NOT EXISTS idx_gps_team             ON game_player_stats(team_id)',
     'CREATE INDEX IF NOT EXISTS idx_gps_player           ON game_player_stats(player_name)',
+    'CREATE INDEX IF NOT EXISTS idx_gps_team_position    ON game_player_stats(team_id, position, game_id)',
+    'CREATE INDEX IF NOT EXISTS idx_gps_player_position  ON game_player_stats(player_name, position, game_id)',
     'CREATE INDEX IF NOT EXISTS idx_players_team          ON players(team_id)',
     'CREATE INDEX IF NOT EXISTS idx_players_user          ON players(user_id)',
+    'CREATE INDEX IF NOT EXISTS idx_players_active_name   ON players(name, team_id) WHERE is_rostered = 1',
     'CREATE INDEX IF NOT EXISTS idx_sps_season            ON season_player_stats(season_id)',
     'CREATE INDEX IF NOT EXISTS idx_sps_player            ON season_player_stats(player_name)',
+    'CREATE INDEX IF NOT EXISTS idx_sps_player_season     ON season_player_stats(player_name, season_id)',
+    'CREATE INDEX IF NOT EXISTS idx_seasons_league_order  ON seasons(league_type, sort_order, id)',
     'CREATE INDEX IF NOT EXISTS idx_transactions_created ON transactions(created_at DESC)',
   ];
 
@@ -614,8 +626,49 @@ async function initSchema() {
   console.log('[db] Schema initialised.');
 }
 
+async function readSchemaVersion(executor = pool) {
+  try {
+    const result = await executor.query("SELECT value FROM settings WHERE key = '_schema_version'");
+    return result.rows[0] ? result.rows[0].value : null;
+  } catch (err) {
+    if (err && err.code === '42P01') return null;
+    throw err;
+  }
+}
+
+/**
+ * Apply schema work once per schema version, even when several serverless
+ * instances start together. Warm and subsequent cold starts perform one query.
+ */
+async function ensureSchema() {
+  if (await readSchemaVersion() === SCHEMA_VERSION) return false;
+
+  const client = await pool.connect();
+  try {
+    await client.query('SELECT pg_advisory_lock($1)', [SCHEMA_LOCK_ID]);
+    if (await readSchemaVersion(client) === SCHEMA_VERSION) return false;
+
+    await initSchema();
+    await seedTeams();
+    await client.query(
+      `INSERT INTO settings (key, value) VALUES ('_schema_version', $1)
+       ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value`,
+      [SCHEMA_VERSION]
+    );
+    console.log(`[db] Schema version ${SCHEMA_VERSION} applied.`);
+    return true;
+  } finally {
+    try {
+      await client.query('SELECT pg_advisory_unlock($1)', [SCHEMA_LOCK_ID]);
+    } finally {
+      client.release();
+    }
+  }
+}
+
 db.initSchema = initSchema;
 db.seedTeams = seedTeams;
+db.ensureSchema = ensureSchema;
 db.pool = pool;
 
 module.exports = db;

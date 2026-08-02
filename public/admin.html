@@ -5,6 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Admin – EHL</title>
   <link rel="stylesheet" href="style.css" />
+  <link rel="preload" href="/api/site-logo" as="image" fetchpriority="high" />
+  <script src="nav.js" defer></script>
+  <script src="notifications.js" defer></script>
+  <script src="game-stats-editor.js" defer></script>
+  <script src="admin.js" defer></script>
   <style>
     #login-section { max-width:380px;margin:3rem auto;background:#161b22;border:1px solid #30363d;border-radius:10px;padding:2rem 2.5rem; }
     #login-section h2 { margin-bottom:1rem; }
@@ -34,7 +39,7 @@
 <body>
   <nav>
     <a href="index.html" class="brand">
-      <img src="/api/site-logo" alt="EHL" class="brand-logo" />
+      <img src="/api/site-logo" alt="EHL" class="brand-logo" width="46" height="46" decoding="async" fetchpriority="high" />
 
     </a>
     <a href="index.html">Home</a>
@@ -629,9 +634,5 @@
         </div>
       </div>
 
-  <script src="notifications.js"></script>
-  <script src="game-stats-editor.js"></script>
-  <script src="admin.js"></script>
-  <script src="nav.js"></script>
 </body>
 </html>

@@ -227,16 +227,23 @@ CREATE TABLE IF NOT EXISTS season_player_stats (
 
 CREATE INDEX IF NOT EXISTS idx_games_season        ON games(season_id);
 CREATE INDEX IF NOT EXISTS idx_games_status         ON games(status);
+CREATE INDEX IF NOT EXISTS idx_games_season_status  ON games(season_id, status, date DESC);
+CREATE INDEX IF NOT EXISTS idx_games_complete_date  ON games(date DESC) WHERE status IN ('complete','forfeit');
 CREATE INDEX IF NOT EXISTS idx_games_home           ON games(home_team_id);
 CREATE INDEX IF NOT EXISTS idx_games_away           ON games(away_team_id);
 CREATE INDEX IF NOT EXISTS idx_games_playoff_series ON games(playoff_series_id);
 CREATE INDEX IF NOT EXISTS idx_gps_game             ON game_player_stats(game_id);
 CREATE INDEX IF NOT EXISTS idx_gps_team             ON game_player_stats(team_id);
 CREATE INDEX IF NOT EXISTS idx_gps_player           ON game_player_stats(player_name);
+CREATE INDEX IF NOT EXISTS idx_gps_team_position    ON game_player_stats(team_id, position, game_id);
+CREATE INDEX IF NOT EXISTS idx_gps_player_position  ON game_player_stats(player_name, position, game_id);
 CREATE INDEX IF NOT EXISTS idx_players_team          ON players(team_id);
 CREATE INDEX IF NOT EXISTS idx_players_user          ON players(user_id);
+CREATE INDEX IF NOT EXISTS idx_players_active_name   ON players(name, team_id) WHERE is_rostered = 1;
 CREATE INDEX IF NOT EXISTS idx_sps_season            ON season_player_stats(season_id);
 CREATE INDEX IF NOT EXISTS idx_sps_player            ON season_player_stats(player_name);
+CREATE INDEX IF NOT EXISTS idx_sps_player_season     ON season_player_stats(player_name, season_id);
+CREATE INDEX IF NOT EXISTS idx_seasons_league_order  ON seasons(league_type, sort_order, id);
 
 -- ── Transactions ──────────────────────────────────────────────────────────
 

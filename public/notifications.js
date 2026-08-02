@@ -5,6 +5,7 @@
 (function () {
   const API = '/api';
   const TOKEN_KEY = 'ehl_player_token';
+  let pollTimer = null;
 
   function getToken() { return localStorage.getItem(TOKEN_KEY) || ''; }
 
@@ -62,7 +63,7 @@
     dd.innerHTML = offers.map(o => `
       <div class="notif-offer" data-id="${o.id}">
         <div class="notif-offer-title">
-          ${o.team_logo ? `<img src="${o.team_logo}" class="notif-team-logo" alt="" />` : '🏒'}
+          ${o.team_logo ? `<img src="${o.team_logo}" class="notif-team-logo" alt="" width="22" height="22" loading="lazy" decoding="async" />` : '🏒'}
           <strong>${o.team_name}</strong>
         </div>
         <div class="notif-offer-meta">
@@ -102,7 +103,22 @@
     });
   }
 
-  // Poll every 30 s while page is open
-  loadOffers();
-  setInterval(loadOffers, 30000);
+  async function refreshOffers() {
+    if (pollTimer) clearTimeout(pollTimer);
+    pollTimer = null;
+    if (document.hidden || !getToken()) return;
+    await loadOffers();
+    pollTimer = setTimeout(refreshOffers, 30000);
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      if (pollTimer) clearTimeout(pollTimer);
+      pollTimer = null;
+    } else {
+      refreshOffers();
+    }
+  });
+
+  refreshOffers();
 })();
