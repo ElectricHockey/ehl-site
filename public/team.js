@@ -6,7 +6,8 @@ let _teamGoalieData = [];
 let _teamColors = null;
 let _teamId = null;
 let _teamSeasons = null;          // seasons this team has played in (fetched once)
-let _teamSelectedSeasonId = null; // currently selected season (null = all)
+let _teamSelectedSeasonId = null; // currently selected season (null = all-time)
+let _teamFilterType = null;       // null | 'regular' | 'playoff' (for all-time splits)
 const teamSort = {
   skater: { key: 'points', dir: 'desc' },
   goalie: { key: 'save_pct', dir: 'desc' },
@@ -252,7 +253,14 @@ async function loadTeamPage() {
 
   try {
     const sid = _teamSelectedSeasonId;
-    const url = sid ? `${API}/teams/${id}/stats?season_id=${sid}` : `${API}/teams/${id}/stats`;
+    let url;
+    if (sid) {
+      url = `${API}/teams/${id}/stats?season_id=${sid}`;
+    } else if (_teamFilterType) {
+      url = `${API}/teams/${id}/stats?filter_type=${_teamFilterType}`;
+    } else {
+      url = `${API}/teams/${id}/stats`;
+    }
     if (!_recordsPromise) {
       _recordsPromise = fetch(`${API}/teams/${id}/records`)
         .then(response => {
@@ -490,25 +498,48 @@ async function loadTeamPage() {
   }
 }
 
-// ── Team season selector (custom, filtered to seasons the team played) ─────
+// ── Team season selector (styled to match standings dropdown) ─────────────
 function renderTeamSeasonSelector() {
   const container = document.getElementById('season-selector-container');
   if (!container || !_teamSeasons) return;
   if (_teamSeasons.length === 0) { container.innerHTML = ''; return; }
 
-  const selectStyle = 'background:#161b22;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.3rem 0.6rem;font-size:0.88rem;';
+  // Determine currently selected value
+  let selectedVal;
+  if (_teamSelectedSeasonId != null) {
+    selectedVal = String(_teamSelectedSeasonId);
+  } else if (_teamFilterType === 'playoff') {
+    selectedVal = 'alltime_playoff';
+  } else {
+    selectedVal = 'alltime_regular';
+  }
+
+  const sel = v => v === selectedVal ? 'selected' : '';
+  const allTimeOpts =
+    `<option value="alltime_regular" ${sel('alltime_regular')}>★ All Time – Regular Season</option>` +
+    `<option value="alltime_playoff" ${sel('alltime_playoff')}>★ All Time – Playoffs</option>`;
   const opts = _teamSeasons.map(s => {
-    const selected = s.id === _teamSelectedSeasonId ? 'selected' : '';
-    return `<option value="${s.id}" ${selected}>${s.name}${s.is_active ? ' ★' : ''}</option>`;
+    const v = String(s.id);
+    return `<option value="${v}" ${sel(v)}>${s.name}${s.is_active ? ' ★' : ''}</option>`;
   }).join('');
 
-  container.innerHTML = `<div style="display:flex;align-items:center;gap:0.5rem;">
+  container.innerHTML = `<div class="league-tabs-row"><div class="league-tab-season">
     <label for="team-season-select" style="color:#8b949e;font-size:0.85rem;white-space:nowrap;">Season:</label>
-    <select id="team-season-select" style="${selectStyle}">${opts}</select>
-  </div>`;
+    <select id="team-season-select">${allTimeOpts}${opts}</select>
+  </div></div>`;
 
   document.getElementById('team-season-select').addEventListener('change', function() {
-    _teamSelectedSeasonId = this.value ? Number(this.value) : null;
+    const val = this.value;
+    if (val === 'alltime_regular') {
+      _teamSelectedSeasonId = null;
+      _teamFilterType = 'regular';
+    } else if (val === 'alltime_playoff') {
+      _teamSelectedSeasonId = null;
+      _teamFilterType = 'playoff';
+    } else {
+      _teamSelectedSeasonId = Number(val);
+      _teamFilterType = null;
+    }
     loadTeamPage();
   });
 }
@@ -540,9 +571,16 @@ async function initTeamPage() {
   // Default to the active regular season (if team played there), else first season
   if (_teamSeasons.length > 0) {
     const activeRegular = _teamSeasons.find(s => s.is_active && !s.is_playoff);
-    _teamSelectedSeasonId = activeRegular
-      ? activeRegular.id
-      : _teamSeasons[0].id;
+    if (activeRegular) {
+      _teamSelectedSeasonId = activeRegular.id;
+      _teamFilterType = null;
+    } else {
+      _teamSelectedSeasonId = _teamSeasons[0].id;
+      _teamFilterType = null;
+    }
+  } else {
+    _teamSelectedSeasonId = null;
+    _teamFilterType = 'regular';
   }
 
   loadTeamPage();

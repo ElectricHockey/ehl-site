@@ -398,9 +398,31 @@ function _verifyAdminToken(token) {
   return { userId: p.sub, username: p.u, role: p.r };
 }
 
+function isLocalDevAutoAdminRequest(req) {
+  if (process.env.VERCEL) return false;
+  if (process.env.LOCAL_DEV_AUTO_ADMIN === '0') return false;
+  const host = String(req.hostname || '').toLowerCase();
+  const fwdHost = String(req.headers['x-forwarded-host'] || '').toLowerCase();
+  const h = host || fwdHost;
+  return h === 'localhost' || h === '127.0.0.1' || h === '::1' || h === '[::1]';
+}
+
+function getLocalDevAdminSession(req) {
+  if (!isLocalDevAutoAdminRequest(req)) return null;
+  return { userId: 0, username: 'Local Dev', role: 'owner' };
+}
+
+function isLocalDevAdminSession(session) {
+  return !!session
+    && Number(session.userId) === 0
+    && session.role === 'owner'
+    && session.username === 'Local Dev';
+}
+
 function requireAdmin(req, res, next) {
   const token = req.headers['x-admin-token'];
-  const session = token && _verifyAdminToken(token);
+  let session = token && _verifyAdminToken(token);
+  if (!session) session = getLocalDevAdminSession(req);
   if (!session) return res.status(401).json({ error: 'Admin access required' });
   req.adminSession = session;
   next();
@@ -408,7 +430,8 @@ function requireAdmin(req, res, next) {
 
 function requireOwner(req, res, next) {
   const token = req.headers['x-admin-token'];
-  const session = token && _verifyAdminToken(token);
+  let session = token && _verifyAdminToken(token);
+  if (!session) session = getLocalDevAdminSession(req);
   if (!session || session.role !== 'owner')
     return res.status(403).json({ error: 'Owner access required' });
   req.adminSession = session;
@@ -464,8 +487,20 @@ app.post('/api/auth/logout', async (req, res) => {
 
 app.get('/api/auth/status', async (req, res) => {
   const token = req.headers['x-admin-token'];
-  const session = token && _verifyAdminToken(token);
-  if (!session) return res.json({ loggedIn: false });
+  let session = token && _verifyAdminToken(token);
+  if (!session) {
+    const localDevSession = getLocalDevAdminSession(req);
+    if (!localDevSession) return res.json({ loggedIn: false });
+    return res.json({
+      loggedIn: true,
+      role: localDevSession.role,
+      username: localDevSession.username,
+      token: _signAdminToken(localDevSession.userId, localDevSession.username, localDevSession.role),
+    });
+  }
+  if (isLocalDevAdminSession(session) && isLocalDevAutoAdminRequest(req)) {
+    return res.json({ loggedIn: true, role: session.role, username: session.username });
+  }
   // Re-check database to handle demotion since last token issue
   const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(session.userId);
   if (!user) return res.json({ loggedIn: false });
@@ -1492,9 +1527,26 @@ app.get('/api/teams/:id/stats', async (req, res) => {
   if (!team) return res.status(404).json({ error: 'Team not found' });
 
   const seasonId = req.query.season_id ? Number(req.query.season_id) : null;
-  const sf = seasonId ? 'AND g.season_id = ?' : '';
-  const params = seasonId ? [req.params.id, seasonId] : [req.params.id];
-  const rp = seasonId ? [req.params.id, req.params.id, seasonId] : [req.params.id, req.params.id];
+  const filterType = !seasonId && req.query.filter_type ? req.query.filter_type : null; // 'regular' | 'playoff'
+
+  let sf, params, rp;
+  if (seasonId) {
+    sf = 'AND g.season_id = ?';
+    params = [req.params.id, seasonId];
+    rp = [req.params.id, req.params.id, seasonId];
+  } else if (filterType === 'regular') {
+    sf = "AND g.season_id IN (SELECT id FROM seasons WHERE is_playoff = 0)";
+    params = [req.params.id];
+    rp = [req.params.id, req.params.id];
+  } else if (filterType === 'playoff') {
+    sf = "AND g.season_id IN (SELECT id FROM seasons WHERE is_playoff = 1)";
+    params = [req.params.id];
+    rp = [req.params.id, req.params.id];
+  } else {
+    sf = '';
+    params = [req.params.id];
+    rp = [req.params.id, req.params.id];
+  }
 
   // Fetch rostered players – when a specific season is selected, derive from game stats
   // so historical rosters reflect who actually played that season
@@ -1510,11 +1562,46 @@ app.get('/api/teams/:id/stats', async (req, res) => {
         WHERE gps.team_id = ? AND g.season_id = ? AND g.status IN ('complete','forfeit')
         ORDER BY gps.player_name
       `).all(req.params.id, seasonId)
+    : filterType
+    ? db.prepare(`
+        SELECT DISTINCT ON (gps.player_name)
+          gps.player_name AS name, gps.position,
+          p.id, p.number, p.user_id, u.platform
+        FROM game_player_stats gps
+        JOIN games g ON gps.game_id = g.id
+        LEFT JOIN players p ON p.name = gps.player_name AND p.team_id = gps.team_id
+        LEFT JOIN users u ON p.user_id = u.id
+        WHERE gps.team_id = ? AND g.status IN ('complete','forfeit') ${sf}
+        ORDER BY gps.player_name
+      `).all(req.params.id)
     : db.prepare(`
-        SELECT p.id, p.name, p.position, p.number, p.user_id, u.platform
-        FROM players p LEFT JOIN users u ON p.user_id = u.id
-        WHERE p.team_id = ? AND p.is_rostered = 1 ORDER BY p.name
-      `).all(req.params.id);
+        WITH historical AS (
+          SELECT
+            gps.player_name AS name,
+            MAX(NULLIF(gps.position, '')) AS position
+          FROM game_player_stats gps
+          JOIN games g ON gps.game_id = g.id
+          WHERE gps.team_id = ? AND g.status IN ('complete','forfeit')
+          GROUP BY gps.player_name
+        ),
+        current_roster AS (
+          SELECT p.name, p.position
+          FROM players p
+          WHERE p.team_id = ? AND p.is_rostered = 1
+        ),
+        combined AS (
+          SELECT name, position FROM historical
+          UNION
+          SELECT name, position FROM current_roster
+        )
+        SELECT DISTINCT ON (c.name)
+          p.id, c.name, COALESCE(NULLIF(c.position, ''), p.position) AS position,
+          p.number, p.user_id, u.platform
+        FROM combined c
+        LEFT JOIN players p ON p.name = c.name AND p.team_id = ?
+        LEFT JOIN users u ON p.user_id = u.id
+        ORDER BY c.name
+      `).all(req.params.id, req.params.id, req.params.id);
 
   const [roster, skaterStats, goalieStats, recentGames, staff, record, transactions, upcoming] = await Promise.all([
     rosterPromise,
@@ -1535,7 +1622,7 @@ app.get('/api/teams/:id/stats', async (req, res) => {
         ht.id AS home_team_id, ht.name AS home_team_name, ht.logo_url AS home_logo,
         at.id AS away_team_id, at.name AS away_team_name, at.logo_url AS away_logo
       FROM games g JOIN teams ht ON g.home_team_id = ht.id JOIN teams at ON g.away_team_id = at.id
-      WHERE (g.home_team_id = ? OR g.away_team_id = ?) AND g.status IN ('complete','forfeit') ${seasonId ? 'AND g.season_id = ?' : ''}
+      WHERE (g.home_team_id = ? OR g.away_team_id = ?) AND g.status IN ('complete','forfeit') ${sf}
       ORDER BY g.date DESC LIMIT 10
     `).all(...rp),
     db.prepare(`
@@ -1550,7 +1637,7 @@ app.get('/api/teams/:id/stats', async (req, res) => {
         SUM(CASE WHEN (home_team_id=@id AND home_score<away_score AND is_overtime=1) OR (away_team_id=@id AND away_score<home_score AND is_overtime=1) THEN 1 ELSE 0 END) AS otl
       FROM games
       WHERE (home_team_id=@id OR away_team_id=@id) AND status IN ('complete','forfeit')
-      ${seasonId ? 'AND season_id=@sid' : ''}
+      ${seasonId ? 'AND season_id=@sid' : filterType === 'regular' ? "AND season_id IN (SELECT id FROM seasons WHERE is_playoff = 0)" : filterType === 'playoff' ? "AND season_id IN (SELECT id FROM seasons WHERE is_playoff = 1)" : ''}
     `).get(seasonId ? { id: req.params.id, sid: seasonId } : { id: req.params.id }),
     db.prepare(`
       SELECT so.id, so.created_at, u.username AS player_name,
@@ -3097,9 +3184,13 @@ app.get('/api/seasons/:id/teams', requireAdmin, async (req, res) => {
       SELECT home_team_id FROM games WHERE season_id = ?
       UNION
       SELECT away_team_id FROM games WHERE season_id = ?
+      UNION
+      SELECT team_id FROM season_rosters WHERE season_id = ? AND team_id IS NOT NULL
+      UNION
+      SELECT team_id FROM season_team_conf WHERE season_id = ?
     )
     ORDER BY t.name
-  `).all(req.params.id, req.params.id);
+  `).all(req.params.id, req.params.id, req.params.id, req.params.id);
   res.json(teams);
 });
 
