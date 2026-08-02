@@ -45,7 +45,7 @@ const pool = new Pool({
 
 // Bump this whenever initSchema or seed data changes. The marker prevents every
 // serverless cold start from replaying dozens of already-applied DDL statements.
-const SCHEMA_VERSION = '2026-08-01.1';
+const SCHEMA_VERSION = '2026-08-01.2';
 const SCHEMA_LOCK_ID = 4540492; // "EHL" as a stable PostgreSQL advisory-lock key
 
 // Critical: handle idle connection errors so they don't crash the process.
@@ -443,6 +443,23 @@ async function initSchema() {
       team_id   INTEGER REFERENCES teams(id) ON DELETE SET NULL,
       UNIQUE(season_id, player_id)
     )`,
+    `CREATE TABLE IF NOT EXISTS award_defs (
+      key         TEXT PRIMARY KEY,
+      name        TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      image_url   TEXT,
+      is_auto     INTEGER DEFAULT 0,
+      sort_order  INTEGER DEFAULT 0
+    )`,
+    `CREATE TABLE IF NOT EXISTS season_awards (
+      id          SERIAL PRIMARY KEY,
+      season_id   INTEGER NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+      award_key   TEXT NOT NULL,
+      player_name TEXT NOT NULL,
+      notes       TEXT,
+      created_at  TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(season_id, award_key, player_name)
+    )`,
   ];
 
   for (const sql of tables) {
@@ -479,6 +496,8 @@ async function initSchema() {
     'CREATE INDEX IF NOT EXISTS idx_sps_player_season     ON season_player_stats(player_name, season_id)',
     'CREATE INDEX IF NOT EXISTS idx_seasons_league_order  ON seasons(league_type, sort_order, id)',
     'CREATE INDEX IF NOT EXISTS idx_transactions_created ON transactions(created_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_season_awards_season  ON season_awards(season_id)',
+    'CREATE INDEX IF NOT EXISTS idx_season_awards_player  ON season_awards(player_name)',
   ];
 
   for (const sql of indexes) {
@@ -620,6 +639,36 @@ async function initSchema() {
   } catch (err) {
     if (!err.message || !err.message.includes('already exists')) {
       console.warn('[db] Migration warning (season_rosters role):', err.message);
+    }
+  }
+
+  // Seed default NHL award definitions (INSERT OR IGNORE so admin edits are preserved)
+  const DEFAULT_AWARDS = [
+    { key: 'hart',            name: 'Hart Trophy',                   description: 'Most Valuable Player',                              is_auto: 0, sort_order: 1 },
+    { key: 'art_ross',        name: 'Art Ross Trophy',               description: 'Regular Season Points Leader',                      is_auto: 1, sort_order: 2 },
+    { key: 'rocket_richard',  name: 'Maurice Richard Trophy',        description: 'Regular Season Goals Leader',                       is_auto: 1, sort_order: 3 },
+    { key: 'vezina',          name: 'Vezina Trophy',                 description: 'Best Goaltender',                                   is_auto: 0, sort_order: 4 },
+    { key: 'calder',          name: 'Calder Memorial Trophy',        description: 'Best Rookie',                                       is_auto: 0, sort_order: 5 },
+    { key: 'norris',          name: 'James Norris Trophy',           description: 'Best Defenseman',                                   is_auto: 0, sort_order: 6 },
+    { key: 'selke',           name: 'Frank J. Selke Trophy',         description: 'Best Defensive Forward',                            is_auto: 0, sort_order: 7 },
+    { key: 'lady_byng',       name: 'Lady Byng Memorial Trophy',     description: 'Most Gentlemanly Player',                           is_auto: 0, sort_order: 8 },
+    { key: 'conn_smythe',     name: 'Conn Smythe Trophy',            description: 'Playoff MVP',                                       is_auto: 0, sort_order: 9 },
+    { key: 'jennings',        name: 'William M. Jennings Trophy',    description: 'Goaltender(s) on team allowing fewest goals',       is_auto: 1, sort_order: 10 },
+    { key: 'masterton',       name: 'Bill Masterton Memorial Trophy', description: 'Perseverance and dedication to hockey',            is_auto: 0, sort_order: 11 },
+    { key: 'jack_adams',      name: 'Jack Adams Award',              description: 'Best Coach',                                        is_auto: 0, sort_order: 12 },
+    { key: 'champion',        name: 'Champion',                      description: 'Playoff Champion — eligible roster players',        is_auto: 1, sort_order: 13 },
+    { key: 'presidents_trophy', name: "President's Trophy",          description: 'Best Regular Season Record — eligible roster players', is_auto: 1, sort_order: 14 },
+  ];
+  for (const a of DEFAULT_AWARDS) {
+    try {
+      await pool.query(
+        `INSERT INTO award_defs (key, name, description, is_auto, sort_order)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (key) DO NOTHING`,
+        [a.key, a.name, a.description, a.is_auto, a.sort_order]
+      );
+    } catch (err) {
+      console.warn(`[db] Migration warning (award_defs seed ${a.key}):`, err.message);
     }
   }
 

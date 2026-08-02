@@ -23,6 +23,9 @@ function setAdminSeason(id) {
   loadTeams();
   loadGames();
   loadRoster();
+  // Reload awards tab if it's currently visible
+  const awardsTab = document.getElementById('admin-tab-awards');
+  if (awardsTab && awardsTab.classList.contains('active')) loadAwardsTab();
 }
 
 function _syncLeagueFormDefaults(league) {
@@ -197,6 +200,7 @@ function showAdminTab(name) {
   const sec = document.getElementById(`admin-tab-${name}`);
   if (sec) sec.classList.add('active');
   if (name === 'records-settings') loadRecordsSettings();
+  if (name === 'awards') loadAwardsTab();
   _refreshAdminGlobalSearchIfActive();
 }
 
@@ -2273,4 +2277,406 @@ async function declineNameChange(id) {
   const res = await fetch(`${API}/admin/name-change-requests/${id}/decline`, { method: 'POST', headers: adminHeaders() });
   if (res.ok) { showStatus('Name change declined.'); await loadNameChangeRequests(); }
   else { const e = await res.json().catch(() => ({})); alert(e.error || 'Failed to decline'); }
+}
+
+// --------------------------------------------------------------------------
+// Awards Tab
+// --------------------------------------------------------------------------
+
+let awardsTabData = {
+  awardDefs: [],       // all award_defs rows
+  seasonWinners: [],   // season_awards rows for current season
+  allPlayers: [],      // all player names for search
+  calderEligible: [],  // Calder-eligible players
+  currentAwardKey: null,
+  currentAwardName: '',
+  currentSeasonId: null,
+  settings: { champ_min_gp: 6, pres_min_gp: 6, calder_max_prior_gp: 6 },
+  selectedPlayerName: null,
+};
+
+async function loadAwardsTab() {
+  const seasonId = adminSeasonFilter;
+  awardsTabData.currentSeasonId = seasonId;
+
+  const noSeason = document.getElementById('awards-no-season');
+  const seasonBar = document.getElementById('awards-season-bar');
+  const autoBar = document.getElementById('awards-auto-bar');
+  const grid = document.getElementById('awards-grid');
+  const settingsSection = document.getElementById('awards-settings-section');
+
+  if (!seasonId) {
+    if (noSeason) noSeason.style.display = '';
+    if (seasonBar) seasonBar.style.display = 'none';
+    if (autoBar) autoBar.style.display = 'none';
+    if (grid) { grid.style.display = 'none'; grid.innerHTML = ''; }
+    if (settingsSection) settingsSection.style.display = 'none';
+    return;
+  }
+
+  if (noSeason) noSeason.style.display = 'none';
+  if (seasonBar) seasonBar.style.display = '';
+  if (autoBar) autoBar.style.display = '';
+  if (grid) grid.style.display = 'grid';
+  if (settingsSection) settingsSection.style.display = '';
+
+  // Find season name
+  const seasonSel = document.getElementById('admin-season-filter');
+  const seasonName = seasonSel ? (seasonSel.options[seasonSel.selectedIndex]?.text || `Season ${seasonId}`) : `Season ${seasonId}`;
+  const seasonLabel = document.getElementById('awards-season-label');
+  if (seasonLabel) seasonLabel.textContent = `Showing awards for: ${seasonName}`;
+
+  try {
+    const [defsRes, winnersRes, settingsRes] = await Promise.all([
+      fetch(`${API}/awards`, { headers: adminHeaders() }),
+      fetch(`${API}/awards/season/${seasonId}`, { headers: adminHeaders() }),
+      fetch(`${API}/admin/awards/settings`, { headers: adminHeaders() }),
+    ]);
+    awardsTabData.awardDefs = defsRes.ok ? await defsRes.json() : [];
+    awardsTabData.seasonWinners = winnersRes.ok ? await winnersRes.json() : [];
+    awardsTabData.settings = settingsRes.ok ? await settingsRes.json() : { champ_min_gp: 6, pres_min_gp: 6, calder_max_prior_gp: 6 };
+
+    // Populate settings form
+    const champEl = document.getElementById('award-champ-min-gp');
+    const presEl = document.getElementById('award-pres-min-gp');
+    const calderEl = document.getElementById('award-calder-max-gp');
+    if (champEl) champEl.value = awardsTabData.settings.champ_min_gp;
+    if (presEl) presEl.value = awardsTabData.settings.pres_min_gp;
+    if (calderEl) calderEl.value = awardsTabData.settings.calder_max_prior_gp;
+
+    renderAwardsGrid();
+  } catch (e) {
+    if (grid) grid.innerHTML = `<p style="color:#f85149;">Failed to load awards: ${e.message}</p>`;
+  }
+}
+
+function renderAwardsGrid() {
+  const grid = document.getElementById('awards-grid');
+  if (!grid) return;
+
+  const defs = awardsTabData.awardDefs;
+  const winners = awardsTabData.seasonWinners;
+
+  // Group winners by award key
+  const winnersByKey = {};
+  for (const w of winners) {
+    if (!winnersByKey[w.award_key]) winnersByKey[w.award_key] = [];
+    winnersByKey[w.award_key].push(w);
+  }
+
+  grid.innerHTML = defs.map(def => {
+    const keyWinners = winnersByKey[def.key] || [];
+    const winnerHtml = keyWinners.length > 0
+      ? keyWinners.map(w => `
+          <span class="award-card-winner-name">${escAttr(w.player_name)}</span>
+          ${w.notes ? `<span style="color:#8b949e;font-size:0.78rem;"> (${escAttr(w.notes)})</span>` : ''}
+        `).join('<br>')
+      : '<span style="color:#484f58;font-style:italic;font-size:0.82rem;">Not yet awarded</span>';
+
+    const imgHtml = def.image_url
+      ? `<img src="${escAttr(def.image_url)}" class="award-card-img" alt="" />`
+      : `<div class="award-card-img-ph">??</div>`;
+
+    const autoBadge = def.is_auto
+      ? `<span class="award-card-auto">Auto</span>`
+      : '';
+
+    return `<div class="award-card" id="award-card-${escAttr(def.key)}">
+      <div class="award-card-header">
+        ${imgHtml}
+        <div>
+          <div class="award-card-name">${escAttr(def.name)} ${autoBadge}</div>
+          <div class="award-card-desc">${escAttr(def.description)}</div>
+        </div>
+      </div>
+      <div class="award-card-winners">${winnerHtml}</div>
+      <button class="award-card-edit btn-secondary" onclick="openAwardModal('${escAttr(def.key)}')">Edit / Set Winner</button>
+    </div>`;
+  }).join('');
+}
+
+async function openAwardModal(awardKey) {
+  const def = awardsTabData.awardDefs.find(d => d.key === awardKey);
+  if (!def) return;
+  awardsTabData.currentAwardKey = awardKey;
+  awardsTabData.currentAwardName = def.name;
+  awardsTabData.selectedPlayerName = null;
+
+  const overlay = document.getElementById('award-winner-overlay');
+  const titleEl = document.getElementById('award-modal-title');
+  const descEl = document.getElementById('award-modal-desc');
+  const editNameEl = document.getElementById('award-edit-name');
+  const calderNote = document.getElementById('award-calder-note');
+  const calderThreshold = document.getElementById('award-calder-threshold');
+  const setLabel = document.getElementById('award-set-label');
+  const searchInput = document.getElementById('award-player-search');
+
+  if (titleEl) titleEl.textContent = def.name;
+  if (descEl) descEl.textContent = def.description;
+  if (editNameEl) editNameEl.value = def.name;
+  const previewImg = document.getElementById('award-edit-preview');
+  if (previewImg) {
+    previewImg.src = def.image_url || '';
+    previewImg.style.display = def.image_url ? 'block' : 'none';
+  }
+
+  // Hide/show Calder note
+  const isCalder = awardKey === 'calder';
+  if (calderNote) calderNote.style.display = isCalder ? '' : 'none';
+  if (calderThreshold) calderThreshold.textContent = awardsTabData.settings.calder_max_prior_gp;
+
+  // Fetch Calder eligible players if needed
+  if (isCalder && awardsTabData.currentSeasonId) {
+    try {
+      const r = await fetch(`${API}/admin/awards/season/${awardsTabData.currentSeasonId}/calder-eligible`, { headers: adminHeaders() });
+      if (r.ok) {
+        const data = await r.json();
+        awardsTabData.calderEligible = data.eligible.map(e => e.player_name);
+      }
+    } catch { awardsTabData.calderEligible = []; }
+  } else {
+    awardsTabData.calderEligible = null; // null = all players
+  }
+
+  // Fetch player list for this season
+  try {
+    const r = await fetch(`${API}/players?type=${adminLeagueFilter}`, { headers: adminHeaders() });
+    const allPlayers = r.ok ? await r.json() : [];
+    awardsTabData.allPlayers = allPlayers.map(p => p.name).filter(Boolean);
+    // Also include players who appeared in this season's stats (may not be in current roster)
+    if (awardsTabData.currentSeasonId) {
+      try {
+        const gr = await fetch(`${API}/stats/leaders?season_id=${awardsTabData.currentSeasonId}`, { headers: adminHeaders() });
+        if (gr.ok) {
+          const ld = await gr.json();
+          const names = new Set(awardsTabData.allPlayers);
+          (ld.skaters || []).forEach(s => names.add(s.name));
+          (ld.goalies || []).forEach(s => names.add(s.name));
+          awardsTabData.allPlayers = [...names].filter(Boolean).sort((a,b) => a.localeCompare(b));
+        }
+      } catch { /* ok */ }
+    }
+  } catch { awardsTabData.allPlayers = []; }
+
+  // Render current winners
+  renderAwardModalWinners();
+
+  // Reset search
+  if (searchInput) { searchInput.value = ''; }
+  const listEl = document.getElementById('award-player-list');
+  if (listEl) listEl.style.display = 'none';
+
+  const msgEl = document.getElementById('award-winner-msg');
+  if (msgEl) { msgEl.style.display = 'none'; msgEl.textContent = ''; }
+
+  if (overlay) overlay.style.display = 'flex';
+}
+
+function renderAwardModalWinners() {
+  const awardKey = awardsTabData.currentAwardKey;
+  const winners = awardsTabData.seasonWinners.filter(w => w.award_key === awardKey);
+  const container = document.getElementById('award-current-winners');
+  if (!container) return;
+
+  if (winners.length === 0) {
+    container.innerHTML = '<span style="color:#484f58;font-style:italic;font-size:0.85rem;">None yet.</span>';
+    return;
+  }
+  container.innerHTML = winners.map(w => `
+    <div style="display:flex;align-items:center;gap:0.5rem;padding:0.25rem 0;border-bottom:1px solid #21262d;">
+      <span style="flex:1;font-weight:600;color:#3fb950;">${escAttr(w.player_name)}</span>
+      ${w.notes ? `<span style="color:#8b949e;font-size:0.78rem;">${escAttr(w.notes)}</span>` : ''}
+      <button onclick="removeAwardWinner('${escAttr(w.player_name)}')"
+        style="background:#4b1f1f;color:#f85149;border:1px solid #f85149;border-radius:4px;padding:0.1rem 0.4rem;font-size:0.76rem;cursor:pointer;">?</button>
+    </div>
+  `).join('');
+}
+
+function filterAwardPlayerSearch(query) {
+  const listEl = document.getElementById('award-player-list');
+  if (!listEl) return;
+  const q = query.trim().toLowerCase();
+  if (!q) { listEl.style.display = 'none'; return; }
+
+  let pool = awardsTabData.allPlayers;
+  if (awardsTabData.calderEligible !== null) {
+    pool = awardsTabData.calderEligible;
+  }
+
+  const matches = pool.filter(n => n.toLowerCase().includes(q)).slice(0, 15);
+  if (matches.length === 0) { listEl.style.display = 'none'; return; }
+
+  listEl.innerHTML = matches.map(n => `
+    <div onclick="selectAwardPlayer('${escAttr(n)}')"
+      style="padding:0.35rem 0.75rem;cursor:pointer;font-size:0.88rem;color:#e6edf3;border-bottom:1px solid #30363d;"
+      onmouseenter="this.style.background='#21262d'" onmouseleave="this.style.background=''">
+      ${escAttr(n)}
+    </div>
+  `).join('');
+  listEl.style.display = 'block';
+}
+
+function selectAwardPlayer(name) {
+  awardsTabData.selectedPlayerName = name;
+  const searchInput = document.getElementById('award-player-search');
+  if (searchInput) searchInput.value = name;
+  const listEl = document.getElementById('award-player-list');
+  if (listEl) listEl.style.display = 'none';
+}
+
+async function addAwardWinner() {
+  const playerName = awardsTabData.selectedPlayerName
+    || document.getElementById('award-player-search')?.value?.trim();
+  if (!playerName) { _awardWinnerMsg('Enter a player name', true); return; }
+  if (!awardsTabData.currentAwardKey || !awardsTabData.currentSeasonId) return;
+
+  // For Calder, verify eligibility
+  if (awardsTabData.currentAwardKey === 'calder' && awardsTabData.calderEligible !== null) {
+    if (!awardsTabData.calderEligible.includes(playerName)) {
+      _awardWinnerMsg(`${playerName} is not eligible for the Calder (too many prior games)`, true);
+      return;
+    }
+  }
+
+  const res = await fetch(`${API}/admin/awards/season/${awardsTabData.currentSeasonId}`, {
+    method: 'POST',
+    headers: { ...adminJsonHeaders() },
+    body: JSON.stringify({ award_key: awardsTabData.currentAwardKey, player_name: playerName }),
+  });
+  if (!res.ok) { const e = await res.json().catch(()=>({})); _awardWinnerMsg(e.error || 'Failed to add winner', true); return; }
+
+  // Refresh local winners
+  await _refreshSeasonWinners();
+  renderAwardModalWinners();
+  renderAwardsGrid();
+  awardsTabData.selectedPlayerName = null;
+  const searchInput = document.getElementById('award-player-search');
+  if (searchInput) searchInput.value = '';
+  _awardWinnerMsg('Winner added!', false);
+}
+
+async function removeAwardWinner(playerName) {
+  if (!confirm(`Remove ${playerName} from this award?`)) return;
+  const encoded = encodeURIComponent(playerName);
+  const res = await fetch(`${API}/admin/awards/season/${awardsTabData.currentSeasonId}/${awardsTabData.currentAwardKey}/${encoded}`, {
+    method: 'DELETE', headers: adminHeaders(),
+  });
+  if (!res.ok) { const e = await res.json().catch(()=>({})); _awardWinnerMsg(e.error || 'Failed to remove', true); return; }
+  await _refreshSeasonWinners();
+  renderAwardModalWinners();
+  renderAwardsGrid();
+}
+
+async function _refreshSeasonWinners() {
+  const r = await fetch(`${API}/awards/season/${awardsTabData.currentSeasonId}`, { headers: adminHeaders() });
+  awardsTabData.seasonWinners = r.ok ? await r.json() : [];
+}
+
+function _awardWinnerMsg(text, isError) {
+  const el = document.getElementById('award-winner-msg');
+  if (!el) return;
+  el.textContent = text;
+  el.style.color = isError ? '#f85149' : '#3fb950';
+  el.style.display = text ? '' : 'none';
+}
+
+function closeAwardModal() {
+  const overlay = document.getElementById('award-winner-overlay');
+  if (overlay) overlay.style.display = 'none';
+}
+
+async function saveAwardDef() {
+  const awardKey = awardsTabData.currentAwardKey;
+  if (!awardKey) return;
+  const name = document.getElementById('award-edit-name')?.value?.trim();
+  const imageFile = document.getElementById('award-edit-image')?.files?.[0];
+  const msgEl = document.getElementById('award-edit-msg');
+
+  const form = new FormData();
+  if (name) form.append('name', name);
+  if (imageFile) form.append('image', imageFile);
+
+  const res = await fetch(`${API}/admin/awards/${awardKey}`, {
+    method: 'PATCH',
+    headers: adminHeaders(),
+    body: form,
+  });
+  if (!res.ok) {
+    const e = await res.json().catch(()=>({}));
+    if (msgEl) { msgEl.textContent = e.error || 'Failed to save'; msgEl.style.color = '#f85149'; }
+    return;
+  }
+  if (msgEl) { msgEl.textContent = 'Saved!'; msgEl.style.color = '#3fb950'; }
+
+  // Refresh defs
+  const defsRes = await fetch(`${API}/awards`, { headers: adminHeaders() });
+  awardsTabData.awardDefs = defsRes.ok ? await defsRes.json() : awardsTabData.awardDefs;
+
+  // Update modal title
+  const newDef = awardsTabData.awardDefs.find(d => d.key === awardKey);
+  if (newDef) {
+    const titleEl = document.getElementById('award-modal-title');
+    if (titleEl) titleEl.textContent = newDef.name;
+    awardsTabData.currentAwardName = newDef.name;
+  }
+
+  renderAwardsGrid();
+}
+
+function previewAwardImage(input) {
+  const img = document.getElementById('award-edit-preview');
+  if (!img) return;
+  if (input.files && input.files[0]) {
+    if (img._objectUrl) URL.revokeObjectURL(img._objectUrl);
+    img._objectUrl = URL.createObjectURL(input.files[0]);
+    img.src = img._objectUrl;
+    img.style.display = 'block';
+  }
+}
+
+async function computeAllAutoAwards() {
+  if (!awardsTabData.currentSeasonId) { alert('Select a season first'); return; }
+  const msgEl = document.getElementById('awards-compute-msg');
+  if (msgEl) { msgEl.style.display = ''; msgEl.textContent = 'Computing�'; msgEl.style.color = '#8b949e'; }
+
+  const res = await fetch(`${API}/admin/awards/season/${awardsTabData.currentSeasonId}/auto-compute`, {
+    method: 'POST',
+    headers: adminJsonHeaders(),
+    body: JSON.stringify({}),
+  });
+
+  if (!res.ok) {
+    if (msgEl) { msgEl.textContent = 'Failed to compute awards'; msgEl.style.color = '#f85149'; }
+    return;
+  }
+  const data = await res.json();
+
+  let summary = data.computed.map(c => `? ${c.award}: ${c.player}`).join(', ') || 'No auto awards computed (check game data)';
+  if (data.errors && data.errors.length > 0) {
+    summary += ' | Errors: ' + data.errors.map(e => `${e.award}: ${e.error}`).join(', ');
+  }
+  if (msgEl) { msgEl.textContent = summary; msgEl.style.color = data.errors?.length ? '#e3b341' : '#3fb950'; }
+
+  await _refreshSeasonWinners();
+  renderAwardsGrid();
+}
+
+async function saveAwardSettings() {
+  const champMinGP = document.getElementById('award-champ-min-gp')?.value;
+  const presMinGP = document.getElementById('award-pres-min-gp')?.value;
+  const calderMaxGP = document.getElementById('award-calder-max-gp')?.value;
+  const msgEl = document.getElementById('award-settings-msg');
+
+  const res = await fetch(`${API}/admin/awards/settings`, {
+    method: 'POST',
+    headers: adminJsonHeaders(),
+    body: JSON.stringify({ champ_min_gp: champMinGP, pres_min_gp: presMinGP, calder_max_prior_gp: calderMaxGP }),
+  });
+
+  if (!res.ok) {
+    if (msgEl) { msgEl.textContent = 'Failed to save settings'; msgEl.style.color = '#f85149'; }
+    return;
+  }
+  awardsTabData.settings = { champ_min_gp: Number(champMinGP), pres_min_gp: Number(presMinGP), calder_max_prior_gp: Number(calderMaxGP) };
+  if (msgEl) { msgEl.textContent = 'Settings saved!'; msgEl.style.color = '#3fb950'; }
 }

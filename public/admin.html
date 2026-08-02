@@ -34,6 +34,18 @@
     .admin-league-btn.active { border-color:#58a6ff;background:#1c2a3a;color:#58a6ff; }
     .admin-league-btn:hover:not(.active) { border-color:#8b949e;color:#c9d1d9; }
     .admin-league-btn-logo { width:20px;height:20px;object-fit:contain;border-radius:3px; }
+    /* Awards tab */
+    .award-card { background:#161b22;border:1px solid #30363d;border-radius:8px;padding:1rem;display:flex;flex-direction:column;gap:0.5rem;transition:border-color 0.15s; }
+    .award-card:hover { border-color:#58a6ff; }
+    .award-card-header { display:flex;align-items:center;gap:0.75rem; }
+    .award-card-img { width:44px;height:44px;object-fit:contain;border-radius:6px;background:#21262d;flex-shrink:0; }
+    .award-card-img-ph { width:44px;height:44px;flex-shrink:0;background:#21262d;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:1.4rem; }
+    .award-card-name { font-weight:700;font-size:0.92rem;color:#e6edf3;line-height:1.2; }
+    .award-card-desc { font-size:0.75rem;color:#8b949e; }
+    .award-card-auto { font-size:0.68rem;background:#1c2a3a;color:#58a6ff;border:1px solid #1f6feb;border-radius:10px;padding:0.05rem 0.4rem;font-weight:600; }
+    .award-card-winners { font-size:0.82rem;color:#c9d1d9;min-height:1.5rem; }
+    .award-card-winner-name { color:#3fb950;font-weight:600; }
+    .award-card-edit { align-self:flex-end;font-size:0.78rem;padding:0.2rem 0.6rem; }
   </style>
 </head>
 <body>
@@ -122,6 +134,7 @@
         <button class="admin-tab-btn" data-tab="import" data-owner-only onclick="showAdminTab('import')">📥 Import</button>
         <button class="admin-tab-btn" data-tab="records-settings" data-owner-only onclick="showAdminTab('records-settings')">🏅 Records</button>
         <button class="admin-tab-btn" data-tab="name-changes" data-owner-only onclick="showAdminTab('name-changes')">✏️ Name Changes</button>
+        <button class="admin-tab-btn" data-tab="awards" data-owner-only onclick="showAdminTab('awards')">🏆 Awards</button>
       </div>
 
       <div id="status-msg" style="display:none;padding:0.5rem 1rem;border-radius:6px;margin-bottom:1rem;font-size:0.88rem;"></div>
@@ -631,6 +644,111 @@
         </p>
         <div id="name-change-list">
           <p style="color:#8b949e;font-size:0.88rem;">Loading...</p>
+        </div>
+      </div>
+
+  <!-- ── Awards Tab ───────────────────────────────────────────────── -->
+      <div id="admin-tab-awards" class="admin-section">
+        <h2>Awards</h2>
+        <p style="color:#8b949e;font-size:0.9rem;margin-bottom:1.25rem;">
+          Manage award winners for the selected season. Auto-computed awards (Art Ross, Rocket Richard, Jennings, Champion, President's Trophy) can be computed automatically from game data.
+        </p>
+
+        <!-- Season info bar -->
+        <div id="awards-season-bar" style="display:none;background:#1c2a3a;border:1px solid #1f6feb;border-radius:8px;padding:0.6rem 1rem;margin-bottom:1.25rem;font-size:0.88rem;color:#58a6ff;">
+          <span id="awards-season-label">No season selected — select a season from the filter above.</span>
+        </div>
+        <div id="awards-no-season" style="color:#8b949e;margin-bottom:1rem;font-size:0.9rem;">Select a season from the filter above to manage awards.</div>
+
+        <!-- Auto-compute bar -->
+        <div id="awards-auto-bar" style="display:none;margin-bottom:1.25rem;">
+          <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;">
+            <button onclick="computeAllAutoAwards()" style="background:#1f4b2f;border-color:#238636;color:#3fb950;">⚡ Auto-Compute Stats Awards</button>
+            <span style="color:#8b949e;font-size:0.82rem;">Computes: Art Ross, Rocket Richard, Jennings, Champion, President's Trophy</span>
+          </div>
+          <div id="awards-compute-msg" style="font-size:0.82rem;margin-top:0.5rem;display:none;"></div>
+        </div>
+
+        <!-- Award cards grid -->
+        <div id="awards-grid" style="display:none;display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:1rem;margin-bottom:2rem;"></div>
+
+        <!-- Award Settings -->
+        <div id="awards-settings-section" style="display:none;margin-top:1.5rem;border-top:1px solid #30363d;padding-top:1.25rem;">
+          <h3 style="margin-bottom:0.75rem;">⚙️ Award Settings</h3>
+          <p style="color:#8b949e;font-size:0.85rem;margin-bottom:1rem;">Configure game minimums and eligibility thresholds.</p>
+          <div style="display:flex;gap:1.5rem;flex-wrap:wrap;margin-bottom:1rem;">
+            <div class="form-group" style="flex-direction:column;margin-bottom:0;">
+              <label for="award-champ-min-gp">Champion — Min Games Played</label>
+              <input type="number" id="award-champ-min-gp" min="0" max="99" value="6" style="width:80px;" />
+              <span style="color:#8b949e;font-size:0.78rem;margin-top:0.2rem;">Regular season + playoffs combined</span>
+            </div>
+            <div class="form-group" style="flex-direction:column;margin-bottom:0;">
+              <label for="award-pres-min-gp">President's Trophy — Min Games Played</label>
+              <input type="number" id="award-pres-min-gp" min="0" max="99" value="6" style="width:80px;" />
+              <span style="color:#8b949e;font-size:0.78rem;margin-top:0.2rem;">Regular season only</span>
+            </div>
+            <div class="form-group" style="flex-direction:column;margin-bottom:0;">
+              <label for="award-calder-max-gp">Calder — Max Prior GP (all-time in league)</label>
+              <input type="number" id="award-calder-max-gp" min="0" max="99" value="6" style="width:80px;" />
+              <span style="color:#8b949e;font-size:0.78rem;margin-top:0.2rem;">Rookies must have played fewer than this many games before the season</span>
+            </div>
+          </div>
+          <button onclick="saveAwardSettings()">Save Award Settings</button>
+          <span id="award-settings-msg" style="margin-left:0.75rem;font-size:0.85rem;"></span>
+        </div>
+      </div>
+
+      <!-- ── Award Winner Modal ──────────────────────────────────────────── -->
+      <div id="award-winner-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:9999;align-items:center;justify-content:center;">
+        <div style="background:#161b22;border:1px solid #30363d;border-radius:10px;padding:1.5rem 2rem;min-width:340px;max-width:480px;width:90%;max-height:80vh;overflow-y:auto;">
+          <h3 id="award-modal-title" style="margin:0 0 0.35rem;"></h3>
+          <p id="award-modal-desc" style="color:#8b949e;font-size:0.83rem;margin:0 0 1rem;"></p>
+
+          <!-- Edit award name/image section -->
+          <details style="margin-bottom:1rem;">
+            <summary style="cursor:pointer;color:#58a6ff;font-size:0.85rem;margin-bottom:0.5rem;">✏️ Edit Award Name &amp; Image</summary>
+            <div style="margin-top:0.6rem;display:flex;flex-direction:column;gap:0.5rem;">
+              <div class="form-group" style="flex-direction:column;margin-bottom:0;">
+                <label style="font-size:0.82rem;">Award Name</label>
+                <input type="text" id="award-edit-name" style="font-size:0.88rem;" />
+              </div>
+              <div class="form-group" style="flex-direction:column;margin-bottom:0;">
+                <label style="font-size:0.82rem;">Award Image</label>
+                <input type="file" id="award-edit-image" accept="image/*" onchange="previewAwardImage(this)" style="color:#c9d1d9;font-size:0.82rem;" />
+                <img id="award-edit-preview" style="max-height:60px;max-width:120px;object-fit:contain;border-radius:4px;background:#21262d;margin-top:0.3rem;display:none;" alt="preview" />
+              </div>
+              <button onclick="saveAwardDef()" style="align-self:flex-start;padding:0.3rem 0.8rem;font-size:0.82rem;">Save Award Info</button>
+              <span id="award-edit-msg" style="font-size:0.82rem;"></span>
+            </div>
+          </details>
+
+          <!-- Current winners -->
+          <div style="margin-bottom:1rem;">
+            <div style="font-size:0.82rem;color:#8b949e;margin-bottom:0.4rem;">Current Winner(s)</div>
+            <div id="award-current-winners" style="min-height:2rem;"></div>
+          </div>
+
+          <!-- Set new winner -->
+          <div>
+            <div style="font-size:0.82rem;color:#8b949e;margin-bottom:0.4rem;" id="award-set-label">Set Winner</div>
+            <div id="award-calder-note" style="display:none;background:#2d1b00;border:1px solid #9e6a03;border-radius:6px;padding:0.4rem 0.7rem;font-size:0.8rem;color:#e3b341;margin-bottom:0.6rem;">
+              Only players with fewer than <span id="award-calder-threshold"></span> career games in this league (before this season) are shown below.
+            </div>
+            <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:flex-end;">
+              <div style="flex:1;min-width:180px;">
+                <input type="text" id="award-player-search" placeholder="Search player…"
+                  oninput="filterAwardPlayerSearch(this.value)"
+                  style="width:100%;background:#21262d;border:1px solid #30363d;border-radius:6px;color:#e6edf3;padding:0.4rem 0.6rem;font-size:0.88rem;" />
+                <div id="award-player-list" style="max-height:160px;overflow-y:auto;border:1px solid #30363d;border-radius:0 0 6px 6px;background:#21262d;margin-top:-1px;display:none;"></div>
+              </div>
+              <button onclick="addAwardWinner()" style="white-space:nowrap;">Add Winner</button>
+            </div>
+          </div>
+
+          <div id="award-winner-msg" style="color:#f85149;font-size:0.83rem;margin-top:0.5rem;display:none;"></div>
+          <div style="display:flex;gap:0.5rem;margin-top:1rem;">
+            <button class="btn-secondary" onclick="closeAwardModal()">Close</button>
+          </div>
         </div>
       </div>
 
