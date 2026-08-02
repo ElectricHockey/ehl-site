@@ -34,23 +34,32 @@
     .tab-section { display: none; }
     .tab-section.active { display: block; }
 
+    /* Use separate borders so sticky table cells layer correctly while scrolling */
+    #skaters-table, #goalies-table {
+      border-collapse: separate;
+      border-spacing: 0;
+    }
+
     /* Sticky rank (#) column */
     #skaters-table th:nth-child(1), #skaters-table td:nth-child(1),
     #goalies-table th:nth-child(1), #goalies-table td:nth-child(1) {
-      position: sticky;
+      position: sticky !important;
       left: 0;
-      z-index: 2;
+      z-index: 4;
       width: 2.5rem;
       min-width: 2.5rem;
       max-width: 2.5rem;
+      box-shadow: none;
     }
     /* Sticky player name column */
     #skaters-table th:nth-child(2), #skaters-table td:nth-child(2),
     #goalies-table th:nth-child(2), #goalies-table td:nth-child(2) {
-      position: sticky;
+      position: sticky !important;
       left: 2.5rem;
-      z-index: 2;
-      box-shadow: 3px 0 5px rgba(0,0,0,0.45);
+      z-index: 5;
+      min-width: 180px;
+      white-space: nowrap;
+      box-shadow: none;
     }
     /* thead sticky backgrounds */
     #skaters-table thead th:nth-child(-n+2),
@@ -74,19 +83,7 @@
       }
     }
 
-    @media (max-width: 560px) {
-      #skaters-table th:nth-child(2), #skaters-table td:nth-child(2),
-      #goalies-table th:nth-child(2), #goalies-table td:nth-child(2) {
-        position: static;
-        box-shadow: none;
-      }
-      #skaters-table thead th:nth-child(2),
-      #goalies-table thead th:nth-child(2),
-      #skaters-table tbody td:nth-child(2),
-      #goalies-table tbody td:nth-child(2) {
-        background: transparent;
-      }
-    }
+    /* Keep rank and name sticky on small screens. */
   </style>
 </head>
 <body>

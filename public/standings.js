@@ -9,11 +9,11 @@ function hexToRgbStr(hex) {
   return `${parseInt(h.slice(0,2),16)},${parseInt(h.slice(2,4),16)},${parseInt(h.slice(4,6),16)}`;
 }
 
-function teamRowAttrs(t) {
-  const c1 = hexToRgbStr(t.color1);
-  if (!c1) return '';
+function teamRowAttrs(t, rank) {
+  const c1 = hexToRgbStr(t.color1) || '88,100,116';
   const c2 = hexToRgbStr(t.color2) || c1;
-  return ` class="team-row" style="--c1:${c1};--c2:${c2};"`;
+  const rankClass = rank === 1 ? ' standings-rank-1' : '';
+  return ` class="team-row${rankClass}" style="--c1:${c1};--c2:${c2};"`;
 }
 
 const logoHtml = t => t.logo_url
@@ -120,11 +120,11 @@ function buildThead() {
   </tr></thead>`;
 }
 
-function makeRow(t, rank) {
+function makeRow(t, rank, groupRank) {
   const diff = t.gf - t.ga;
   const rw = (t.w || 0) - (t.otw || 0);
   const pct = t.gp > 0 ? ((t.pts / (t.gp * 2)) * 100).toFixed(1) + '%' : '—';
-  return `<tr${teamRowAttrs(t)}>
+  return `<tr${teamRowAttrs(t, groupRank)}>
     <td style="color:#8b949e;font-size:0.82rem;font-weight:600;min-width:24px;">${rank}</td>
     <td>${logoHtml(t)}<a href="team.html?id=${t.id}" class="team-link">${t.name}</a>${clinchBadge(t)}</td>
     <td>${t.gp}</td>
@@ -212,7 +212,8 @@ function renderGroupRows(group, rankMap, cutoffN) {
         inserted = true;
       }
     }
-    rows += makeRow(t, rankMap[t.id]);
+    const groupRank = i + 1; // 1-based position in this group
+    rows += makeRow(t, rankMap[t.id], groupRank);
   });
   return rows;
 }
@@ -385,7 +386,7 @@ function showForSelectedSeason() {
 (async () => {
   try {
     if (typeof SeasonSelector !== 'undefined') {
-      await SeasonSelector.init('season-selector-container', { noAllTime: true });
+      await SeasonSelector.init('season-selector-container', { noAllTime: true, seasonFilter: 'regular' });
       SeasonSelector.onSeasonChange(() => showForSelectedSeason());
     }
     showForSelectedSeason();

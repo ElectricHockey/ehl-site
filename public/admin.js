@@ -2,9 +2,27 @@ const API = '/api';
 
 // ── Shared helpers ──────────────────────────────────────────────────────────
 const typeLabel = lt => lt === 'threes' ? "3's" : lt === 'sixes' ? "6's" : lt || '?';
+const VALID_LEAGUES = ['threes', 'sixes'];
 
-// ── Admin league filter (3's or 6's) ───────────────────────────────────────
-let adminLeagueFilter = localStorage.getItem('ehl_admin_league') || 'threes';
+function getWorkingLeagueType() {
+  const qp = new URLSearchParams(window.location.search).get('league');
+  if (VALID_LEAGUES.includes(qp)) {
+    localStorage.setItem('ehl_league_type', qp);
+    return qp;
+  }
+  const shared = localStorage.getItem('ehl_league_type');
+  return VALID_LEAGUES.includes(shared) ? shared : 'threes';
+}
+
+function updateNewTeamGradient() {
+  const c1 = document.getElementById('team-color1')?.value || '#1e3a5f';
+  const c2 = document.getElementById('team-color2')?.value || '#0d1117';
+  const preview = document.getElementById('new-team-gradient-preview');
+  if (preview) preview.style.background = `linear-gradient(135deg,${c1},${c2})`;
+}
+
+// ── Admin league filter (follows global/top-nav league) ────────────────────
+let adminLeagueFilter = getWorkingLeagueType();
 
 // ── Admin season filter (null = all seasons) ───────────────────────────────
 let adminSeasonFilter = null;
@@ -35,25 +53,11 @@ function _syncLeagueFormDefaults(league) {
   // Auto-set the team form league type selector
   const teamLt = document.getElementById('team-league-type');
   if (teamLt) teamLt.value = league;
-}
 
-function setAdminLeague(league) {
-  adminLeagueFilter = league;
-  adminSeasonFilter = null; // reset season when league changes
-  adminGamesSearchCache = null;
-  localStorage.setItem('ehl_admin_league', league);
-  document.querySelectorAll('.admin-league-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.league === league);
-  });
-  // Reset season dropdown
-  const sel = document.getElementById('admin-season-filter');
-  if (sel) sel.value = '';
-  // Sync form defaults to the new league
-  _syncLeagueFormDefaults(league);
-  // Reload data for the active sections
-  loadSeasons();
-  loadTeams();
-  loadGames();
+  const label = document.getElementById('admin-league-current-text');
+  if (label) label.textContent = league === 'sixes' ? "6's" : "3's";
+  const logo = document.getElementById('admin-league-current-logo');
+  if (logo) logo.src = `/api/site-logo?type=${league}`;
 }
 
 function getPlayerToken() { return localStorage.getItem('ehl_player_token') || ''; }
@@ -131,7 +135,22 @@ async function checkAuth() {
     } catch { /* fall through */ }
   }
 
-  // 3. No valid session found – show access-denied message
+  // 3. Local dev fallback (server returns owner when LOCAL_DEV_AUTO_ADMIN is on)
+  try {
+    const res = await fetch(`${API}/auth/status`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.loggedIn) {
+        if (data.token) localStorage.setItem('ehl_admin_token', data.token);
+        localStorage.setItem('ehl_admin_role', data.role);
+        localStorage.setItem('ehl_admin_username', data.username);
+        showAdminPanel(data.role, data.username);
+        return;
+      }
+    }
+  } catch { /* fall through */ }
+
+  // 4. No valid session found – show access-denied message
   showLoginForm();
 }
 
@@ -159,12 +178,8 @@ function showAdminPanel(role, username) {
   const roleLabel = role === 'owner' ? '👑 Owner' : '🎮 Game Admin';
   document.getElementById('logged-in-name').textContent = `${roleLabel}: ${username}`;
 
-  // Set correct active state on league switcher buttons
-  document.querySelectorAll('.admin-league-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.league === adminLeagueFilter);
-  });
-
-  // Sync form dropdowns to the stored league
+  // Sync form dropdowns and league badge to the shared top-nav league
+  adminLeagueFilter = getWorkingLeagueType();
   _syncLeagueFormDefaults(adminLeagueFilter);
 
   // Show/hide owner-only tabs
@@ -800,9 +815,23 @@ function colorSwatch(hex) {
 async function loadTeams() {
   const res = await fetch(`${API}/teams`);
   const allTeams = await res.json();
-  // Filter teams table display by selected league
-  const teams = allTeams.filter(t => !t.league_type || t.league_type === adminLeagueFilter);
+  let seasonTeamIds = null;
+  if (adminSeasonFilter) {
+    // Fail closed: if this lookup fails, do not show all teams by mistake.
+    seasonTeamIds = new Set();
+    try {
+      const seasonTeamsRes = await fetch(`${API}/seasons/${adminSeasonFilter}/teams`, { headers: adminHeaders() });
+      if (seasonTeamsRes.ok) {
+        const seasonTeams = await seasonTeamsRes.json();
+        seasonTeamIds = new Set(seasonTeams.map(t => Number(t.id)));
+      }
+    } catch { /* ignore */ }
+  }
+  // Filter teams table display by selected league; if a season is selected, show only that season's teams.
+  const teams = allTeams.filter(t => (!t.league_type || t.league_type === adminLeagueFilter) && (!seasonTeamIds || seasonTeamIds.has(Number(t.id))));
   const tbody = document.querySelector('#teams-table tbody');
+  const seasonAddControls = document.getElementById('season-team-add-controls');
+  const seasonAddSelect = document.getElementById('season-team-add-select');
   const ltLabel = lt => lt === 'threes' ? '3v3' : lt === 'sixes' ? '6v6' : '—';
   tbody.innerHTML = teams.length === 0
     ? '<tr><td colspan="9" style="color:#8b949e">No teams yet.</td></tr>'
@@ -830,25 +859,25 @@ async function loadTeams() {
         <td><button class="btn-danger" onclick="deleteTeam(${t.id})">Delete</button></td>
       </tr>`).join('');
 
+  if (seasonAddControls && seasonAddSelect) {
+    const leagueTeams = allTeams.filter(t => !t.league_type || t.league_type === adminLeagueFilter);
+    const addableTeams = adminSeasonFilter
+      ? leagueTeams.filter(t => !seasonTeamIds || !seasonTeamIds.has(Number(t.id)))
+      : [];
+    seasonAddControls.style.display = adminSeasonFilter ? 'flex' : 'none';
+    seasonAddSelect.innerHTML = '<option value="">— Select team —</option>' +
+      addableTeams.map(t => `<option value="${t.id}">${escAttr(t.name)}</option>`).join('');
+  }
+
   // Dropdowns always show ALL teams (for player team assignment)
   const tOpts = '<option value="">— No Team —</option>' + allTeams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
   const playerTeamSel = document.getElementById('player-team');
   if (playerTeamSel) playerTeamSel.innerHTML = tOpts;
-  // Game home/away and roster dropdowns: filter by current league, further by season if selected
+  // Game home/away and roster dropdowns: filter by current league and selected season
   const leagueTeams = allTeams.filter(t => !t.league_type || t.league_type === adminLeagueFilter);
-  let dropdownTeams = leagueTeams;
-  if (adminSeasonFilter) {
-    try {
-      const seasonTeamsRes = await fetch(`${API}/seasons/${adminSeasonFilter}/teams`, { headers: adminHeaders() });
-      if (seasonTeamsRes.ok) {
-        const seasonTeams = await seasonTeamsRes.json();
-        const seasonTeamIds = new Set(seasonTeams.map(t => t.id));
-        const filtered = leagueTeams.filter(t => seasonTeamIds.has(t.id));
-        if (filtered.length > 0) dropdownTeams = filtered;
-        // fallback: if no teams in season yet, show all league teams
-      }
-    } catch { /* fallback to all league teams */ }
-  }
+  const dropdownTeams = seasonTeamIds
+    ? leagueTeams.filter(t => seasonTeamIds.has(Number(t.id)))
+    : leagueTeams;
   const gOpts = '<option value="">Select team</option>' + dropdownTeams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
   const gameHomeSel = document.getElementById('game-home');
   const gameAwaySel = document.getElementById('game-away');
@@ -867,6 +896,63 @@ async function loadTeams() {
   if (mSrc) mSrc.innerHTML = mergeOpts;
   if (mTgt) mTgt.innerHTML = mergeOpts;
   _refreshAdminGlobalSearchIfActive();
+}
+
+async function addTeamToSeason(teamId) {
+  if (!adminSeasonFilter) { alert('Select a season first.'); return; }
+  let res = await fetch(`${API}/seasons/${adminSeasonFilter}/teams`, {
+    method: 'POST',
+    headers: adminJsonHeaders(),
+    body: JSON.stringify({ team_id: Number(teamId) }),
+  });
+
+  // Backward-compatible fallback for servers that don't yet have POST /seasons/:id/teams.
+  if (!res.ok && (res.status === 404 || res.status === 405)) {
+    try {
+      const [confRes, teamsRes] = await Promise.all([
+        fetch(`${API}/seasons/${adminSeasonFilter}/team-conf`, { headers: adminHeaders() }),
+        fetch(`${API}/teams`, { headers: adminHeaders() }),
+      ]);
+      if (!confRes.ok || !teamsRes.ok) throw new Error('lookup_failed');
+      const [currentAssignments, allTeams] = await Promise.all([confRes.json(), teamsRes.json()]);
+      const targetTeam = (allTeams || []).find(t => Number(t.id) === Number(teamId));
+      if (!targetTeam) throw new Error('team_not_found');
+
+      const nextAssignments = (currentAssignments || []).map(t => ({
+        team_id: Number(t.team_id),
+        conference: t.conference || '',
+        division: t.division || '',
+      }));
+      if (!nextAssignments.some(t => Number(t.team_id) === Number(teamId))) {
+        nextAssignments.push({
+          team_id: Number(teamId),
+          conference: targetTeam.conference || '',
+          division: targetTeam.division || '',
+        });
+      }
+
+      res = await fetch(`${API}/seasons/${adminSeasonFilter}/team-conf`, {
+        method: 'POST',
+        headers: adminJsonHeaders(),
+        body: JSON.stringify(nextAssignments),
+      });
+    } catch {
+      res = { ok: false };
+    }
+  }
+
+  if (!res.ok) {
+    const err = res.json ? await res.json().catch(() => ({})) : {};
+    alert(err.error || 'Failed to add team to season');
+    return;
+  }
+  await loadTeams();
+}
+
+async function addSelectedTeamToSeason() {
+  const sel = document.getElementById('season-team-add-select');
+  if (!sel || !sel.value) { alert('Select a team to add.'); return; }
+  await addTeamToSeason(Number(sel.value));
 }
 
 // ── Roster Management ─────────────────────────────────────────────────────
@@ -1140,18 +1226,21 @@ async function changeLogo(id) {
 }
 
 function editColors(id, currentColor1, currentColor2) {
+  const c1Init = currentColor1 || '#1e3a5f';
+  const c2Init = currentColor2 || '#0d1117';
   const overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:999;display:flex;align-items:center;justify-content:center;';
   overlay.innerHTML = `
-    <div style="background:#161b22;border:1px solid #30363d;border-radius:10px;padding:1.5rem 2rem;min-width:280px;">
+    <div style="background:#161b22;border:1px solid #30363d;border-radius:10px;padding:1.5rem 2rem;min-width:300px;">
       <h3 style="margin-bottom:1rem;color:#e6edf3;">Team Colors</h3>
+      <div id="_ec-preview" style="height:48px;border-radius:8px;margin-bottom:1.1rem;border:1px solid #30363d;background:linear-gradient(135deg,${c1Init},${c2Init});transition:background 0.15s;"></div>
       <div style="margin-bottom:1rem;">
         <label style="display:block;color:#8b949e;font-size:0.85rem;margin-bottom:0.4rem;">Primary Color (gradient start)</label>
-        <input type="color" id="_ec1" value="${currentColor1 || '#1e3a5f'}" style="width:100%;height:36px;border:1px solid #30363d;border-radius:6px;cursor:pointer;" />
+        <input type="color" id="_ec1" value="${c1Init}" style="width:100%;height:36px;border:1px solid #30363d;border-radius:6px;cursor:pointer;" />
       </div>
       <div style="margin-bottom:1.2rem;">
         <label style="display:block;color:#8b949e;font-size:0.85rem;margin-bottom:0.4rem;">Secondary Color (gradient end)</label>
-        <input type="color" id="_ec2" value="${currentColor2 || '#0d1117'}" style="width:100%;height:36px;border:1px solid #30363d;border-radius:6px;cursor:pointer;" />
+        <input type="color" id="_ec2" value="${c2Init}" style="width:100%;height:36px;border:1px solid #30363d;border-radius:6px;cursor:pointer;" />
       </div>
       <div style="display:flex;gap:0.5rem;">
         <button id="_ec-save" style="flex:1;padding:0.5rem;background:#238636;border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:0.9rem;">Save</button>
@@ -1159,6 +1248,14 @@ function editColors(id, currentColor1, currentColor2) {
       </div>
     </div>`;
   document.body.appendChild(overlay);
+  const preview = document.getElementById('_ec-preview');
+  function updatePreview() {
+    const c1 = document.getElementById('_ec1').value;
+    const c2 = document.getElementById('_ec2').value;
+    preview.style.background = `linear-gradient(135deg,${c1},${c2})`;
+  }
+  document.getElementById('_ec1').addEventListener('input', updatePreview);
+  document.getElementById('_ec2').addEventListener('input', updatePreview);
   document.getElementById('_ec-save').addEventListener('click', async () => {
     const c1 = document.getElementById('_ec1').value;
     const c2 = document.getElementById('_ec2').value;
@@ -1236,13 +1333,7 @@ async function loadPlayers() {
         </td>
       </tr>`).join('');
 
-  // Populate merge player dropdowns with unique player names
-  const uniqueNames = [...new Set(players.map(p => p.name))].sort();
-  const mergePlayerOpts = '<option value="">— Select player —</option>' + uniqueNames.map(n => `<option value="${escAttr(n)}">${escAttr(n)}</option>`).join('');
-  const mpSrc = document.getElementById('merge-player-source');
-  const mpTgt = document.getElementById('merge-player-target');
-  if (mpSrc) mpSrc.innerHTML = mergePlayerOpts;
-  if (mpTgt) mpTgt.innerHTML = mergePlayerOpts;
+  await refreshMergeDropdowns();
   _refreshAdminGlobalSearchIfActive();
 }
 
@@ -1263,6 +1354,20 @@ async function deletePlayer(id) {
   await loadPlayers();
 }
 
+async function refreshMergeDropdowns() {
+  let names;
+  try {
+    const r = await fetch(`${API}/admin/player-names`, { headers: adminHeaders() });
+    names = r.ok ? await r.json() : null;
+  } catch (_) { names = null; }
+  if (!Array.isArray(names)) return;
+  const opts = '<option value="">— Select player —</option>' + names.map(n => `<option value="${escAttr(n)}">${escAttr(n)}</option>`).join('');
+  const mpSrc = document.getElementById('merge-player-source');
+  const mpTgt = document.getElementById('merge-player-target');
+  if (mpSrc) mpSrc.innerHTML = opts;
+  if (mpTgt) mpTgt.innerHTML = opts;
+}
+
 async function mergePlayers() {
   const sourceName = document.getElementById('merge-player-source').value;
   const targetName = document.getElementById('merge-player-target').value;
@@ -1277,7 +1382,7 @@ async function mergePlayers() {
     });
     if (!res.ok) { const e = await res.json().catch(() => ({})); alert(e.error || 'Failed to merge players'); return; }
     alert(`Successfully merged "${sourceName}" into "${targetName}".`);
-    await loadTeams(); await loadPlayers();
+    await loadTeams(); await loadPlayers(); await refreshMergeDropdowns();
   } catch (err) { alert('Error merging players: ' + err.message); }
 }
 
@@ -1332,8 +1437,11 @@ function _wireGseAdmin() {
 // ── Registered Players & Unrostered Warning ───────────────────────────────
 
 async function loadRegPlayers() {
+  const usersUrl = adminSeasonFilter
+    ? `${API}/users?season_id=${adminSeasonFilter}`
+    : `${API}/users`;
   const [usersRes, unrRes] = await Promise.all([
-    fetch(`${API}/users`, { headers: adminHeaders() }),
+    fetch(usersUrl, { headers: adminHeaders() }),
     fetch(`${API}/admin/unrostered-stats`, { headers: adminHeaders() }),
   ]);
   if (!usersRes.ok) return;
@@ -2329,18 +2437,22 @@ async function loadAwardsTab() {
   if (seasonLabel) seasonLabel.textContent = `Showing awards for: ${seasonName}`;
 
   try {
+    const teamsUrl = seasonId
+      ? `${API}/seasons/${seasonId}/teams`
+      : `${API}/teams`;
     const [defsRes, winnersRes, settingsRes, teamAwardsRes, teamsRes] = await Promise.all([
       fetch(`${API}/awards`, { headers: adminHeaders() }),
       fetch(`${API}/awards/season/${seasonId}`, { headers: adminHeaders() }),
       fetch(`${API}/admin/awards/settings`, { headers: adminHeaders() }),
       fetch(`${API}/awards/season/${seasonId}/team-awards`, { headers: adminHeaders() }),
-      fetch(`${API}/teams`, { headers: adminHeaders() }),
+      fetch(teamsUrl, { headers: adminHeaders() }),
     ]);
     awardsTabData.awardDefs = defsRes.ok ? await defsRes.json() : [];
     awardsTabData.seasonWinners = winnersRes.ok ? await winnersRes.json() : [];
     awardsTabData.settings = settingsRes.ok ? await settingsRes.json() : { champ_min_gp: 6, pres_min_gp: 6, calder_max_prior_gp: 6 };
     awardsTabData.teamAwards = teamAwardsRes.ok ? await teamAwardsRes.json() : [];
-    awardsTabData.allTeams = teamsRes.ok ? await teamsRes.json() : [];
+    const fetchedTeams = teamsRes.ok ? await teamsRes.json() : [];
+    awardsTabData.allTeams = fetchedTeams.filter(t => !t.league_type || t.league_type === adminLeagueFilter);
 
     // Populate settings form
     const champEl = document.getElementById('award-champ-min-gp');

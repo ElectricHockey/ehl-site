@@ -14,6 +14,7 @@ const SeasonSelector = (() => {
   let _onChange = null;
   let _seasonsCache = { threes: [], sixes: [] };
   let _noAllTime = false;
+  let _seasonFilter = null; // 'regular' | 'playoff' | null (show all)
 
   const selectStyle = 'background:#161b22;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.3rem 0.6rem;font-size:0.88rem;';
 
@@ -75,7 +76,12 @@ const SeasonSelector = (() => {
   function _populateSeasonSelect(type) {
     const el = document.getElementById('season-select');
     if (!el) return;
-    const seasons = _sortWithPlayoffs(_seasonsCache[type] || []);
+    let seasons = _sortWithPlayoffs(_seasonsCache[type] || []);
+
+    // Apply filter: only regular seasons or only playoff seasons
+    if (_seasonFilter === 'regular') seasons = seasons.filter(s => !s.is_playoff);
+    else if (_seasonFilter === 'playoff') seasons = seasons.filter(s => s.is_playoff);
+
     const key     = STORAGE_SEASON[type];
     if (seasons.length === 0) {
       el.innerHTML = '<option value="">No seasons</option>';
@@ -84,11 +90,10 @@ const SeasonSelector = (() => {
     }
     el.disabled  = false;
     const saved   = localStorage.getItem(key);
-    // Default to the first active regular season, or first season overall
-    const regularSeasons    = seasons.filter(s => !s.is_playoff);
-    const activeRegularSeason = regularSeasons.find(s => s.is_active);
-    let defaultId = saved ? Number(saved) : (activeRegularSeason ? activeRegularSeason.id : seasons[0].id);
-    if (!seasons.find(s => s.id === defaultId)) defaultId = activeRegularSeason ? activeRegularSeason.id : seasons[0].id;
+    // Default to the first active season matching the filter, or first overall
+    const activeMatch = seasons.find(s => s.is_active);
+    let defaultId = saved ? Number(saved) : (activeMatch ? activeMatch.id : seasons[0].id);
+    if (!seasons.find(s => s.id === defaultId)) defaultId = activeMatch ? activeMatch.id : seasons[0].id;
     // All-time options always at the top; real seasons follow (skip when noAllTime is set)
     const alltimeOpts = _noAllTime ? '' :
       `<option value="alltime_regular">★ All Time – Regular Season</option>` +
@@ -100,6 +105,7 @@ const SeasonSelector = (() => {
 
   async function init(containerId, options) {
     _noAllTime = !!(options && options.noAllTime);
+    _seasonFilter = (options && options.seasonFilter) || null;
     const container = document.getElementById(containerId || 'season-selector-container');
     if (!container) return;
     try {

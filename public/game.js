@@ -6,6 +6,18 @@ const API = '/api';
 
 function getAdminToken() { return localStorage.getItem('ehl_admin_token') || ''; }
 
+function hexToRgbStr(hex) {
+  if (!hex || typeof hex !== 'string') return null;
+  let h = hex.trim().replace('#', '');
+  if (h.length === 3) h = h.split('').map(c => c + c).join('');
+  if (h.length !== 6) return null;
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  if ([r, g, b].some(Number.isNaN)) return null;
+  return `${r},${g},${b}`;
+}
+
 /** Returns true when the browser has an active admin session (owner or game_admin). */
 async function hasAdminSession() {
   try {
@@ -46,7 +58,10 @@ async function loadGame() {
       : '';
     const homeWin = game.home_score > game.away_score;
     const awayWin = game.away_score > game.home_score;
-    const finalLabel = `<div style="text-align:center;font-size:0.78rem;font-weight:700;letter-spacing:0.1em;color:#8b949e;text-transform:uppercase;margin-bottom:0.25rem;">FINAL${game.is_overtime ? ' – OT' : ''}</div>`;
+    const finalLabel = `<div style="text-align:center;font-size:0.78rem;font-weight:700;letter-spacing:0.1em;color:#8b949e;text-transform:uppercase;margin-top:0.3rem;">FINAL${game.is_overtime ? ' – OT' : ''}</div>`;
+    const homeRgb = hexToRgbStr(game.home_team && game.home_team.color1) || '88,100,116';
+    const awayRgb = hexToRgbStr(game.away_team && game.away_team.color1) || '88,100,116';
+    const gameHeaderStyle = `background-image:linear-gradient(90deg, rgba(${homeRgb},0.30) 0%, rgba(${homeRgb},0.30) 42%, rgba(${homeRgb},0.24) 48%, rgba(${awayRgb},0.24) 52%, rgba(${awayRgb},0.30) 58%, rgba(${awayRgb},0.30) 100%);`;
 
     const logoImg = (team) => team.logo_url
       ? `<img src="${team.logo_url}" class="game-team-logo" alt="${team.name}" />`
@@ -61,16 +76,18 @@ async function loadGame() {
       : '';
 
     let html = `
-      <div class="game-header">
+      <div class="game-header" style="${gameHeaderStyle}">
         <div class="game-team-block">
           ${logoImg(game.home_team)}
           <a href="team.html?id=${game.home_team.id}" class="game-team-name">${game.home_team.name}</a>
         </div>
         <div class="game-score-block">
+          <div class="game-score-row">
+            <span class="game-score${homeWin ? ' winner' : ''}">${game.home_score}</span>
+            <span class="game-score-sep">–</span>
+            <span class="game-score${awayWin ? ' winner' : ''}">${game.away_score}</span>
+          </div>
           ${finalLabel}
-          <span class="game-score${homeWin ? ' winner' : ''}">${game.home_score}</span>
-          <span class="game-score-sep">–</span>
-          <span class="game-score${awayWin ? ' winner' : ''}">${game.away_score}</span>
         </div>
         <div class="game-team-block">
           ${logoImg(game.away_team)}

@@ -49,38 +49,140 @@ document.addEventListener('click', e => {
   nav.classList.add('league-nav-mode');
 
   const switcher = document.createElement('div');
-  switcher.className = 'league-nav-switch';
+  switcher.className = 'league-nav-dropdown';
   switcher.innerHTML = `
-    <button class="league-nav-btn" data-league="sixes">
-      <img src="/api/site-logo?type=sixes" alt="6's" class="league-nav-logo" width="20" height="20" decoding="async" />
-      <span>6's</span>
+    <button class="league-nav-trigger" type="button" aria-haspopup="true" aria-expanded="false">
+      <img class="league-nav-logo" src="/api/site-logo?type=threes" alt="" width="20" height="20" decoding="async" />
+      <span class="league-nav-label">3's</span>
+      <span class="league-nav-chevron">▾</span>
     </button>
-    <button class="league-nav-btn" data-league="threes">
-      <img src="/api/site-logo?type=threes" alt="3's" class="league-nav-logo" width="20" height="20" decoding="async" />
-      <span>3's</span>
-    </button>
+    <div class="league-nav-menu">
+      <button class="league-nav-menu-item" data-league="sixes" type="button">
+        <img src="/api/site-logo?type=sixes" alt="" width="18" height="18" decoding="async" />
+        <span>6's</span>
+      </button>
+      <button class="league-nav-menu-item" data-league="threes" type="button">
+        <img src="/api/site-logo?type=threes" alt="" width="18" height="18" decoding="async" />
+        <span>3's</span>
+      </button>
+    </div>
   `;
 
+  // Insert right after the brand logo
   const portalLink = nav.querySelector('.nav-portal');
-  if (portalLink) nav.insertBefore(switcher, portalLink);
+  const brand = nav.querySelector('.brand');
+  if (brand && brand.nextSibling) nav.insertBefore(switcher, brand.nextSibling);
+  else if (portalLink) nav.insertBefore(switcher, portalLink);
   else nav.appendChild(switcher);
 
+  // Nav carousel – center strip between league dropdown and portal
+  const navCarousel = document.createElement('div');
+  navCarousel.className = 'nav-carousel-wrap';
+  navCarousel.innerHTML = `
+    <button class="nav-carousel-arrow nav-carousel-prev" aria-label="Previous">&#8249;</button>
+    <div class="nav-carousel-track" id="nav-carousel-track"></div>
+    <button class="nav-carousel-arrow nav-carousel-next" aria-label="Next">&#8250;</button>
+  `;
+  if (portalLink) nav.insertBefore(navCarousel, portalLink);
+  else nav.appendChild(navCarousel);
+
+  // Load games into nav carousel
+  (async () => {
+    try {
+      const league = (() => {
+        const qp = new URLSearchParams(window.location.search).get('league');
+        if (qp === 'threes' || qp === 'sixes') return qp;
+        const s = localStorage.getItem('ehl_league_type');
+        return (s === 'threes' || s === 'sixes') ? s : 'threes';
+      })();
+      const sRes = await fetch(`/api/seasons?type=${league}`);
+      if (!sRes.ok) return;
+      const seasons = await sRes.json();
+      const active = seasons.find(s => s.is_active) || seasons[0];
+      if (!active) return;
+
+      const [rRes, uRes] = await Promise.all([
+        fetch(`/api/games?status=complete&season_id=${active.id}&limit=8&order=desc`),
+        fetch(`/api/games?status=scheduled&season_id=${active.id}&limit=5&order=asc`),
+      ]);
+      const completed = rRes.ok ? await rRes.json() : [];
+      const scheduled = uRes.ok ? await uRes.json() : [];
+      const all = [...completed, ...scheduled];
+      if (!all.length) { navCarousel.style.display = 'none'; return; }
+
+      const track = navCarousel.querySelector('.nav-carousel-track');
+      track.innerHTML = all.map(g => {
+        const isFinal = g.status === 'complete';
+        const hl = g.home_logo ? `<img src="${g.home_logo}" class="nc-logo" alt="" decoding="async" />` : '<span class="nc-logo-ph"></span>';
+        const al = g.away_logo ? `<img src="${g.away_logo}" class="nc-logo" alt="" decoding="async" />` : '<span class="nc-logo-ph"></span>';
+        const ot = g.is_overtime ? '<sup class="nc-ot">OT</sup>' : '';
+        return `<a href="game.html?id=${g.id}" class="nc-card${isFinal ? '' : ' nc-card-upcoming'}">
+          <span class="nc-badge">${isFinal ? 'FINAL' : 'UPCOMING'}</span>
+          <div class="nc-row">
+            ${hl}<span class="nc-name">${g.home_team_name}</span>
+            <span class="nc-score">${isFinal ? `${g.home_score}${ot} – ${g.away_score}` : 'vs'}</span>
+            <span class="nc-name nc-name-r">${g.away_team_name}</span>${al}
+          </div>
+        </a>`;
+      }).join('');
+
+      // Arrow nav
+      let ci = 0;
+      const cards = () => track.querySelectorAll('.nc-card');
+      const scrollTo = i => {
+        const c = cards();
+        ci = ((i % c.length) + c.length) % c.length;
+        c[ci].scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+      };
+      navCarousel.querySelector('.nav-carousel-prev').onclick = () => scrollTo(ci - 1);
+      navCarousel.querySelector('.nav-carousel-next').onclick = () => scrollTo(ci + 1);
+      setInterval(() => scrollTo(ci + 1), 4500);
+    } catch { navCarousel.style.display = 'none'; }
+  })();
   const currentPath = (window.location.pathname.split('/').pop() || 'index.html').toLowerCase();
   const links = [
     { href: 'index.html', label: 'Home' },
-    { href: 'schedule.html', label: 'Schedule' },
-    { href: 'standings.html', label: 'Standings' },
-    { href: 'recent-scores.html', label: 'Recent Scores' },
+    {
+      href: 'schedule.html', label: 'Schedule',
+      children: [
+        { href: 'recent-scores.html', label: '🏒 Recent Scores' },
+      ],
+    },
+    {
+      href: 'standings.html', label: 'Standings',
+      children: [
+        { href: 'standings.html', label: '🏒 Standings' },
+        { href: 'playoffs.html', label: '🏆 Playoffs' },
+      ],
+    },
     { href: 'stats.html', label: 'Stats' },
-    { href: 'records.html', label: 'Records' },
+    {
+      href: 'awards.html', label: 'Awards',
+      children: [
+        { href: 'awards.html', label: '🏆 Awards' },
+        { href: 'records.html', label: '📚 Records' },
+      ],
+    },
     { href: 'players.html', label: 'Players' },
   ];
 
+  function buildSubnavItem(l) {
+    const isActive = currentPath === l.href || (l.children && l.children.some(c => c.href === currentPath));
+    if (l.children && l.children.length) {
+      const childLinks = l.children.map(c =>
+        `<a class="league-subnav-link league-subnav-child-link${currentPath === c.href ? ' active' : ''}" data-base-href="${c.href}" href="${c.href}">${c.label}</a>`
+      ).join('');
+      return `<div class="league-subnav-dropdown">` +
+        `<a class="league-subnav-link${isActive ? ' active' : ''}" data-base-href="${l.href}" href="${l.href}">${l.label} ▾</a>` +
+        `<div class="league-subnav-dropdown-menu">${childLinks}</div>` +
+        `</div>`;
+    }
+    return `<a class="league-subnav-link${isActive ? ' active' : ''}" data-base-href="${l.href}" href="${l.href}">${l.label}</a>`;
+  }
+
   const subnav = document.createElement('div');
   subnav.className = 'league-subnav';
-  subnav.innerHTML = links.map(l =>
-    `<a class="league-subnav-link${currentPath === l.href ? ' active' : ''}" data-base-href="${l.href}" href="${l.href}">${l.label}</a>`
-  ).join('');
+  subnav.innerHTML = links.map(buildSubnavItem).join('');
   nav.insertAdjacentElement('afterend', subnav);
 
   const mobileBackdrop = document.createElement('div');
@@ -94,7 +196,6 @@ document.addEventListener('click', e => {
   mobileToggle.setAttribute('aria-expanded', 'false');
   mobileToggle.innerHTML = '☰';
   nav.insertBefore(mobileToggle, portalLink || switcher);
-
   function setMobileMenuOpen(open) {
     document.body.classList.toggle('nav-mobile-open', open);
     mobileToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
@@ -111,10 +212,18 @@ document.addEventListener('click', e => {
 
   function renderLeagueNav() {
     const active = getActiveLeague();
-    switcher.querySelectorAll('.league-nav-btn').forEach(btn => {
+    // Update trigger button to show active league
+    const trigger = switcher.querySelector('.league-nav-trigger');
+    const triggerImg = switcher.querySelector('.league-nav-trigger .league-nav-logo');
+    const triggerLabel = switcher.querySelector('.league-nav-label');
+    if (triggerImg) triggerImg.src = `/api/site-logo?type=${active}`;
+    if (triggerImg) triggerImg.alt = active === 'threes' ? "3's" : "6's";
+    if (triggerLabel) triggerLabel.textContent = active === 'threes' ? "3's" : "6's";
+    // Mark active item in menu
+    switcher.querySelectorAll('.league-nav-menu-item').forEach(btn => {
       btn.classList.toggle('active', btn.dataset.league === active);
     });
-    subnav.querySelectorAll('.league-subnav-link').forEach(a => {
+    subnav.querySelectorAll('.league-subnav-link, .league-subnav-child-link').forEach(a => {
       const baseHref = a.dataset.baseHref || 'index.html';
       const u = new URL(baseHref, window.location.origin);
       u.searchParams.set('league', active);
@@ -122,14 +231,28 @@ document.addEventListener('click', e => {
     });
   }
 
-  switcher.querySelectorAll('.league-nav-btn').forEach(btn => {
+  // Toggle dropdown on trigger click
+  const trigger = switcher.querySelector('.league-nav-trigger');
+  trigger.addEventListener('click', e => {
+    e.stopPropagation();
+    const open = switcher.classList.toggle('open');
+    trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+  document.addEventListener('click', e => {
+    if (!e.target.closest('.league-nav-dropdown')) {
+      switcher.classList.remove('open');
+      trigger.setAttribute('aria-expanded', 'false');
+    }
+  });
+
+  switcher.querySelectorAll('.league-nav-menu-item').forEach(btn => {
     btn.addEventListener('click', () => {
       const next = btn.dataset.league;
+      switcher.classList.remove('open');
+      trigger.setAttribute('aria-expanded', 'false');
       if (!VALID_TYPES.includes(next)) return;
       if (next !== getActiveLeague()) {
         localStorage.setItem(STORAGE_TYPE, next);
-        // Navigate to the current page with the updated ?league= param so the
-        // reload doesn't overwrite the new choice from the old URL's query string.
         const u = new URL(window.location.href);
         u.searchParams.set('league', next);
         window.location.href = u.href;
@@ -229,6 +352,22 @@ document.addEventListener('click', e => {
         // Network error – not an admin, hide the link
         console.debug('[nav] admin login via player token failed:', e);
       }
+    }
+
+    // 3. Local dev auto-login: server returns a token for localhost with no credentials
+    try {
+      const res = await fetch('/api/auth/status');
+      const data = await res.json();
+      if (data.loggedIn && data.token) {
+        localStorage.setItem('ehl_admin_token', data.token);
+        localStorage.setItem('ehl_admin_role', data.role);
+        localStorage.setItem('ehl_admin_username', data.username);
+        sessionStorage.setItem(validationKey, String(Date.now()));
+        showAdminLink();
+        return;
+      }
+    } catch (e) {
+      console.debug('[nav] local dev auto-login failed:', e);
     }
 
     hideAdminLink();

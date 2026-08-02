@@ -6,7 +6,8 @@ let _teamGoalieData = [];
 let _teamColors = null;
 let _teamId = null;
 let _teamSeasons = null;          // seasons this team has played in (fetched once)
-let _teamSelectedSeasonId = null; // currently selected season (null = all)
+let _teamSelectedSeasonId = null; // currently selected season (null = all-time)
+let _teamFilterType = null;       // null | 'regular' | 'playoff' (for all-time splits)
 const teamSort = {
   skater: { key: 'points', dir: 'desc' },
   goalie: { key: 'save_pct', dir: 'desc' },
@@ -75,6 +76,9 @@ function pct3(v) {
   const num = Number(v);
   const frac = num > 1 ? num / 100 : num;
   return frac.toFixed(3).replace(/^0(?=\.)/, '');
+}
+function normalizeName(v) {
+  return String(v || '').trim().toLowerCase();
 }
 
 // ── Sort callbacks ────────────────────────────────────────────────────────
@@ -252,7 +256,14 @@ async function loadTeamPage() {
 
   try {
     const sid = _teamSelectedSeasonId;
-    const url = sid ? `${API}/teams/${id}/stats?season_id=${sid}` : `${API}/teams/${id}/stats`;
+    let url;
+    if (sid) {
+      url = `${API}/teams/${id}/stats?season_id=${sid}`;
+    } else if (_teamFilterType) {
+      url = `${API}/teams/${id}/stats?filter_type=${_teamFilterType}`;
+    } else {
+      url = `${API}/teams/${id}/stats`;
+    }
     if (!_recordsPromise) {
       _recordsPromise = fetch(`${API}/teams/${id}/records`)
         .then(response => {
@@ -312,11 +323,10 @@ async function loadTeamPage() {
         ${c1 ? `<div style="position:absolute;top:-30px;right:-20px;width:220px;height:220px;border-radius:50%;background:radial-gradient(circle,rgba(${c1},0.18) 0%,transparent 70%);pointer-events:none;z-index:0;"></div>` : ''}
       </div>
 
-      <div id="season-selector-container" style="margin-bottom:1rem;"></div>
-
       <div style="display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:1.25rem;align-items:start;" class="team-page-grid">
         <!-- LEFT: Roster + Stats -->
-        <div style="min-width:0;overflow:hidden;">`;
+        <div style="min-width:0;overflow:hidden;">
+          <div id="season-selector-container" style="margin-bottom:1rem;"></div>`;
 
     // ── ROSTER (grouped by position) ──
     const posOrder = { C: 0, LW: 1, RW: 2, LD: 3, RD: 4, G: 5 };
@@ -345,19 +355,47 @@ async function loadTeamPage() {
       return '';
     }
 
+    const gm1 = gms[0] ? gms[0].username : 'N/A';
+    const gm2 = gms[1] ? gms[1].username : 'N/A';
+    const ownerName = owner ? owner.username : 'N/A';
+    html += `
+      <div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:0.7rem 0.9rem;margin-bottom:0.85rem;">
+        <div style="display:grid;grid-template-columns:1fr 1.2fr 1fr;gap:0.6rem;align-items:center;text-align:center;">
+          <div>
+            <div style="font-size:0.68rem;color:#8b949e;text-transform:uppercase;letter-spacing:0.06em;">GM</div>
+            <div style="font-size:0.92rem;font-weight:700;color:#e6edf3;">${gm1}</div>
+          </div>
+          <div>
+            <div style="font-size:0.68rem;color:#8b949e;text-transform:uppercase;letter-spacing:0.06em;">Owner</div>
+            <div style="font-size:0.98rem;font-weight:800;color:#58a6ff;">${ownerName}</div>
+          </div>
+          <div>
+            <div style="font-size:0.68rem;color:#8b949e;text-transform:uppercase;letter-spacing:0.06em;">GM</div>
+            <div style="font-size:0.92rem;font-weight:700;color:#e6edf3;">${gm2}</div>
+          </div>
+        </div>
+      </div>`;
+
+    const excludedRosterNames = new Set(
+      [owner ? owner.username : null, ...gms.map(g => g.username)]
+        .filter(Boolean)
+        .map(normalizeName)
+    );
+    const rosterForDisplay = sorted.filter(p => !excludedRosterNames.has(normalizeName(p.name)));
+
     const groups = [
       { label: 'Forward',  positions: ['C','LW','RW'] },
       { label: 'Defender', positions: ['LD','RD'] },
       { label: 'Goalie',   positions: ['G'] },
     ];
 
-    html += `<h2 style="color:#58a6ff;margin-bottom:0.5rem;">Roster${rosterLimit ? ` <span style="font-size:0.8rem;color:#8b949e;font-weight:400;">(${roster.length}/${rosterLimit})</span>` : ''}</h2>`;
+    html += `<h2 style="color:#58a6ff;margin-bottom:0.5rem;">Roster${rosterLimit ? ` <span style="font-size:0.8rem;color:#8b949e;font-weight:400;">(${rosterForDisplay.length}/${rosterLimit})</span>` : ''}</h2>`;
 
-    if (roster.length === 0) {
+    if (rosterForDisplay.length === 0) {
       html += '<p class="no-stats">No rostered players.</p>';
     } else {
       for (const grp of groups) {
-        const grpPlayers = sorted.filter(p => grp.positions.includes(p.position));
+        const grpPlayers = rosterForDisplay.filter(p => grp.positions.includes(p.position));
         if (grpPlayers.length === 0) continue;
 
         html += `<div style="margin-bottom:1.25rem;">
@@ -490,25 +528,48 @@ async function loadTeamPage() {
   }
 }
 
-// ── Team season selector (custom, filtered to seasons the team played) ─────
+// ── Team season selector (styled to match standings dropdown) ─────────────
 function renderTeamSeasonSelector() {
   const container = document.getElementById('season-selector-container');
   if (!container || !_teamSeasons) return;
   if (_teamSeasons.length === 0) { container.innerHTML = ''; return; }
 
-  const selectStyle = 'background:#161b22;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.3rem 0.6rem;font-size:0.88rem;';
+  // Determine currently selected value
+  let selectedVal;
+  if (_teamSelectedSeasonId != null) {
+    selectedVal = String(_teamSelectedSeasonId);
+  } else if (_teamFilterType === 'playoff') {
+    selectedVal = 'alltime_playoff';
+  } else {
+    selectedVal = 'alltime_regular';
+  }
+
+  const sel = v => v === selectedVal ? 'selected' : '';
+  const allTimeOpts =
+    `<option value="alltime_regular" ${sel('alltime_regular')}>★ All Time – Regular Season</option>` +
+    `<option value="alltime_playoff" ${sel('alltime_playoff')}>★ All Time – Playoffs</option>`;
   const opts = _teamSeasons.map(s => {
-    const selected = s.id === _teamSelectedSeasonId ? 'selected' : '';
-    return `<option value="${s.id}" ${selected}>${s.name}${s.is_active ? ' ★' : ''}</option>`;
+    const v = String(s.id);
+    return `<option value="${v}" ${sel(v)}>${s.name}${s.is_active ? ' ★' : ''}</option>`;
   }).join('');
 
-  container.innerHTML = `<div style="display:flex;align-items:center;gap:0.5rem;">
+  container.innerHTML = `<div class="league-tabs-row"><div class="league-tab-season">
     <label for="team-season-select" style="color:#8b949e;font-size:0.85rem;white-space:nowrap;">Season:</label>
-    <select id="team-season-select" style="${selectStyle}">${opts}</select>
-  </div>`;
+    <select id="team-season-select">${allTimeOpts}${opts}</select>
+  </div></div>`;
 
   document.getElementById('team-season-select').addEventListener('change', function() {
-    _teamSelectedSeasonId = this.value ? Number(this.value) : null;
+    const val = this.value;
+    if (val === 'alltime_regular') {
+      _teamSelectedSeasonId = null;
+      _teamFilterType = 'regular';
+    } else if (val === 'alltime_playoff') {
+      _teamSelectedSeasonId = null;
+      _teamFilterType = 'playoff';
+    } else {
+      _teamSelectedSeasonId = Number(val);
+      _teamFilterType = null;
+    }
     loadTeamPage();
   });
 }
@@ -540,9 +601,16 @@ async function initTeamPage() {
   // Default to the active regular season (if team played there), else first season
   if (_teamSeasons.length > 0) {
     const activeRegular = _teamSeasons.find(s => s.is_active && !s.is_playoff);
-    _teamSelectedSeasonId = activeRegular
-      ? activeRegular.id
-      : _teamSeasons[0].id;
+    if (activeRegular) {
+      _teamSelectedSeasonId = activeRegular.id;
+      _teamFilterType = null;
+    } else {
+      _teamSelectedSeasonId = _teamSeasons[0].id;
+      _teamFilterType = null;
+    }
+  } else {
+    _teamSelectedSeasonId = null;
+    _teamFilterType = 'regular';
   }
 
   loadTeamPage();

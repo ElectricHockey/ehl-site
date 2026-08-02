@@ -51,6 +51,35 @@ function formatToi(s) {
   return `${m}:${String(sec).padStart(2,'0')}`;
 }
 
+// Fallback for environments where `position: sticky` on table cells is unreliable.
+// Keeps rank + player columns pinned while horizontally scrolling stats tables.
+function enableStickyColumnsFallback(scrollWrap) {
+  if (!scrollWrap) return;
+  const table = scrollWrap.querySelector('table');
+  if (!table) return;
+
+  const col1 = table.querySelectorAll('tr > :nth-child(1)');
+  const col2 = table.querySelectorAll('tr > :nth-child(2)');
+  if (!col1.length || !col2.length) return;
+
+  const apply = () => {
+    const x = Math.round(scrollWrap.scrollLeft || 0);
+    col1.forEach(cell => {
+      cell.style.position = 'relative';
+      cell.style.zIndex = cell.tagName === 'TH' ? '8' : '6';
+      cell.style.transform = `translateX(${x}px)`;
+    });
+    col2.forEach(cell => {
+      cell.style.position = 'relative';
+      cell.style.zIndex = cell.tagName === 'TH' ? '7' : '5';
+      cell.style.transform = `translateX(${x}px)`;
+    });
+  };
+
+  scrollWrap.addEventListener('scroll', apply, { passive: true });
+  apply();
+}
+
 function hexToRgbStr(hex) {
   if (!hex || hex.length < 4) return null;
   let h = hex.replace('#', '');
@@ -58,11 +87,11 @@ function hexToRgbStr(hex) {
   h = h.padEnd(6, '0');
   return `${parseInt(h.slice(0,2),16)},${parseInt(h.slice(2,4),16)},${parseInt(h.slice(4,6),16)}`;
 }
-function playerRowAttrs(p) {
+function playerNameCellStyle(p) {
   const c1 = hexToRgbStr(p.team_color1);
   if (!c1) return '';
   const c2 = hexToRgbStr(p.team_color2) || c1;
-  return ` class="team-row" style="--c1:${c1};--c2:${c2};"`;
+  return `background-color:#0d1117;background-image:linear-gradient(90deg, rgba(${c1},0.30) 0%, rgba(${c2},0.22) 55%, rgba(13,17,23,0.0) 100%);`;
 }
 
 function sortData(data, key, dir) {
@@ -199,20 +228,32 @@ function renderSkaters(league) {
   const limited = statsPlayerLimit > 0 ? sorted.slice(0, statsPlayerLimit) : sorted;
   const s = k => thClass(k, leagueSort[league].skater);
   const prevScroll = root.firstElementChild?.scrollLeft || 0;
+  const rawSeasonValue = (typeof SeasonSelector !== 'undefined' && typeof SeasonSelector.getSelectedSeasonValue === 'function')
+    ? SeasonSelector.getSelectedSeasonValue()
+    : null;
+  const selectedSeasonId = (typeof SeasonSelector !== 'undefined' && typeof SeasonSelector.getSelectedSeasonId === 'function')
+    ? SeasonSelector.getSelectedSeasonId()
+    : null;
+  const playerHref = (playerName) => {
+    const qs = new URLSearchParams({ name: playerName, league });
+    if (selectedSeasonId && rawSeasonValue && !rawSeasonValue.startsWith('alltime_')) qs.set('season_id', String(selectedSeasonId));
+    return `player.html?${qs.toString()}`;
+  };
   root.innerHTML = `<div class="table-scroll-wrap stats-table-wrap"><table id="skaters-table">
     <thead><tr>
       <th style="text-align:center;width:2rem;">#</th>
       <th>Player</th><th>Pos</th>
       ${SKATER_COLS.map(c => `<th data-tip="${c.tip}" class="${s(c.key)}" onclick="sortSkaters('${c.key}','${league}')">${c.label}</th>`).join('')}
     </tr></thead>
-    <tbody>${limited.map((p, i) => `<tr${playerRowAttrs(p)}>
+    <tbody>${limited.map((p, i) => `<tr>
       <td style="text-align:center;color:#8b949e;font-size:0.8rem;">${i + 1}</td>
-      <td><a href="player.html?name=${encodeURIComponent(p.name)}" class="player-link">${p.name}</a>${p.team_logo ? ` <a href="team.html?id=${p.team_id}" title="${p.team_name}"><img src="${p.team_logo}" style="width:16px;height:16px;object-fit:contain;vertical-align:middle;border-radius:2px;margin-left:4px;" /></a>` : ''}</td>
+      <td style="${playerNameCellStyle(p)}"><a href="${playerHref(p.name)}" class="player-link">${p.name}</a>${p.team_logo ? ` <a href="team.html?id=${p.team_id}" title="${p.team_name}"><img src="${p.team_logo}" style="width:16px;height:16px;object-fit:contain;vertical-align:middle;border-radius:2px;margin-left:4px;" /></a>` : ''}</td>
       <td>${p.position || '–'}</td>
       ${SKATER_COLS.map(c => `<td style="${c.style ? c.style(p) : ''}">${c.fmt(p)}</td>`).join('')}
     </tr>`).join('')}</tbody>
   </table></div>`;
   if (root.firstElementChild && prevScroll) root.firstElementChild.scrollLeft = prevScroll;
+  if (root.firstElementChild) enableStickyColumnsFallback(root.firstElementChild);
 }
 
 function renderGoalies(league) {
@@ -226,19 +267,31 @@ function renderGoalies(league) {
   const limited = statsPlayerLimit > 0 ? sorted.slice(0, statsPlayerLimit) : sorted;
   const s = k => thClass(k, leagueSort[league].goalie);
   const prevScroll = root.firstElementChild?.scrollLeft || 0;
+  const rawSeasonValue = (typeof SeasonSelector !== 'undefined' && typeof SeasonSelector.getSelectedSeasonValue === 'function')
+    ? SeasonSelector.getSelectedSeasonValue()
+    : null;
+  const selectedSeasonId = (typeof SeasonSelector !== 'undefined' && typeof SeasonSelector.getSelectedSeasonId === 'function')
+    ? SeasonSelector.getSelectedSeasonId()
+    : null;
+  const playerHref = (playerName) => {
+    const qs = new URLSearchParams({ name: playerName, league });
+    if (selectedSeasonId && rawSeasonValue && !rawSeasonValue.startsWith('alltime_')) qs.set('season_id', String(selectedSeasonId));
+    return `player.html?${qs.toString()}`;
+  };
   root.innerHTML = `<div class="table-scroll-wrap stats-table-wrap"><table id="goalies-table">
     <thead><tr>
       <th style="text-align:center;width:2rem;">#</th>
       <th>Player</th>
       ${GOALIE_COLS.map(c => `<th data-tip="${c.tip}" class="${s(c.key)}" onclick="sortGoalies('${c.key}','${league}')">${c.label}</th>`).join('')}
     </tr></thead>
-    <tbody>${limited.map((p, i) => `<tr${playerRowAttrs(p)}>
+    <tbody>${limited.map((p, i) => `<tr>
       <td style="text-align:center;color:#8b949e;font-size:0.8rem;">${i + 1}</td>
-      <td><a href="player.html?name=${encodeURIComponent(p.name)}" class="player-link">${p.name}</a>${p.team_logo ? ` <a href="team.html?id=${p.team_id}" title="${p.team_name}"><img src="${p.team_logo}" style="width:16px;height:16px;object-fit:contain;vertical-align:middle;border-radius:2px;margin-left:4px;" /></a>` : ''}</td>
+      <td style="${playerNameCellStyle(p)}"><a href="${playerHref(p.name)}" class="player-link">${p.name}</a>${p.team_logo ? ` <a href="team.html?id=${p.team_id}" title="${p.team_name}"><img src="${p.team_logo}" style="width:16px;height:16px;object-fit:contain;vertical-align:middle;border-radius:2px;margin-left:4px;" /></a>` : ''}</td>
       ${GOALIE_COLS.map(c => `<td style="${c.style ? c.style(p) : ''}">${c.fmt(p)}</td>`).join('')}
     </tr>`).join('')}</tbody>
   </table></div>`;
   if (root.firstElementChild && prevScroll) root.firstElementChild.scrollLeft = prevScroll;
+  if (root.firstElementChild) enableStickyColumnsFallback(root.firstElementChild);
 }
 
 async function fetchLeagueStats(seasonId, opts) {

@@ -104,14 +104,10 @@
       <!-- ── League switcher ─────────────────────────────────── -->
       <div class="admin-league-bar" id="admin-league-bar">
         <span style="color:#8b949e;font-size:0.85rem;white-space:nowrap;">League:</span>
-        <button class="admin-league-btn active" data-league="threes" onclick="setAdminLeague('threes')">
-          <img src="/api/site-logo?type=threes" alt="" class="admin-league-btn-logo" />
-          3's
-        </button>
-        <button class="admin-league-btn" data-league="sixes" onclick="setAdminLeague('sixes')">
-          <img src="/api/site-logo?type=sixes" alt="" class="admin-league-btn-logo" />
-          6's
-        </button>
+        <span id="admin-league-current" style="display:inline-flex;align-items:center;gap:0.4rem;padding:0.35rem 0.8rem;border-radius:20px;border:1px solid #30363d;background:#21262d;color:#e6edf3;font-size:0.88rem;font-weight:600;">
+          <img id="admin-league-current-logo" src="/api/site-logo?type=threes" alt="" class="admin-league-btn-logo" />
+          <span id="admin-league-current-text">3's</span>
+        </span>
         <span style="color:#30363d;font-size:1rem;">│</span>
         <span style="color:#8b949e;font-size:0.85rem;white-space:nowrap;">Season:</span>
         <select id="admin-season-filter"
@@ -217,11 +213,14 @@
             </div>
             <div class="form-group" style="flex-direction:column;">
               <label for="team-color1">Primary Color <span style="color:#8b949e;font-size:0.8rem;">(gradient start)</span></label>
-              <input type="color" id="team-color1" value="#1e3a5f" style="width:56px;height:32px;padding:2px;border-radius:4px;border:1px solid #30363d;background:none;cursor:pointer;" />
+              <input type="color" id="team-color1" value="#1e3a5f" style="width:56px;height:32px;padding:2px;border-radius:4px;border:1px solid #30363d;background:none;cursor:pointer;" oninput="updateNewTeamGradient()" />
             </div>
             <div class="form-group" style="flex-direction:column;">
               <label for="team-color2">Secondary Color <span style="color:#8b949e;font-size:0.8rem;">(gradient end)</span></label>
-              <input type="color" id="team-color2" value="#0d1117" style="width:56px;height:32px;padding:2px;border-radius:4px;border:1px solid #30363d;background:none;cursor:pointer;" />
+              <input type="color" id="team-color2" value="#0d1117" style="width:56px;height:32px;padding:2px;border-radius:4px;border:1px solid #30363d;background:none;cursor:pointer;" oninput="updateNewTeamGradient()" />
+            </div>
+            <div class="form-group" style="flex-direction:column;">
+              <div id="new-team-gradient-preview" style="height:32px;border-radius:6px;border:1px solid #30363d;background:linear-gradient(135deg,#1e3a5f,#0d1117);margin-bottom:0.2rem;"></div>
             </div>
             <div class="form-group" style="flex-direction:column;">
               <label for="team-logo">Team Logo <span style="color:#8b949e;font-size:0.8rem;">(optional, max 2 MB)</span></label>
@@ -232,6 +231,15 @@
           </form>
         </div>
         <div class="admin-table-wrap">
+          <div id="season-team-add-controls" style="display:none;align-items:flex-end;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.6rem;">
+            <div class="form-group" style="margin-bottom:0;">
+              <label for="season-team-add-select" style="font-size:0.82rem;color:#8b949e;">Add existing team to selected season</label>
+              <select id="season-team-add-select" style="background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.35rem 0.6rem;min-width:220px;">
+                <option value="">— Select team —</option>
+              </select>
+            </div>
+            <button class="btn-secondary" onclick="addSelectedTeamToSeason()">Add to Season</button>
+          </div>
           <table id="teams-table">
             <thead><tr><th>Logo</th><th>Colors</th><th>Name</th><th>Type</th><th>Conference</th><th>Division</th><th>EA Club ID</th><th>Owner</th><th>Action</th></tr></thead>
             <tbody></tbody>
