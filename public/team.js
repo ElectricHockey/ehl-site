@@ -1,9 +1,12 @@
-const API = '/api';
+﻿const API = '/api';
 
 // ── Module-level state ────────────────────────────────────────────────────
 let _teamSkaterData = [];
 let _teamGoalieData = [];
 let _teamColors = null;
+let _teamAwards = null;
+let _teamAwardsPromise = null;
+let _teamActiveTab = 'stats';
 let _teamId = null;
 let _teamSeasons = null;          // seasons this team has played in (fetched once)
 let _teamSelectedSeasonId = null; // currently selected season (null = all-time)
@@ -275,10 +278,17 @@ async function loadTeamPage() {
           return null;
         });
     }
-    const [statsRes, recordsData] = await Promise.all([
+    if (!_teamAwardsPromise) {
+      _teamAwardsPromise = fetch(`${API}/teams/${id}/awards`)
+        .then(r => r.ok ? r.json() : null)
+        .catch(() => { _teamAwardsPromise = null; return null; });
+    }
+    const [statsRes, recordsData, awardsData] = await Promise.all([
       fetch(url),
       _recordsPromise,
+      _teamAwardsPromise,
     ]);
+
     if (!statsRes.ok) {
       root.innerHTML = `<p class="error">${(await statsRes.json().catch(()=>({}))).error || 'Team not found.'}</p>`;
       return;
@@ -288,6 +298,7 @@ async function loadTeamPage() {
     _recordsData = recordsData;
     document.title = `${team.name} – EHL`;
 
+    _teamAwards = awardsData;
     _teamColors = team;
     _teamSkaterData = skaterStats.map(p => ({ ...p, _ovr: computeOvr(p) }));
     _teamGoalieData = goalieStats.map(p => ({ ...p, _ovr: computeOvr(p) }));
@@ -389,7 +400,8 @@ async function loadTeamPage() {
       { label: 'Goalie',   positions: ['G'] },
     ];
 
-    html += `<h2 style="color:#58a6ff;margin-bottom:0.5rem;">Roster${rosterLimit ? ` <span style="font-size:0.8rem;color:#8b949e;font-weight:400;">(${rosterForDisplay.length}/${rosterLimit})</span>` : ''}</h2>`;
+    html += `<div id="team-stats-section">
+      <h2 style="color:#58a6ff;margin-bottom:0.5rem;">Roster${rosterLimit ? ` <span style="font-size:0.8rem;color:#8b949e;font-weight:400;">(${rosterForDisplay.length}/${rosterLimit})</span>` : ''}</h2>`;
 
     if (rosterForDisplay.length === 0) {
       html += '<p class="no-stats">No rostered players.</p>';
@@ -459,6 +471,15 @@ async function loadTeamPage() {
           <div id="records-panel">${renderRecordsTable(_recordsData.career, 'career')}</div>
         </div>`;
     }
+
+    html += `</div>`;
+
+    // ── Awards Panel ──
+    html += `
+      <div id="team-awards-panel" style="display:${_teamActiveTab === 'awards' ? 'block' : 'none'};margin-top:1.5rem;">
+        <h2 style="color:#58a6ff;margin-bottom:0.75rem;">Awards</h2>
+        <div id="team-awards-root">${renderTeamAwards()}</div>
+      </div>`;
 
     html += `</div><!-- end left -->
 
@@ -553,10 +574,10 @@ function renderTeamSeasonSelector() {
     return `<option value="${v}" ${sel(v)}>${s.name}${s.is_active ? ' ★' : ''}</option>`;
   }).join('');
 
-  container.innerHTML = `<div class="league-tabs-row"><div class="league-tab-season">
+  container.innerHTML = `<div class="league-tabs-row" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;"><div class="league-tab-season">
     <label for="team-season-select" style="color:#8b949e;font-size:0.85rem;white-space:nowrap;">Season:</label>
     <select id="team-season-select">${allTimeOpts}${opts}</select>
-  </div></div>`;
+  </div><div style="display:flex;gap:0.5rem;align-items:center;"><button class="lt-tab${_teamActiveTab === 'stats' ? ' lt-tab-active' : ''}" onclick="switchTeamTab('stats')">Stats</button><button class="lt-tab${_teamActiveTab === 'awards' ? ' lt-tab-active' : ''}" onclick="switchTeamTab('awards')">🏆 Awards</button></div></div>`;
 
   document.getElementById('team-season-select').addEventListener('change', function() {
     const val = this.value;
@@ -572,6 +593,68 @@ function renderTeamSeasonSelector() {
     }
     loadTeamPage();
   });
+}
+
+// ── Team awards renderer ───────────────────────────────────────────
+function renderTeamAwards() {
+  if (!_teamAwards) return '<p style="color:#8b949e;padding:1rem 0;">Loading awards…</p>';
+  const { playerAwards = [], teamAwards = [] } = _teamAwards;
+  if (playerAwards.length === 0 && teamAwards.length === 0)
+    return '<p style="color:#8b949e;padding:1.5rem 0;">No awards on file for this team.</p>';
+
+  // Group all awards by season
+  const bySeason = {};
+  for (const a of teamAwards) {
+    const k = a.season_id;
+    if (!bySeason[k]) bySeason[k] = { season_name: a.season_name, sort_order: a.sort_order, items: [] };
+    bySeason[k].items.push({ type: 'team', ...a });
+  }
+  for (const a of playerAwards) {
+    const k = a.season_id;
+    if (!bySeason[k]) bySeason[k] = { season_name: a.season_name, sort_order: a.sort_order, items: [] };
+    bySeason[k].items.push({ type: 'player', ...a });
+  }
+
+  const seasons = Object.values(bySeason).sort((a, b) => a.sort_order - b.sort_order);
+
+  return seasons.map(s => {
+    const itemsHtml = s.items.map(a => {
+      const img = a.award_image_url
+        ? `<img src="${a.award_image_url}" style="width:36px;height:36px;object-fit:contain;border-radius:4px;background:#21262d;flex-shrink:0;" alt="" />`
+        : `<div style="width:36px;height:36px;flex-shrink:0;background:#21262d;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:1.2rem;">${a.type === 'team' ? '🏆' : '🥇'}</div>`;
+      const playerLink = a.type === 'player' && a.player_name
+        ? `<div style="font-size:0.74rem;"><a href="player.html?name=${encodeURIComponent(a.player_name)}" style="color:#58a6ff;text-decoration:none;">${a.player_name}</a></div>`
+        : '';
+      const notes = a.notes ? `<div style="font-size:0.74rem;color:#8b949e;">${a.notes}</div>` : '';
+      return `<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:0.6rem 0.8rem;display:flex;align-items:center;gap:0.6rem;min-width:160px;max-width:240px;">
+        ${img}
+        <div>
+          <div style="font-weight:700;font-size:0.85rem;color:#e6edf3;line-height:1.2;">${a.award_name}</div>
+          ${playerLink}
+          ${notes}
+        </div>
+      </div>`;
+    }).join('');
+    return `<h3 style="font-size:0.88rem;text-transform:uppercase;letter-spacing:0.08em;color:#8b949e;margin:1.25rem 0 0.6rem;">${s.season_name}</h3>
+    <div style="display:flex;flex-wrap:wrap;gap:0.75rem;">${itemsHtml}</div>`;
+  }).join('');
+}
+
+// ── Stats / Awards tab switcher ───────────────────────────────────────
+function switchTeamTab(tab) {
+  _teamActiveTab = tab;
+  const awardsPanel = document.getElementById('team-awards-panel');
+  const statsSection = document.getElementById('team-stats-section');
+  const awardsRoot = document.getElementById('team-awards-root');
+  if (awardsPanel) awardsPanel.style.display = tab === 'awards' ? 'block' : 'none';
+  if (statsSection) statsSection.style.display = tab === 'stats' ? '' : 'none';
+  // Update tab button active states
+  document.querySelectorAll('.lt-tab').forEach(b => {
+    const isStats = b.textContent.trim() === 'Stats';
+    const isAwards = b.textContent.includes('Awards');
+    b.classList.toggle('lt-tab-active', (tab === 'stats' && isStats) || (tab === 'awards' && isAwards));
+  });
+  if (tab === 'awards' && awardsRoot) awardsRoot.innerHTML = renderTeamAwards();
 }
 
 // Stats tab switcher

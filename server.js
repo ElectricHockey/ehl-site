@@ -1,4 +1,4 @@
-// Load .env in local development (no-op on Vercel where env vars are injected)
+﻿// Load .env in local development (no-op on Vercel where env vars are injected)
 if (!process.env.VERCEL) { try { require('dotenv').config(); } catch (_) {} }
 
 const express = require('express');
@@ -1777,6 +1777,44 @@ app.get('/api/teams/:id/records', async (req, res) => {
   };
 
   res.json({ career, single });
+});
+
+// ── Team awards ────────────────────────────────────────────────────────────
+// GET /api/teams/:id/awards – all player awards + team awards for this team
+app.get('/api/teams/:id/awards', async (req, res) => {
+  const team = await db.prepare('SELECT id, name FROM teams WHERE id = ?').get(req.params.id);
+  if (!team) return res.status(404).json({ error: 'Team not found' });
+
+  // Player awards: season_awards rows where the player's name appears on this
+  // team's roster in that season (via season_rosters).
+  const playerAwards = await db.prepare(
+    'SELECT sa.season_id, sa.award_key, sa.player_name, sa.notes,' +
+    ' ad.name AS award_name, ad.image_url AS award_image_url, ad.is_auto,' +
+    ' s.name AS season_name, s.league_type, s.sort_order' +
+    ' FROM season_awards sa' +
+    ' JOIN award_defs ad ON sa.award_key = ad.key' +
+    ' JOIN seasons s ON sa.season_id = s.id' +
+    ' WHERE sa.player_name IN (' +
+    '   SELECT p.name FROM players p' +
+    '   JOIN season_rosters sr ON sr.player_id = p.id' +
+    '   WHERE sr.team_id = ? AND sr.season_id = sa.season_id' +
+    ' )' +
+    ' ORDER BY s.sort_order, ad.sort_order, sa.player_name'
+  ).all(team.id);
+
+  // Team awards: season_award_teams rows for this team (champion / presidents).
+  const teamAwards = await db.prepare(
+    'SELECT sat.season_id, sat.award_key, sat.notes,' +
+    ' ad.name AS award_name, ad.image_url AS award_image_url,' +
+    ' s.name AS season_name, s.league_type, s.sort_order' +
+    ' FROM season_award_teams sat' +
+    ' JOIN award_defs ad ON sat.award_key = ad.key' +
+    ' JOIN seasons s ON sat.season_id = s.id' +
+    ' WHERE sat.team_id = ?' +
+    ' ORDER BY s.sort_order, ad.sort_order'
+  ).all(team.id);
+
+  res.json({ playerAwards, teamAwards });
 });
 
 // ── League-wide records ────────────────────────────────────────────────────
