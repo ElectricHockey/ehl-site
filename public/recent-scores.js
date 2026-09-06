@@ -56,7 +56,7 @@ async function loadRecentScores() {
 
 (async () => {
   if (typeof SeasonSelector !== 'undefined') {
-    await SeasonSelector.init('season-selector-container');
+    await SeasonSelector.init('season-selector-container', { noAllTime: true });
     SeasonSelector.onSeasonChange(() => loadRecentScores());
   }
   loadRecentScores();

@@ -1208,7 +1208,7 @@ async function deleteGame(gameId, event) {
   });
 
   try {
-    await SeasonSelector.init('season-selector-container');
+    await SeasonSelector.init('season-selector-container', { noAllTime: true });
     SeasonSelector.onSeasonChange(async () => {
       closePicker();
       closeGameDetail();
