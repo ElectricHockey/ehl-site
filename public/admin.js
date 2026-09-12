@@ -604,19 +604,19 @@ async function deleteSeason(id, isPlayoff) {
 
 async function managePlayoffLines(seasonId, seasonName) {
   const overlay = document.createElement('div');
-  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:999;display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:2rem 1rem;';
+  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.75);z-index:999;display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:2rem 1rem;';
   overlay.innerHTML = `
     <div style="background:#161b22;border:1px solid #30363d;border-radius:10px;padding:1.5rem 2rem;min-width:480px;max-width:680px;width:100%;margin:auto;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;">
-        <h3 style="margin:0;color:#e6edf3;">Playoff Lines — ${seasonName}</h3>
+        <h3 style="margin:0;color:#e6edf3;">Playoff Lines &amp; Wildcard Format — ${seasonName}</h3>
         <button id="_pl-close" style="background:none;border:none;color:#8b949e;font-size:1.2rem;cursor:pointer;">✕</button>
       </div>
       <p style="color:#8b949e;font-size:0.82rem;margin-bottom:1rem;">
-        Set the playoff cutoff line for the standings. Leave blank to remove. These settings allow clinching to work without a playoff bracket.
+        Configure playoff qualification and cutoff lines for the standings. Clinching works automatically during the season.
       </p>
       <div id="_pl-body"><p style="color:#8b949e;">Loading…</p></div>
       <div style="display:flex;gap:0.5rem;margin-top:1.25rem;">
-        <button id="_pl-save" style="flex:1;padding:0.5rem;background:#238636;border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:0.9rem;">Save</button>
+        <button id="_pl-save" style="flex:1;padding:0.5rem;background:#238636;border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:0.9rem;">Save Settings</button>
         <button id="_pl-cancel" style="flex:1;padding:0.5rem;background:#21262d;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;cursor:pointer;font-size:0.9rem;">Cancel</button>
       </div>
     </div>`;
@@ -628,7 +628,7 @@ async function managePlayoffLines(seasonId, seasonName) {
   overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
 
   // Load existing cutoffs
-  let existing = { league_cutoff: null, cutoffs: [] };
+  let existing = { league_cutoff: null, is_wildcard_mode: false, wildcard_div_cutoff: 3, wildcard_conf_cutoff: 2, cutoffs: [] };
   try {
     const r = await fetch(`${API}/seasons/${seasonId}/cutoffs`, { headers: adminHeaders() });
     if (r.ok) existing = await r.json();
@@ -644,8 +644,12 @@ async function managePlayoffLines(seasonId, seasonName) {
   const conferences = [...new Set(teamConfs.map(t => t.conference).filter(Boolean))].sort();
   const divisions   = [...new Set(teamConfs.map(t => t.division).filter(Boolean))].sort();
 
+  const isWc = existing.is_wildcard_mode || (conferences.length >= 2 && divisions.length >= 2);
+  const divCutInit = existing.wildcard_div_cutoff ?? 3;
+  const confWcInit = existing.wildcard_conf_cutoff ?? 2;
+
   const getCut = (scope, name) => {
-    const row = existing.cutoffs.find(c => c.scope === scope && c.scope_name === name);
+    const row = (existing.cutoffs || []).find(c => c.scope === scope && c.scope_name === name);
     return row ? row.cutoff : '';
   };
 
@@ -671,44 +675,133 @@ async function managePlayoffLines(seasonId, seasonName) {
       </td>
     </tr>`).join('');
 
-  document.getElementById('_pl-body').innerHTML = `
-    <table style="width:100%;border-collapse:collapse;">
-      <tbody>
-        <tr>
-          <td style="padding:0.5rem 0.5rem;font-weight:600;color:#e6edf3;">🏒 League (overall top N)</td>
-          <td style="padding:0.5rem 0.5rem;">
-            <input type="number" min="1" id="_pl-league-cutoff" value="${existing.league_cutoff ?? ''}"
-              placeholder="e.g. 8"
-              style="width:80px;background:#0d1117;border:1px solid #30363d;color:#e6edf3;border-radius:4px;padding:0.25rem 0.4rem;font-size:0.83rem;" />
-            <span style="color:#8b949e;font-size:0.78rem;margin-left:0.5rem;">teams qualify</span>
-          </td>
-        </tr>
-        ${conferences.length > 0 ? `
-        <tr><td colspan="2" style="padding-top:1rem;font-weight:600;color:#58a6ff;font-size:0.85rem;">Per Conference</td></tr>
-        ${confRows}` : ''}
-        ${divisions.length > 0 ? `
-        <tr><td colspan="2" style="padding-top:1rem;font-weight:600;color:#3fb950;font-size:0.85rem;">Per Division</td></tr>
-        ${divRows}` : ''}
-      </tbody>
-    </table>
-    <p style="color:#8b949e;font-size:0.78rem;margin-top:0.75rem;">
-      Priority: Division cutoff &gt; Conference cutoff &gt; League cutoff. Leave blank to not draw a line for that scope.
-    </p>`;
+  const bodyEl = document.getElementById('_pl-body');
+  bodyEl.innerHTML = `
+    <!-- Mode switch -->
+    <div style="display:flex;gap:1.5rem;margin-bottom:1.25rem;padding:0.75rem;background:#0d1117;border:1px solid #30363d;border-radius:6px;">
+      <label style="color:#e6edf3;font-size:0.88rem;cursor:pointer;display:flex;align-items:center;gap:0.4rem;">
+        <input type="radio" name="_pl_mode" value="wildcard" ${isWc ? 'checked' : ''} />
+        🏒 <strong>NHL Wild Card Format</strong>
+      </label>
+      <label style="color:#e6edf3;font-size:0.88rem;cursor:pointer;display:flex;align-items:center;gap:0.4rem;">
+        <input type="radio" name="_pl_mode" value="standard" ${!isWc ? 'checked' : ''} />
+        📊 <strong>Custom / Standard Cutoffs</strong>
+      </label>
+    </div>
+
+    <!-- NHL Wildcard Section -->
+    <div id="_pl-wc-panel" style="${isWc ? '' : 'display:none;'}">
+      <div style="background:#161b22;border:1px solid #30363d;border-radius:6px;padding:1rem;margin-bottom:1rem;">
+        <h4 style="margin:0 0 0.75rem 0;color:#58a6ff;font-size:0.95rem;">NHL Wild Card Rules</h4>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:0.75rem;">
+          <div>
+            <label style="display:block;font-size:0.82rem;color:#8b949e;margin-bottom:0.3rem;">Top teams per division qualifying:</label>
+            <input type="number" id="_pl-wc-div-cut" min="1" max="10" value="${divCutInit}"
+              style="width:80px;background:#0d1117;border:1px solid #30363d;color:#e6edf3;border-radius:4px;padding:0.3rem 0.5rem;" />
+            <span style="font-size:0.8rem;color:#8b949e;margin-left:0.4rem;">(default: 3)</span>
+          </div>
+          <div>
+            <label style="display:block;font-size:0.82rem;color:#8b949e;margin-bottom:0.3rem;">Wildcard teams per conference:</label>
+            <input type="number" id="_pl-wc-conf-cut" min="1" max="10" value="${confWcInit}"
+              style="width:80px;background:#0d1117;border:1px solid #30363d;color:#e6edf3;border-radius:4px;padding:0.3rem 0.5rem;" />
+            <span style="font-size:0.8rem;color:#8b949e;margin-left:0.4rem;">(default: 2)</span>
+          </div>
+        </div>
+        <div id="_pl-wc-summary" style="background:#0d1117;padding:0.75rem;border-radius:6px;font-size:0.82rem;color:#c9d1d9;line-height:1.45;border-left:3px solid #a371f7;">
+        </div>
+      </div>
+    </div>
+
+    <!-- Standard Cutoffs Section -->
+    <div id="_pl-std-panel" style="${!isWc ? '' : 'display:none;'}">
+      <table style="width:100%;border-collapse:collapse;">
+        <tbody>
+          <tr>
+            <td style="padding:0.5rem 0.5rem;font-weight:600;color:#e6edf3;">🏒 League (overall top N)</td>
+            <td style="padding:0.5rem 0.5rem;">
+              <input type="number" min="1" id="_pl-league-cutoff" value="${existing.league_cutoff ?? ''}"
+                placeholder="e.g. 8"
+                style="width:80px;background:#0d1117;border:1px solid #30363d;color:#e6edf3;border-radius:4px;padding:0.25rem 0.4rem;font-size:0.83rem;" />
+              <span style="color:#8b949e;font-size:0.78rem;margin-left:0.5rem;">teams qualify</span>
+            </td>
+          </tr>
+          ${conferences.length > 0 ? `
+          <tr><td colspan="2" style="padding-top:1rem;font-weight:600;color:#58a6ff;font-size:0.85rem;">Per Conference</td></tr>
+          ${confRows}` : ''}
+          ${divisions.length > 0 ? `
+          <tr><td colspan="2" style="padding-top:1rem;font-weight:600;color:#3fb950;font-size:0.85rem;">Per Division</td></tr>
+          ${divRows}` : ''}
+        </tbody>
+      </table>
+      <p style="color:#8b949e;font-size:0.78rem;margin-top:0.75rem;">
+        Priority: Division cutoff &gt; Conference cutoff &gt; League cutoff. Leave blank to not draw a line for that scope.
+      </p>
+    </div>`;
+
+  const updateSummary = () => {
+    const dVal = Number(document.getElementById('_pl-wc-div-cut').value) || 3;
+    const wVal = Number(document.getElementById('_pl-wc-conf-cut').value) || 2;
+    const numConfs = conferences.length || 2;
+    const numDivsPerConf = Math.max(1, Math.round((divisions.length || 4) / numConfs));
+    const perConf = (numDivsPerConf * dVal) + wVal;
+    const total = numConfs * perConf;
+    const sumEl = document.getElementById('_pl-wc-summary');
+    if (sumEl) {
+      sumEl.innerHTML = `
+        <strong>• Standings:</strong> Top <strong>${dVal}</strong> in each division qualify automatically. Top <strong>${wVal}</strong> remaining teams in each conference qualify as Wildcards (marked with <strong>– W</strong>).<br/>
+        <strong>• Playoff Matchups:</strong> Top division winner in each conference plays the lowest wildcard (WC${wVal}), the other division winner plays WC1, and division seeds #2 vs #3 play each other.<br/>
+        <strong>• Total qualifiers:</strong> ${numConfs} conferences × ${perConf} teams = <strong>${total} total playoff teams</strong>.
+      `;
+    }
+  };
+
+  overlay.querySelectorAll('input[name="_pl_mode"]').forEach(radio => {
+    radio.addEventListener('change', () => {
+      const isWcMode = radio.value === 'wildcard';
+      document.getElementById('_pl-wc-panel').style.display = isWcMode ? '' : 'none';
+      document.getElementById('_pl-std-panel').style.display = isWcMode ? 'none' : '';
+    });
+  });
+
+  document.getElementById('_pl-wc-div-cut').addEventListener('input', updateSummary);
+  document.getElementById('_pl-wc-conf-cut').addEventListener('input', updateSummary);
+  updateSummary();
 
   document.getElementById('_pl-save').addEventListener('click', async () => {
-    const leagueVal = document.getElementById('_pl-league-cutoff').value.trim();
-    const league_cutoff = leagueVal === '' ? null : Number(leagueVal);
-    const cutoffInputs = overlay.querySelectorAll('input[data-scope]');
-    const cutoffs = [];
-    cutoffInputs.forEach(inp => {
-      const val = inp.value.trim();
-      if (val !== '') cutoffs.push({ scope: inp.dataset.scope, scope_name: inp.dataset.name, cutoff: Number(val) });
-    });
-    const r = await fetch(`${API}/seasons/${seasonId}/cutoffs`, {
-      method: 'POST', headers: adminJsonHeaders(),
-      body: JSON.stringify({ league_cutoff, cutoffs }),
-    });
-    if (!r.ok) { alert('Failed to save playoff lines'); return; }
+    const isWcMode = overlay.querySelector('input[name="_pl_mode"]:checked').value === 'wildcard';
+    if (isWcMode) {
+      const dVal = Number(document.getElementById('_pl-wc-div-cut').value) || 3;
+      const wVal = Number(document.getElementById('_pl-wc-conf-cut').value) || 2;
+      const numConfs = conferences.length || 2;
+      const numDivsPerConf = Math.max(1, Math.round((divisions.length || 4) / numConfs));
+      const perConf = (numDivsPerConf * dVal) + wVal;
+      const total = numConfs * perConf;
+
+      const r = await fetch(`${API}/seasons/${seasonId}/cutoffs`, {
+        method: 'POST', headers: adminJsonHeaders(),
+        body: JSON.stringify({
+          is_wildcard_mode: true,
+          wildcard_div_cutoff: dVal,
+          wildcard_conf_cutoff: wVal,
+          league_cutoff: total,
+        }),
+      });
+      if (!r.ok) { alert('Failed to save playoff lines'); return; }
+    } else {
+      const leagueVal = document.getElementById('_pl-league-cutoff').value.trim();
+      const league_cutoff = leagueVal === '' ? null : Number(leagueVal);
+      const cutoffInputs = overlay.querySelectorAll('#_pl-std-panel input[data-scope]');
+      const cutoffs = [];
+      cutoffInputs.forEach(inp => {
+        const val = inp.value.trim();
+        if (val !== '') cutoffs.push({ scope: inp.dataset.scope, scope_name: inp.dataset.name, cutoff: Number(val) });
+      });
+      const r = await fetch(`${API}/seasons/${seasonId}/cutoffs`, {
+        method: 'POST', headers: adminJsonHeaders(),
+        body: JSON.stringify({ is_wildcard_mode: false, league_cutoff, cutoffs }),
+      });
+      if (!r.ok) { alert('Failed to save playoff lines'); return; }
+    }
     close();
   });
 }
@@ -1834,6 +1927,25 @@ async function deletePlayoff(playoffId) {
   else { const e = await res.json(); alert(e.error || 'Failed to delete'); }
 }
 
+document.getElementById('po-season').addEventListener('change', async e => {
+  const sId = e.target.value;
+  if (!sId) return;
+  try {
+    const r = await fetch(`${API}/seasons/${sId}/cutoffs`, { headers: adminHeaders() });
+    if (r.ok) {
+      const d = await r.json();
+      if (d.is_wildcard_mode) {
+        const fmtSelect = document.getElementById('po-seeding-format');
+        if (fmtSelect) fmtSelect.value = 'nhl_wildcard';
+        if (d.league_cutoff) {
+          const opt = document.querySelector(`#po-qualify option[value="${d.league_cutoff}"]`);
+          if (opt) document.getElementById('po-qualify').value = d.league_cutoff;
+        }
+      }
+    }
+  } catch { /* ignore */ }
+});
+
 document.getElementById('playoff-form').addEventListener('submit', async e => {
   e.preventDefault();
   const season_id    = document.getElementById('po-season').value;
@@ -1841,6 +1953,7 @@ document.getElementById('playoff-form').addEventListener('submit', async e => {
   const min_games_played = Number(document.getElementById('po-min-gp').value);
   const series_length = Number(document.getElementById('po-series-length').value);
   const series_start_date = document.getElementById('po-start-date').value;
+  const seeding_format = document.getElementById('po-seeding-format') ? document.getElementById('po-seeding-format').value : 'standard';
 
   if (!season_id) { alert('Please select a season.'); return; }
   if (!series_start_date) { alert('Please select a Round 1 start date.'); return; }
@@ -1848,7 +1961,14 @@ document.getElementById('playoff-form').addEventListener('submit', async e => {
   const res = await fetch(`${API}/playoffs`, {
     method: 'POST',
     headers: adminJsonHeaders(),
-    body: JSON.stringify({ season_id: Number(season_id), teams_qualify, min_games_played, series_length, series_start_date }),
+    body: JSON.stringify({
+      season_id: Number(season_id),
+      teams_qualify,
+      min_games_played,
+      series_length,
+      series_start_date,
+      seeding_format
+    }),
   });
   if (res.ok) {
     e.target.reset();

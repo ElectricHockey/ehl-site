@@ -625,6 +625,15 @@ async function initSchema() {
     }
   }
 
+  // Add seeding_format to playoffs ('standard' | 'nhl_wildcard' | 'conference')
+  try {
+    await pool.query("ALTER TABLE playoffs ADD COLUMN seeding_format TEXT DEFAULT 'standard'");
+  } catch (err) {
+    if (!err.message || !err.message.includes('already exists')) {
+      console.warn('[db] Migration warning (playoffs seeding_format):', err.message);
+    }
+  }
+
   // Add home_shots / away_shots to games (EA team-level shot totals)
   try {
     await pool.query('ALTER TABLE games ADD COLUMN home_shots INTEGER DEFAULT NULL');

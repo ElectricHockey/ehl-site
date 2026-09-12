@@ -30,6 +30,7 @@ const CLINCH_INFO = {
   Z: { label: '– Z', title: 'Clinched conference',                        legend: 'Z – Clinched conference',                       color: '#58a6ff' },
   Y: { label: '– Y', title: 'Clinched division',                          legend: 'Y – Clinched division',                         color: '#3fb950' },
   X: { label: '– X', title: 'Clinched playoff spot',                      legend: 'X – Clinched playoff spot',                     color: '#3fb950' },
+  W: { label: '– W', title: 'Wild Card spot',                             legend: 'W – Wild Card spot',                            color: '#a371f7' },
   E: { label: '– E', title: 'Eliminated from playoff contention',         legend: 'E – Eliminated from playoff contention',        color: '#f85149' },
 };
 
@@ -160,9 +161,9 @@ function clinchLegend(teams) {
   </div>`;
 }
 
-// ── View selector (League / Conference / Division) ────────────────────────
+// ── View selector (Wild Card / Division / Conference / League) ────────────
 
-function updateViewSelector(hasConf, hasDiv) {
+function updateViewSelector(hasConf, hasDiv, isWildcard) {
   const container = document.getElementById('standings-view-container');
   if (!container) return;
 
@@ -173,14 +174,15 @@ function updateViewSelector(hasConf, hasDiv) {
   }
 
   // Set default or correct an invalid view mode for this data
-  if (!_viewMode || (_viewMode === 'conference' && !hasConf) || (_viewMode === 'division' && !hasDiv)) {
-    _viewMode = hasConf ? 'conference' : 'division';
+  if (!_viewMode || (_viewMode === 'wildcard' && !isWildcard) || (_viewMode === 'conference' && !hasConf) || (_viewMode === 'division' && !hasDiv)) {
+    _viewMode = isWildcard ? 'wildcard' : (hasConf ? 'conference' : 'division');
   }
 
   const options = [
-    { value: 'league', label: 'League' },
-    ...(hasConf ? [{ value: 'conference', label: 'Conference' }] : []),
+    ...(isWildcard ? [{ value: 'wildcard', label: 'Wild Card' }] : []),
     ...(hasDiv  ? [{ value: 'division',   label: 'Division'   }] : []),
+    ...(hasConf ? [{ value: 'conference', label: 'Conference' }] : []),
+    { value: 'league', label: 'League' },
   ];
 
   const selectStyle = 'background:#161b22;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.3rem 0.6rem;font-size:0.88rem;';
@@ -224,6 +226,9 @@ function buildStandingsHtml(data) {
   const cutoff = data.playoff_cutoff ?? null;
   const confCutoffs = data.conf_cutoffs || {};
   const divCutoffs = data.div_cutoffs || {};
+  const isWildcard = !!data.is_wildcard_mode;
+  const wildcardDivCut = data.wildcard_div_cutoff || 3;
+  const wildcardConfCut = data.wildcard_conf_cutoff || 2;
 
   if (!teams || teams.length === 0) return '<p style="color:#8b949e">No standings data for this season yet.</p>';
 
@@ -232,14 +237,73 @@ function buildStandingsHtml(data) {
   const thead = buildThead();
 
   // Update (or hide) the view selector
-  updateViewSelector(hasConf, hasDiv);
+  updateViewSelector(hasConf, hasDiv, isWildcard && hasConf && hasDiv);
 
   // Build a global pts-sort order to know each team's true league rank
   const globalOrder = sortTeams(teams, 'pts', 'desc');
   const globalRank = {};
   globalOrder.forEach((t, i) => { globalRank[t.id] = i + 1; });
 
-  const effectiveView = (hasConf || hasDiv) ? (_viewMode || 'league') : 'league';
+  const effectiveView = (hasConf || hasDiv) ? (_viewMode || (isWildcard ? 'wildcard' : 'league')) : 'league';
+
+  // ── Wild Card view (NHL format) ──────────────────────────────────────────
+  if (effectiveView === 'wildcard') {
+    const confMap = {};
+    for (const t of teams) {
+      const key = t.conference || 'Unassigned';
+      if (!confMap[key]) confMap[key] = [];
+      confMap[key].push(t);
+    }
+    let html = '';
+    for (const conf of Object.keys(confMap).sort()) {
+      html += `<div class="conference-block" style="margin-bottom:2rem;"><h3>${conf}${conf !== 'Unassigned' ? ' Conference' : ''}</h3>`;
+
+      const confTeams = confMap[conf];
+      const divMap = {};
+      for (const t of confTeams) {
+        const div = t.division || 'Unassigned';
+        if (!divMap[div]) divMap[div] = [];
+        divMap[div].push(t);
+      }
+
+      const divQualifiers = new Set();
+
+      // Render each division (Top D division leaders)
+      for (const div of Object.keys(divMap).sort()) {
+        const divTeams = sortTeams(divMap[div], 'pts', 'desc');
+        const divRank = {};
+        divTeams.forEach((t, i) => { divRank[t.id] = i + 1; });
+
+        const divTop = divTeams.slice(0, wildcardDivCut);
+        divTop.forEach(t => divQualifiers.add(t.id));
+
+        const group = _sortCol === 'rank'
+          ? divTop
+          : sortTeams(divTop, _sortCol, _sortDir);
+
+        html += `<h4 style="color:#58a6ff;margin-top:1rem;margin-bottom:0.4rem;font-size:0.95rem;">${div}${div !== 'Unassigned' ? ' Division' : ''}</h4>`;
+        html += `<div style="overflow-x:auto;"><table>${thead}<tbody>`;
+        html += renderGroupRows(group, divRank, null);
+        html += '</tbody></table></div>';
+      }
+
+      // Render Wild Card section (remaining teams in the conference)
+      const remainingConfTeams = sortTeams(confTeams.filter(t => !divQualifiers.has(t.id)), 'pts', 'desc');
+      const wcRank = {};
+      remainingConfTeams.forEach((t, i) => { wcRank[t.id] = i + 1; });
+
+      const wcGroup = _sortCol === 'rank'
+        ? remainingConfTeams
+        : sortTeams(remainingConfTeams, _sortCol, _sortDir);
+
+      html += `<h4 style="color:#a371f7;margin-top:1.25rem;margin-bottom:0.4rem;font-size:0.95rem;">Wild Card — ${conf}${conf !== 'Unassigned' ? ' Conference' : ''}</h4>`;
+      html += `<div style="overflow-x:auto;"><table>${thead}<tbody>`;
+      html += renderGroupRows(wcGroup, wcRank, wildcardConfCut);
+      html += '</tbody></table></div></div>';
+    }
+    html += clinchLegend(teams);
+    return html;
+  }
 
   // ── League view (flat list) ──────────────────────────────────────────────
   if (effectiveView === 'league') {
@@ -272,7 +336,6 @@ function buildStandingsHtml(data) {
         : sortTeams(confMap[conf], _sortCol, _sortDir);
 
       // Use only the per-conference cutoff; never fall back to the league-wide cutoff
-      // (conference standings qualify teams purely by conference placement, not league points)
       const effectiveCut = conf !== 'Unassigned' ? (confCutoffs[conf] ?? null) : null;
 
       html += `<div style="overflow-x:auto;"><table>${thead}<tbody>`;

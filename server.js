@@ -3209,70 +3209,167 @@ async function calcStandings(seasonId) {
   if (seasonId && sorted.length > 0) {
     const pc = await db.prepare('SELECT teams_qualify FROM playoffs WHERE season_id = ?').get(seasonId);
     const seasonRow = await db.prepare('SELECT playoff_cutoff FROM seasons WHERE id = ?').get(seasonId);
-    const rawN = pc ? pc.teams_qualify : (seasonRow && seasonRow.playoff_cutoff != null ? seasonRow.playoff_cutoff : null);
-    if (rawN != null) {
-      const N = Math.min(rawN, sorted.length);
+    const cutoffRows = await db.prepare('SELECT scope, scope_name, cutoff FROM season_cutoffs WHERE season_id = ?').all(seasonId);
+    const formatRow = cutoffRows.find(r => r.scope === 'format');
+    const isWildcardMode = formatRow ? formatRow.scope_name === 'wildcard' : cutoffRows.some(r => r.scope === 'wildcard_div');
+    const wildcardDivCut = (cutoffRows.find(r => r.scope === 'wildcard_div')?.cutoff) || 3;
+    const wildcardConfCut = (cutoffRows.find(r => r.scope === 'wildcard_conf')?.cutoff) || 2;
 
-      // Helper: can opponent 'o' surpass team 't' given remaining games?
-      // Uses the full tiebreaker chain. Returns true if there is any possible
-      // outcome where o would rank above t.
-      function canSurpass(o, t) {
-        const maxPts = o.pts + 2 * o.remaining;
-        if (maxPts < t.pts) return false;
-        if (maxPts > t.pts) return true;
-        // Equal pts scenario — worst case: o wins all remaining games in regulation (max reg wins)
-        const rw_t = t.w - t.otw;
-        const maxRegW_o = (o.w - o.otw) + o.remaining;
-        if (maxRegW_o < rw_t) return false;
-        if (maxRegW_o > rw_t) return true;
-        // Reg wins tied — H2H can still change; if o has remaining games assume possible
-        if (o.remaining > 0) return true;
-        // All games done — use actual tiebreakers
-        return cmpTeams(o, t) < 0; // o sorts above t (cmpTeams < 0 means o before t)
+    // Helper: can opponent 'o' surpass team 't' given remaining games?
+    function canSurpass(o, t) {
+      const maxPts = o.pts + 2 * o.remaining;
+      if (maxPts < t.pts) return false;
+      if (maxPts > t.pts) return true;
+      const rw_t = t.w - t.otw;
+      const maxRegW_o = (o.w - o.otw) + o.remaining;
+      if (maxRegW_o < rw_t) return false;
+      if (maxRegW_o > rw_t) return true;
+      if (o.remaining > 0) return true;
+      return cmpTeams(o, t) < 0;
+    }
+
+    // Helper: is team t currently ranked first among the given peer list using tiebreakers?
+    function isLeader(t, peers) {
+      return peers.length > 0 && peers.every(o => cmpTeams(t, o) < 0);
+    }
+
+    if (isWildcardMode) {
+      // Group by conference
+      const confMap = {};
+      for (const t of sorted) {
+        const conf = t.conference || 'Unassigned';
+        if (!confMap[conf]) confMap[conf] = [];
+        confMap[conf].push(t);
       }
 
-      // Helper: is team t currently ranked first among the given peer list using tiebreakers?
-      function isLeader(t, peers) {
-        return peers.length > 0 && peers.every(o => cmpTeams(t, o) < 0);
-      }
+      for (const conf of Object.keys(confMap)) {
+        const confTeams = confMap[conf];
+        const divMap = {};
+        for (const t of confTeams) {
+          const div = t.division || 'Unassigned';
+          if (!divMap[div]) divMap[div] = [];
+          divMap[div].push(t);
+        }
 
-      for (let i = 0; i < sorted.length; i++) {
-        const t = sorted[i];
-        const rank = i + 1;
-        t.clinch = null;
+        const divQualifiers = new Set();
+        for (const div of Object.keys(divMap)) {
+          const divSorted = divMap[div].sort(cmpTeams);
+          divSorted.forEach((t, i) => {
+            t.division_rank = i + 1;
+            if (i < wildcardDivCut) {
+              divQualifiers.add(t.id);
+              t.is_wildcard = false;
+              t.is_wildcard_spot = false;
+              t.is_playoff_qualified = true;
+            }
+          });
+        }
 
-        if (rank <= N) {
-          // P – clinched Presidents' Trophy (best overall record, tiebreaker-aware)
-          if (rank === 1) {
-            const anyCanPass = sorted.slice(1).some(o => canSurpass(o, t));
-            if (!anyCanPass) { t.clinch = 'P'; continue; }
+        const remainingConfTeams = confTeams.filter(t => !divQualifiers.has(t.id)).sort(cmpTeams);
+        remainingConfTeams.forEach((t, i) => {
+          t.wildcard_rank = i + 1;
+          if (i < wildcardConfCut) {
+            t.is_wildcard = true;
+            t.is_wildcard_spot = true;
+            t.is_playoff_qualified = true;
+          } else {
+            t.is_wildcard = false;
+            t.is_wildcard_spot = false;
+            t.is_playoff_qualified = false;
+          }
+        });
+
+        // Find last playoff qualifier in this conference
+        const qualTeams = confTeams.filter(t => t.is_playoff_qualified);
+        const lastQual = qualTeams.length > 0 ? qualTeams[qualTeams.length - 1] : null;
+
+        for (const t of confTeams) {
+          t.clinch = null;
+
+          // P – Presidents' Trophy (best overall record)
+          if (sorted[0].id === t.id && !sorted.slice(1).some(o => canSurpass(o, t))) {
+            t.clinch = 'P';
+            continue;
           }
 
-          // Z – clinched conference title (first in conf, no conf peer can catch)
-          if (t.conference) {
-            const confPeers = sorted.filter(o => o.id !== t.id && o.conference === t.conference);
+          // Z – Clinched conference
+          if (conf !== 'Unassigned') {
+            const confPeers = confTeams.filter(o => o.id !== t.id);
             if (isLeader(t, confPeers) && !confPeers.some(o => canSurpass(o, t))) {
-              t.clinch = 'Z'; continue;
+              t.clinch = 'Z';
+              continue;
             }
           }
 
-          // Y – clinched division title (first in div, no div peer can catch)
-          if (t.division && t.conference) {
-            const divPeers = sorted.filter(o => o.id !== t.id && o.division === t.division && o.conference === t.conference);
+          // Y – Clinched division
+          if (t.division && conf !== 'Unassigned') {
+            const divPeers = (divMap[t.division] || []).filter(o => o.id !== t.id);
             if (isLeader(t, divPeers) && !divPeers.some(o => canSurpass(o, t))) {
-              t.clinch = 'Y'; continue;
+              t.clinch = 'Y';
+              continue;
             }
           }
 
-          // X – clinched a playoff spot (no team outside top N can reach this team)
-          const outside = sorted.slice(N);
-          if (!outside.some(o => o.pts + 2 * o.remaining >= t.pts)) {
-            t.clinch = 'X';
+          if (t.is_wildcard_spot) {
+            // Display - W for teams currently occupying a wildcard spot
+            t.clinch = 'W';
+          } else if (t.is_playoff_qualified) {
+            // X – Clinched playoff spot
+            const nonQual = confTeams.filter(o => !o.is_playoff_qualified);
+            if (nonQual.length === 0 || !nonQual.some(o => o.pts + 2 * o.remaining >= t.pts)) {
+              t.clinch = 'X';
+            }
+          } else {
+            // E – Mathematically eliminated
+            if (lastQual && t.pts + 2 * t.remaining < lastQual.pts) {
+              t.clinch = 'E';
+            }
           }
-        } else {
-          // E – mathematically eliminated (max possible pts < pts of last playoff team)
-          if (t.pts + 2 * t.remaining < sorted[N - 1].pts) {
-            t.clinch = 'E';
+        }
+      }
+    } else {
+      const rawN = pc ? pc.teams_qualify : (seasonRow && seasonRow.playoff_cutoff != null ? seasonRow.playoff_cutoff : null);
+      if (rawN != null) {
+        const N = Math.min(rawN, sorted.length);
+
+        for (let i = 0; i < sorted.length; i++) {
+          const t = sorted[i];
+          const rank = i + 1;
+          t.clinch = null;
+
+          if (rank <= N) {
+            // P – clinched Presidents' Trophy (best overall record, tiebreaker-aware)
+            if (rank === 1) {
+              const anyCanPass = sorted.slice(1).some(o => canSurpass(o, t));
+              if (!anyCanPass) { t.clinch = 'P'; continue; }
+            }
+
+            // Z – clinched conference title (first in conf, no conf peer can catch)
+            if (t.conference) {
+              const confPeers = sorted.filter(o => o.id !== t.id && o.conference === t.conference);
+              if (isLeader(t, confPeers) && !confPeers.some(o => canSurpass(o, t))) {
+                t.clinch = 'Z'; continue;
+              }
+            }
+
+            // Y – clinched division title (first in div, no div peer can catch)
+            if (t.division && t.conference) {
+              const divPeers = sorted.filter(o => o.id !== t.id && o.division === t.division && o.conference === t.conference);
+              if (isLeader(t, divPeers) && !divPeers.some(o => canSurpass(o, t))) {
+                t.clinch = 'Y'; continue;
+              }
+            }
+
+            // X – clinched a playoff spot (no team outside top N can reach this team)
+            const outside = sorted.slice(N);
+            if (!outside.some(o => o.pts + 2 * o.remaining >= t.pts)) {
+              t.clinch = 'X';
+            }
+          } else {
+            // E – mathematically eliminated (max possible pts < pts of last playoff team)
+            if (t.pts + 2 * t.remaining < sorted[N - 1].pts) {
+              t.clinch = 'E';
+            }
           }
         }
       }
@@ -3289,6 +3386,9 @@ app.get('/api/standings', async (req, res) => {
   let playoff_cutoff = null;
   let conf_cutoffs = {};
   let div_cutoffs = {};
+  let is_wildcard_mode = false;
+  let wildcard_div_cutoff = 3;
+  let wildcard_conf_cutoff = 2;
   let teams;
   if (seasonId) {
     const [standings, pc, seasonRow, cutoffRows] = await Promise.all([
@@ -3304,6 +3404,13 @@ app.get('/api/standings', async (req, res) => {
     } else if (seasonRow && seasonRow.playoff_cutoff != null) {
       playoff_cutoff = Math.min(seasonRow.playoff_cutoff, teams.length);
     }
+    const formatRow = cutoffRows.find(r => r.scope === 'format');
+    is_wildcard_mode = formatRow ? formatRow.scope_name === 'wildcard' : cutoffRows.some(r => r.scope === 'wildcard_div');
+    const divCutRow = cutoffRows.find(r => r.scope === 'wildcard_div');
+    if (divCutRow) wildcard_div_cutoff = divCutRow.cutoff;
+    const confWcRow = cutoffRows.find(r => r.scope === 'wildcard_conf');
+    if (confWcRow) wildcard_conf_cutoff = confWcRow.cutoff;
+
     // Load per-scope cutoffs from season_cutoffs table
     for (const row of cutoffRows) {
       if (row.scope === 'conference') conf_cutoffs[row.scope_name] = row.cutoff;
@@ -3312,7 +3419,15 @@ app.get('/api/standings', async (req, res) => {
   } else {
     teams = await calcStandings(null);
   }
-  res.json({ teams, playoff_cutoff, conf_cutoffs, div_cutoffs });
+  res.json({
+    teams,
+    playoff_cutoff,
+    conf_cutoffs,
+    div_cutoffs,
+    is_wildcard_mode,
+    wildcard_div_cutoff,
+    wildcard_conf_cutoff
+  });
 });
 
 // GET /api/seasons/:id/teams – return teams active in this season (games or manual assignment)
@@ -3400,19 +3515,43 @@ app.get('/api/seasons/:id/cutoffs', requireAdmin, async (req, res) => {
   const season = await db.prepare('SELECT id, playoff_cutoff FROM seasons WHERE id = ?').get(req.params.id);
   if (!season) return res.status(404).json({ error: 'Season not found' });
   const rows = await db.prepare('SELECT scope, scope_name, cutoff FROM season_cutoffs WHERE season_id = ?').all(req.params.id);
-  res.json({ league_cutoff: season.playoff_cutoff ?? null, cutoffs: rows });
+  const formatRow = rows.find(r => r.scope === 'format');
+  const isWildcardMode = formatRow ? formatRow.scope_name === 'wildcard' : rows.some(r => r.scope === 'wildcard_div');
+  const divCut = rows.find(r => r.scope === 'wildcard_div')?.cutoff ?? 3;
+  const confWc = rows.find(r => r.scope === 'wildcard_conf')?.cutoff ?? 2;
+  res.json({
+    league_cutoff: season.playoff_cutoff ?? null,
+    is_wildcard_mode: isWildcardMode,
+    wildcard_div_cutoff: divCut,
+    wildcard_conf_cutoff: confWc,
+    cutoffs: rows
+  });
 });
 
 // POST /api/seasons/:id/cutoffs – bulk upsert playoff line cutoffs
 app.post('/api/seasons/:id/cutoffs', requireOwner, async (req, res) => {
-  const { league_cutoff, cutoffs } = req.body;
+  const { league_cutoff, is_wildcard_mode, wildcard_div_cutoff, wildcard_conf_cutoff, cutoffs } = req.body;
   const season = await db.prepare('SELECT id FROM seasons WHERE id = ?').get(req.params.id);
   if (!season) return res.status(404).json({ error: 'Season not found' });
+
   // Update league-wide cutoff on the season row
   const lcVal = league_cutoff === null || league_cutoff === '' ? null : Number(league_cutoff) || null;
   await db.prepare('UPDATE seasons SET playoff_cutoff = ? WHERE id = ?').run(lcVal, req.params.id);
+
   // Replace per-scope cutoffs
   await db.prepare('DELETE FROM season_cutoffs WHERE season_id = ?').run(req.params.id);
+
+  if (is_wildcard_mode) {
+    const divCut = Number(wildcard_div_cutoff) || 3;
+    const confWc = Number(wildcard_conf_cutoff) || 2;
+    await db.prepare('INSERT INTO season_cutoffs (season_id, scope, scope_name, cutoff) VALUES (?, ?, ?, ?)')
+      .run(req.params.id, 'format', 'wildcard', 1);
+    await db.prepare('INSERT INTO season_cutoffs (season_id, scope, scope_name, cutoff) VALUES (?, ?, ?, ?)')
+      .run(req.params.id, 'wildcard_div', '', divCut);
+    await db.prepare('INSERT INTO season_cutoffs (season_id, scope, scope_name, cutoff) VALUES (?, ?, ?, ?)')
+      .run(req.params.id, 'wildcard_conf', '', confWc);
+  }
+
   if (Array.isArray(cutoffs)) {
     for (const c of cutoffs) {
       if (!c.scope || c.cutoff == null) continue;
@@ -3580,7 +3719,7 @@ async function createSeriesSchedule(seriesId, highSeedTeamId, lowSeedTeamId, sea
 
 // POST /api/playoffs – create bracket from season standings
 app.post('/api/playoffs', requireOwner, async (req, res) => {
-  const { season_id, teams_qualify, min_games_played, series_length, series_start_date } = req.body;
+  const { season_id, teams_qualify, min_games_played, series_length, series_start_date, seeding_format } = req.body;
   if (!season_id || !teams_qualify || teams_qualify < 2) {
     return res.status(400).json({ error: 'season_id and teams_qualify (min 2) are required' });
   }
@@ -3597,23 +3736,151 @@ app.post('/api/playoffs', requireOwner, async (req, res) => {
   const existing = await db.prepare('SELECT id FROM playoffs WHERE season_id = ?').get(season_id);
   if (existing) return res.status(409).json({ error: 'A playoff already exists for this season. Delete it first.' });
 
+  // Check cutoffs configuration
+  const cutoffRows = await db.prepare('SELECT scope, scope_name, cutoff FROM season_cutoffs WHERE season_id = ?').all(season_id);
+  const isWildcardConfig = cutoffRows.some(r => (r.scope === 'format' && r.scope_name === 'wildcard') || r.scope === 'wildcard_div');
+  const format = seeding_format || (isWildcardConfig ? 'nhl_wildcard' : 'standard');
+
   // Build standings and filter by min games played
   const standings = await calcStandings(Number(season_id));
   const minGP = Number(min_games_played) || 0;
-  const qualified = standings.filter(t => t.gp >= minGP).slice(0, n);
-  if (qualified.length < 2) {
-    return res.status(400).json({ error: `Only ${qualified.length} team(s) qualify. Need at least 2.` });
+  const eligible = standings.filter(t => t.gp >= minGP);
+
+  if (eligible.length < 2) {
+    return res.status(400).json({ error: `Only ${eligible.length} team(s) qualify. Need at least 2.` });
   }
-  const effectiveN = qualified.length;
+
   const playoffSeasonName = `${season.name} Playoffs`;
   const psResult = await db.prepare('INSERT INTO seasons (name, is_active, league_type, is_playoff) VALUES (?, 0, ?, 1)')
     .run(playoffSeasonName, season.league_type || '');
   const playoffSeasonId = psResult.lastInsertRowid;
 
   const pl = await db.prepare(
-    'INSERT INTO playoffs (season_id, teams_qualify, min_games_played, series_length, playoff_season_id) VALUES (?, ?, ?, ?, ?)'
-  ).run(Number(season_id), effectiveN, minGP, Number(series_length) || 7, playoffSeasonId);
+    'INSERT INTO playoffs (season_id, teams_qualify, min_games_played, series_length, playoff_season_id, seeding_format) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(Number(season_id), n, minGP, Number(series_length) || 7, playoffSeasonId, format);
   const playoffId = pl.lastInsertRowid;
+  const seriesLen = Number(series_length) || 7;
+
+  if (format === 'nhl_wildcard') {
+    const divQualifyCount = (cutoffRows.find(r => r.scope === 'wildcard_div')?.cutoff) || 3;
+    const confWcCount = (cutoffRows.find(r => r.scope === 'wildcard_conf')?.cutoff) || 2;
+
+    // Group eligible teams by conference
+    const confMap = {};
+    for (const t of eligible) {
+      const conf = t.conference || 'Conference';
+      if (!confMap[conf]) confMap[conf] = [];
+      confMap[conf].push(t);
+    }
+    const confNames = Object.keys(confMap).sort();
+
+    let allQualified = [];
+    let r1SeriesList = [];
+
+    for (const conf of confNames) {
+      const confTeams = confMap[conf];
+      // Group by division in this conference
+      const divMap = {};
+      for (const t of confTeams) {
+        const div = t.division || 'Division';
+        if (!divMap[div]) divMap[div] = [];
+        divMap[div].push(t);
+      }
+      const divNames = Object.keys(divMap).sort();
+
+      const divQualifiers = {};
+      const nonDivQualifiers = [];
+
+      for (const div of divNames) {
+        const sortedDiv = divMap[div].sort(cmpTeams);
+        divQualifiers[div] = sortedDiv.slice(0, divQualifyCount);
+        nonDivQualifiers.push(...sortedDiv.slice(divQualifyCount));
+      }
+
+      // Sort remaining teams in conference for wildcards
+      const wcQualifiers = nonDivQualifiers.sort(cmpTeams).slice(0, confWcCount);
+
+      // Collect all qualifiers in conference for playoff_teams insertion
+      for (const div of divNames) {
+        allQualified.push(...divQualifiers[div]);
+      }
+      allQualified.push(...wcQualifiers);
+
+      // Create NHL-style matchups for this conference if 2 divisions exist
+      if (divNames.length >= 2) {
+        const divA = divNames[0];
+        const divB = divNames[1];
+        const winA = (divQualifiers[divA] || [])[0];
+        const winB = (divQualifiers[divB] || [])[0];
+
+        // Determine top division winner vs other division winner
+        let topDiv = divA, otherDiv = divB;
+        if (winA && winB && cmpTeams(winA, winB) > 0) {
+          topDiv = divB;
+          otherDiv = divA;
+        }
+
+        const topDivTeams = divQualifiers[topDiv] || [];
+        const otherDivTeams = divQualifiers[otherDiv] || [];
+        const wc1 = wcQualifiers[0];
+        const wc2 = wcQualifiers[1] || wcQualifiers[0];
+
+        // Matchup 1: Top Division Winner vs Lowest Wildcard (WC2)
+        if (topDivTeams[0] && wc2) {
+          r1SeriesList.push({ high: topDivTeams[0], low: wc2, highSeedNum: 1, lowSeedNum: 8 });
+        }
+        // Matchup 2: Top Division #2 vs Top Division #3
+        if (topDivTeams[1] && topDivTeams[2]) {
+          r1SeriesList.push({ high: topDivTeams[1], low: topDivTeams[2], highSeedNum: 2, lowSeedNum: 3 });
+        } else if (topDivTeams[1]) {
+          r1SeriesList.push({ high: topDivTeams[1], low: topDivTeams[topDivTeams.length - 1], highSeedNum: 2, lowSeedNum: topDivTeams.length });
+        }
+        // Matchup 3: Other Division Winner vs 1st Wildcard (WC1)
+        if (otherDivTeams[0] && wc1) {
+          r1SeriesList.push({ high: otherDivTeams[0], low: wc1, highSeedNum: 1, lowSeedNum: 7 });
+        }
+        // Matchup 4: Other Division #2 vs Other Division #3
+        if (otherDivTeams[1] && otherDivTeams[2]) {
+          r1SeriesList.push({ high: otherDivTeams[1], low: otherDivTeams[2], highSeedNum: 2, lowSeedNum: 3 });
+        } else if (otherDivTeams[1]) {
+          r1SeriesList.push({ high: otherDivTeams[1], low: otherDivTeams[otherDivTeams.length - 1], highSeedNum: 2, lowSeedNum: otherDivTeams.length });
+        }
+      } else {
+        // Fallback for conference with 1 division or no divisions
+        const allConfQual = [...(divQualifiers[divNames[0]] || []), ...wcQualifiers];
+        const m = Math.floor(allConfQual.length / 2);
+        for (let i = 0; i < m; i++) {
+          r1SeriesList.push({
+            high: allConfQual[i],
+            low: allConfQual[allConfQual.length - 1 - i],
+            highSeedNum: i + 1,
+            lowSeedNum: allConfQual.length - i
+          });
+        }
+      }
+    }
+
+    // Insert seeded teams
+    for (let i = 0; i < allQualified.length; i++) {
+      const t = allQualified[i];
+      await db.prepare('INSERT INTO playoff_teams (playoff_id, team_id, seed) VALUES (?, ?, ?)').run(playoffId, t.id, i + 1);
+    }
+
+    // Insert Round 1 series & schedules
+    for (let i = 0; i < r1SeriesList.length; i++) {
+      const pair = r1SeriesList[i];
+      const sr = await db.prepare(
+        'INSERT INTO playoff_series (playoff_id, round_number, series_number, high_seed_id, low_seed_id, high_seed_num, low_seed_num) VALUES (?, 1, ?, ?, ?, ?, ?)'
+      ).run(playoffId, i + 1, pair.high.id, pair.low.id, pair.highSeedNum, pair.lowSeedNum);
+      await createSeriesSchedule(sr.lastInsertRowid, pair.high.id, pair.low.id, playoffSeasonId, seriesLen, series_start_date);
+    }
+
+    return res.status(201).json(await getPlayoffBracket(playoffId));
+  }
+
+  // Standard format (1 vs N, 2 vs N-1, with byes if non-power of 2)
+  const qualified = eligible.slice(0, n);
+  const effectiveN = qualified.length;
 
   // Insert seeded teams
   for (let i = 0; i < qualified.length; i++) {
@@ -3629,7 +3896,6 @@ app.post('/api/playoffs', requireOwner, async (req, res) => {
   const numByes  = nextPow2 - effectiveN;
 
   let seriesNum = 1;
-  const seriesLen = Number(series_length) || 7;
 
   // Insert bye series (pre-completed, no games needed)
   for (let i = 0; i < numByes; i++) {
@@ -3674,23 +3940,28 @@ app.post('/api/playoffs/:id/advance-round', requireOwner, async (req, res) => {
     return res.json({ message: 'Playoff complete', champion_id: series[0].winner_id });
   }
 
-  // Sort winners by original seed (ascending = best seed first)
-  const winners = [];
-  for (const s of series) {
-    const pt = await db.prepare('SELECT seed FROM playoff_teams WHERE playoff_id = ? AND team_id = ?').get(req.params.id, s.winner_id);
-    winners.push({ team_id: s.winner_id, seed: pt ? pt.seed : 9999 });
-  }
-  winners.sort((a, b) => a.seed - b.seed);
-
   const nextRound = curRound + 1;
-  const m = Math.floor(winners.length / 2);
-  for (let i = 0; i < m; i++) {
-    const hi = winners[i];
-    const lo = winners[winners.length - 1 - i];
+  const numNextSeries = Math.floor(series.length / 2);
+
+  for (let i = 0; i < numNextSeries; i++) {
+    const s1 = series[i * 2];
+    const s2 = series[i * 2 + 1];
+    if (!s1 || !s2) continue;
+
+    const pt1 = await db.prepare('SELECT seed FROM playoff_teams WHERE playoff_id = ? AND team_id = ?').get(req.params.id, s1.winner_id);
+    const pt2 = await db.prepare('SELECT seed FROM playoff_teams WHERE playoff_id = ? AND team_id = ?').get(req.params.id, s2.winner_id);
+    const seed1 = pt1 ? pt1.seed : 9999;
+    const seed2 = pt2 ? pt2.seed : 9999;
+
+    const hiId = seed1 <= seed2 ? s1.winner_id : s2.winner_id;
+    const loId = seed1 <= seed2 ? s2.winner_id : s1.winner_id;
+    const hiSeed = seed1 <= seed2 ? seed1 : seed2;
+    const loSeed = seed1 <= seed2 ? seed2 : seed1;
+
     const sr = await db.prepare(
       'INSERT INTO playoff_series (playoff_id, round_number, series_number, high_seed_id, low_seed_id, high_seed_num, low_seed_num) VALUES (?, ?, ?, ?, ?, ?, ?)'
-    ).run(req.params.id, nextRound, i + 1, hi.team_id, lo.team_id, hi.seed, lo.seed);
-    await createSeriesSchedule(sr.lastInsertRowid, hi.team_id, lo.team_id, playoff.playoff_season_id || playoff.season_id, playoff.series_length || 7);
+    ).run(req.params.id, nextRound, i + 1, hiId, loId, hiSeed, loSeed);
+    await createSeriesSchedule(sr.lastInsertRowid, hiId, loId, playoff.playoff_season_id || playoff.season_id, playoff.series_length || 7);
   }
 
   res.json(await getPlayoffBracket(req.params.id));
