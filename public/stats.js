@@ -117,6 +117,35 @@ function enableStickyColumnsFallback(scrollWrap) {
   apply();
 }
 
+// Fallback for environments where `position: sticky` on table cells is unreliable.
+// Keeps rank + player columns pinned while horizontally scrolling stats tables.
+function enableStickyColumnsFallback(scrollWrap) {
+  if (!scrollWrap) return;
+  const table = scrollWrap.querySelector('table');
+  if (!table) return;
+
+  const col1 = table.querySelectorAll('tr > :nth-child(1)');
+  const col2 = table.querySelectorAll('tr > :nth-child(2)');
+  if (!col1.length || !col2.length) return;
+
+  const apply = () => {
+    const x = Math.round(scrollWrap.scrollLeft || 0);
+    col1.forEach(cell => {
+      cell.style.position = 'relative';
+      cell.style.zIndex = cell.tagName === 'TH' ? '8' : '6';
+      cell.style.transform = `translateX(${x}px)`;
+    });
+    col2.forEach(cell => {
+      cell.style.position = 'relative';
+      cell.style.zIndex = cell.tagName === 'TH' ? '7' : '5';
+      cell.style.transform = `translateX(${x}px)`;
+    });
+  };
+
+  scrollWrap.addEventListener('scroll', apply, { passive: true });
+  apply();
+}
+
 function hexToRgbStr(hex) {
   if (!hex || hex.length < 4) return null;
   let h = hex.replace('#', '');
