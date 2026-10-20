@@ -45,7 +45,7 @@ const pool = new Pool({
 
 // Bump this whenever initSchema or seed data changes. The marker prevents every
 // serverless cold start from replaying dozens of already-applied DDL statements.
-const SCHEMA_VERSION = '2026-08-01.3';
+const SCHEMA_VERSION = '2026-10-13.1';
 const SCHEMA_LOCK_ID = 4540492; // "EHL" as a stable PostgreSQL advisory-lock key
 
 // Critical: handle idle connection errors so they don't crash the process.
@@ -659,21 +659,31 @@ async function initSchema() {
     }
   }
 
+  // Add parent_season_id to seasons (for linked playoff seasons)
+  try {
+    await pool.query('ALTER TABLE seasons ADD COLUMN parent_season_id INTEGER REFERENCES seasons(id) ON DELETE SET NULL');
+  } catch (err) {
+    if (!err.message || !err.message.includes('already exists')) {
+      console.warn('[db] Migration warning (seasons parent_season_id):', err.message);
+    }
+  }
+
   // Seed default NHL award definitions (INSERT OR IGNORE so admin edits are preserved)
   const DEFAULT_AWARDS = [
     { key: 'hart',            name: 'Hart Trophy',                   description: 'Most Valuable Player',                                 is_auto: 0, sort_order: 1 },
-    { key: 'art_ross',        name: 'Art Ross Trophy',               description: 'Regular Season Points Leader',                         is_auto: 1, sort_order: 2 },
-    { key: 'rocket_richard',  name: 'Maurice Richard Trophy',        description: 'Regular Season Goals Leader',                          is_auto: 1, sort_order: 3 },
-    { key: 'vezina',          name: 'Vezina Trophy',                 description: 'Best Goaltender',                                      is_auto: 0, sort_order: 4 },
-    { key: 'calder',          name: 'Calder Memorial Trophy',        description: 'Best Rookie',                                          is_auto: 0, sort_order: 5 },
-    { key: 'norris',          name: 'James Norris Trophy',           description: 'Best Defenseman',                                      is_auto: 0, sort_order: 6 },
-    { key: 'selke',           name: 'Frank J. Selke Trophy',         description: 'Best Defensive Forward',                               is_auto: 0, sort_order: 7 },
-    { key: 'lady_byng',       name: 'Lady Byng Memorial Trophy',     description: 'Most Gentlemanly Player',                              is_auto: 0, sort_order: 8 },
-    { key: 'conn_smythe',     name: 'Conn Smythe Trophy',            description: 'Playoff MVP',                                          is_auto: 0, sort_order: 9 },
-    { key: 'jennings',        name: 'William M. Jennings Trophy',    description: 'Goaltender(s) on team allowing fewest goals',          is_auto: 1, sort_order: 10 },
-    { key: 'jack_adams',      name: 'Jack Adams Award',              description: 'Best Coach',                                           is_auto: 0, sort_order: 11 },
-    { key: 'champion',        name: 'Champion',                      description: 'Playoff Champion',                                     is_auto: 1, sort_order: 12 },
-    { key: 'presidents_trophy', name: "President's Trophy",          description: 'Best Regular Season Record',                           is_auto: 1, sort_order: 13 },
+    { key: 'ted_lindsay',     name: 'Ted Lindsay Award',             description: 'Most Outstanding Player',                              is_auto: 0, sort_order: 2 },
+    { key: 'art_ross',        name: 'Art Ross Trophy',               description: 'Regular Season Points Leader',                         is_auto: 1, sort_order: 3 },
+    { key: 'rocket_richard',  name: 'Maurice Richard Trophy',        description: 'Regular Season Goals Leader',                          is_auto: 1, sort_order: 4 },
+    { key: 'vezina',          name: 'Vezina Trophy',                 description: 'Best Goaltender',                                      is_auto: 0, sort_order: 5 },
+    { key: 'calder',          name: 'Calder Memorial Trophy',        description: 'Best Rookie',                                          is_auto: 0, sort_order: 6 },
+    { key: 'norris',          name: 'James Norris Trophy',           description: 'Best Defenseman',                                      is_auto: 0, sort_order: 7 },
+    { key: 'selke',           name: 'Frank J. Selke Trophy',         description: 'Best Defensive Forward',                               is_auto: 0, sort_order: 8 },
+    { key: 'lady_byng',       name: 'Lady Byng Memorial Trophy',     description: 'Most Gentlemanly Player',                              is_auto: 0, sort_order: 9 },
+    { key: 'conn_smythe',     name: 'Conn Smythe Trophy',            description: 'Playoff MVP',                                          is_auto: 0, sort_order: 10 },
+    { key: 'jennings',        name: 'William M. Jennings Trophy',    description: 'Goaltender(s) on team allowing fewest goals',          is_auto: 1, sort_order: 11 },
+    { key: 'jack_adams',      name: 'Jack Adams Award',              description: 'Best Coach',                                           is_auto: 0, sort_order: 12 },
+    { key: 'champion',        name: 'Champion',                      description: 'Playoff Champion',                                     is_auto: 1, sort_order: 13 },
+    { key: 'presidents_trophy', name: "President's Trophy",          description: 'Best Regular Season Record',                           is_auto: 1, sort_order: 14 },
   ];
   for (const a of DEFAULT_AWARDS) {
     try {

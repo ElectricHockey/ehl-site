@@ -1,4 +1,4 @@
-﻿// Load .env in local development (no-op on Vercel where env vars are injected)
+// Load .env in local development (no-op on Vercel where env vars are injected)
 if (!process.env.VERCEL) { try { require('dotenv').config(); } catch (_) {} }
 
 const express = require('express');
@@ -145,10 +145,13 @@ const excelUpload = {
         storage: multer.memoryStorage(),
         limits: { fileSize: 20 * 1024 * 1024 },
         fileFilter: (_req, file, cb) => {
-          const ok = /\.(xlsx|xls)$/i.test(file.originalname) ||
+          const ok = /\.(xlsx|xls|csv)$/i.test(file.originalname) ||
                      file.mimetype === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
-                     file.mimetype === 'application/vnd.ms-excel';
-          cb(ok ? null : new Error('Only Excel files (.xlsx / .xls) are allowed'), ok);
+                     file.mimetype === 'application/vnd.ms-excel' ||
+                     file.mimetype === 'text/csv' ||
+                     file.mimetype === 'text/plain' ||
+                     file.mimetype === 'application/csv';
+          cb(ok ? null : new Error('Only Excel (.xlsx / .xls) or CSV files are allowed'), ok);
         },
       });
     }, field);
@@ -200,18 +203,18 @@ const apiLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 300, standardHeade
 
 const PUBLIC_API_CACHE_RULES = [
   { match: /^\/api\/site-logo$/, browser: 60, edge: 300, stale: 3600 },
-  { match: /^\/api\/teams$/, browser: 30, edge: 300, stale: 900 },
-  { match: /^\/api\/teams\/[^/]+\/(?:stats|seasons|records)$/, browser: 20, edge: 120, stale: 600 },
-  { match: /^\/api\/players$/, browser: 30, edge: 300, stale: 900 },
-  { match: /^\/api\/players\/(?:profile|records)\/[^/]+$/, browser: 30, edge: 300, stale: 1800 },
-  { match: /^\/api\/games$/, browser: 15, edge: 60, stale: 300 },
-  { match: /^\/api\/games\/[^/]+\/stats$/, browser: 30, edge: 300, stale: 1800 },
-  { match: /^\/api\/stats\/leaders$/, browser: 20, edge: 120, stale: 600 },
-  { match: /^\/api\/standings$/, browser: 20, edge: 120, stale: 600 },
-  { match: /^\/api\/records$/, browser: 60, edge: 300, stale: 1800 },
-  { match: /^\/api\/transactions$/, browser: 20, edge: 120, stale: 600 },
-  { match: /^\/api\/playoffs\/by-(?:season|playoff-season)\/[^/]+$/, browser: 20, edge: 120, stale: 600 },
-  { match: /^\/api\/playoff-series\/[^/]+\/games$/, browser: 20, edge: 120, stale: 600 },
+  { match: /^\/api\/teams$/, browser: 0, edge: 5, stale: 15 },
+  { match: /^\/api\/teams\/[^/]+\/(?:stats|seasons|records)$/, browser: 0, edge: 5, stale: 15 },
+  { match: /^\/api\/players$/, browser: 0, edge: 5, stale: 15 },
+  { match: /^\/api\/players\/(?:profile|records)\/[^/]+$/, browser: 0, edge: 5, stale: 15 },
+  { match: /^\/api\/games$/, browser: 0, edge: 5, stale: 15 },
+  { match: /^\/api\/games\/[^/]+\/stats$/, browser: 0, edge: 5, stale: 15 },
+  { match: /^\/api\/stats\/leaders$/, browser: 0, edge: 5, stale: 15 },
+  { match: /^\/api\/standings$/, browser: 0, edge: 5, stale: 15 },
+  { match: /^\/api\/records$/, browser: 0, edge: 5, stale: 15 },
+  { match: /^\/api\/transactions$/, browser: 0, edge: 5, stale: 15 },
+  { match: /^\/api\/playoffs\/by-(?:season|playoff-season)\/[^/]+$/, browser: 0, edge: 5, stale: 15 },
+  { match: /^\/api\/playoff-series\/[^/]+\/games$/, browser: 0, edge: 5, stale: 15 },
 ];
 
 function setPublicCacheHeaders(res, browserSeconds, edgeSeconds, staleSeconds) {
@@ -275,12 +278,14 @@ const dbReady = (async () => {
   try {
     const updated = await db.ensureSchema();
     console.log(`[db] init: schema ${updated ? 'updated' : 'ready'}`);
+    await backfillPlayersFromStats();
   } catch (firstErr) {
     console.warn('[db] init attempt 1 failed, retrying in 500ms:', firstErr.message);
     await new Promise(r => setTimeout(r, 500));
     try {
       const updated = await db.ensureSchema();
       console.log(`[db] init: schema ${updated ? 'updated' : 'ready'} (retry)`);
+      await backfillPlayersFromStats();
     } catch (retryErr) {
       console.error('[db] init permanently failed:', retryErr.message);
       throw retryErr;
@@ -289,6 +294,100 @@ const dbReady = (async () => {
 })().catch(err => {
   initError = err;
 });
+
+/** Ensure a player record exists in players table for stats, linking to user and assigning position if available. */
+async function ensurePlayerRecord(playerName, position) {
+  if (!playerName) return null;
+  const name = String(playerName).trim();
+  if (!name) return null;
+
+  try {
+    const existing = await db.prepare('SELECT id, position, user_id FROM players WHERE LOWER(TRIM(name)) = LOWER(?) LIMIT 1').get(name);
+    if (existing) {
+      if (!existing.position && position) {
+        await db.prepare('UPDATE players SET position = ? WHERE id = ?')
+          .run(position, existing.id).catch(() => {});
+      }
+      return existing.id;
+    }
+
+    const user = await db.prepare('SELECT id, position FROM users WHERE LOWER(TRIM(username)) = LOWER(?) LIMIT 1').get(name);
+    const pos = position || (user ? user.position : null) || null;
+    const userId = user ? user.id : null;
+
+    const result = await db.prepare('INSERT INTO players (name, team_id, position, user_id, is_rostered) VALUES (?, NULL, ?, ?, 0)')
+      .run(name, pos, userId);
+    return result.lastInsertRowid;
+  } catch (err) {
+    try {
+      const checkAgain = await db.prepare('SELECT id FROM players WHERE LOWER(TRIM(name)) = LOWER(?) LIMIT 1').get(name);
+      return checkAgain ? checkAgain.id : null;
+    } catch (_) {
+      return null;
+    }
+  }
+}
+
+/** One-time backfill on server startup: sync all distinct player names from stats tables into players table, and de-duplicate existing players. */
+async function backfillPlayersFromStats() {
+  try {
+    // 1. De-duplicate existing rows in players table with case-insensitive identical names
+    const allPlayers = await db.prepare('SELECT id, name, team_id, position, number, user_id, discord, discord_id FROM players ORDER BY id ASC').all();
+    const seen = new Map();
+    for (const p of allPlayers) {
+      const key = (p.name || '').trim().toLowerCase();
+      if (!key) continue;
+      if (seen.has(key)) {
+        const primary = seen.get(key);
+        await db.prepare('UPDATE season_rosters SET player_id = ? WHERE player_id = ?').run(primary.id, p.id).catch(() => {});
+        await db.prepare('DELETE FROM season_rosters WHERE player_id = ?').run(p.id).catch(() => {});
+        await db.prepare(`
+          UPDATE players SET
+            team_id = COALESCE(team_id, ?),
+            position = COALESCE(position, ?),
+            number = COALESCE(number, ?),
+            user_id = COALESCE(user_id, ?),
+            discord = COALESCE(discord, ?),
+            discord_id = COALESCE(discord_id, ?)
+          WHERE id = ?
+        `).run(p.team_id || null, p.position || null, p.number || null, p.user_id || null, p.discord || null, p.discord_id || null, primary.id).catch(() => {});
+        await db.prepare('DELETE FROM players WHERE id = ?').run(p.id).catch(() => {});
+      } else {
+        seen.set(key, p);
+      }
+    }
+
+    // 2. Query distinct player names from game_player_stats and season_player_stats
+    const statNames = await db.prepare(`
+      SELECT DISTINCT player_name, position
+      FROM (
+        SELECT player_name, position FROM game_player_stats WHERE player_name IS NOT NULL AND TRIM(player_name) != ''
+        UNION
+        SELECT player_name, position FROM season_player_stats WHERE player_name IS NOT NULL AND TRIM(player_name) != ''
+      ) s
+    `).all();
+
+    let addedCount = 0;
+    for (const s of statNames) {
+      const name = (s.player_name || '').trim();
+      if (!name) continue;
+      const key = name.toLowerCase();
+      if (!seen.has(key)) {
+        const user = await db.prepare('SELECT id, position FROM users WHERE LOWER(TRIM(username)) = LOWER(?) LIMIT 1').get(name);
+        const pos = s.position || (user ? user.position : null) || null;
+        const res = await db.prepare('INSERT INTO players (name, team_id, position, user_id, is_rostered) VALUES (?, NULL, ?, ?, 0)')
+          .run(name, pos, user ? user.id : null);
+        seen.set(key, { id: res.lastInsertRowid, name });
+        addedCount++;
+      }
+    }
+    if (addedCount > 0) {
+      console.log(`[db] Backfilled ${addedCount} player(s) from stats into players table.`);
+    }
+  } catch (err) {
+    console.error('[db] Error in backfillPlayersFromStats:', err.message);
+  }
+}
 
 // Block every request until schema + seed have finished (matters on Vercel
 // cold starts where the first request can arrive before init completes).
@@ -696,8 +795,8 @@ app.get('/api/seasons', async (req, res) => {
 app.post('/api/seasons', requireOwner, async (req, res) => {
   const { name, make_active, league_type, copy_from_season_id, copy_teams, copy_rosters } = req.body;
   if (!name || !name.trim()) return res.status(400).json({ error: 'Season name is required' });
-  if (make_active) await db.prepare('UPDATE seasons SET is_active = 0').run();
   const lt = league_type || '';
+  if (make_active) await db.prepare("UPDATE seasons SET is_active = 0 WHERE COALESCE(league_type, '') = ?").run(lt);
   // Place new seasons at the end of the list
   const maxOrder = await db.prepare('SELECT COALESCE(MAX(sort_order), 0) AS m FROM seasons').get();
   const nextOrder = maxOrder.m + 1;
@@ -741,7 +840,7 @@ app.patch('/api/seasons/:id', requireOwner, async (req, res) => {
   if (!season) return res.status(404).json({ error: 'Season not found' });
   const name = req.body.name !== undefined ? req.body.name.trim() : season.name;
   const league_type = req.body.league_type !== undefined ? req.body.league_type : (season.league_type || '');
-  if (req.body.is_active) await db.prepare('UPDATE seasons SET is_active = 0').run();
+  if (req.body.is_active) await db.prepare('UPDATE seasons SET is_active = 0 WHERE COALESCE(league_type, \'\') = ?').run(league_type || '');
   const is_active = req.body.is_active ? 1 : (req.body.is_active === false ? 0 : season.is_active);
   const is_disabled = req.body.is_disabled !== undefined
     ? (req.body.is_disabled ? 1 : 0)
@@ -1362,47 +1461,6 @@ function mapEAPlayer(p) {
   };
 }
 
-// ── EA match response cache ────────────────────────────────────────────────
-// Keyed by gameId; avoids re-hitting the EA API when the picker is reopened.
-const _eaMatchCache = new Map();
-const EA_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-
-async function fetchEA(url) {
-  // If a CORS proxy is configured, route through it instead of hitting EA directly.
-  if (EA_PROXY_URL) {
-    url = url.replace('https://proclubs.ea.com', EA_PROXY_URL);
-  }
-  // Use an 8-second timeout so our catch block can respond before Vercel's
-  // 10-second serverless function limit kills the process and returns its own 502.
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 8000);
-  try {
-    const res = await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
-        Accept: 'application/json, text/plain, */*',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br',
-        Referer: 'https://www.ea.com/',
-        Origin: 'https://www.ea.com',
-        'Cache-Control': 'no-store',
-      },
-    });
-    if (!res.ok) {
-      // Capture response body for debugging
-      const body = await res.text().catch(() => '');
-      const err = new Error(`EA API responded with ${res.status}`);
-      err.eaStatus = res.status;
-      err.eaBody = body.slice(0, 500);
-      throw err;
-    }
-    return res.json();
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 // ── Shared stat SQL fragments ──────────────────────────────────────────────
 
 const SKATER_SELECT = `
@@ -1520,12 +1578,14 @@ const GOALIE_SELECT = `
                     + CAST(gps.offensive_rating AS NUMERIC)
                     + CAST(gps.team_play_rating AS NUMERIC) * 1.5) / 4.5
                  ))
-               WHEN gps.shots_against > 0 THEN GREATEST(0.0, LEAST(99.0,
-                 60.0
-                 + (CAST(gps.shots_against - gps.goals_against AS NUMERIC) / CAST(gps.shots_against AS NUMERIC) * 100.0 - 88.0) * 3.0
-                 + CASE WHEN gps.goals_against = 0 THEN 8.0 ELSE 0.0 END
+               WHEN gps.shots_against > 0 THEN GREATEST(50.0, LEAST(99.0,
+                 50.0
+                 + (CAST(gps.shots_against - gps.goals_against AS NUMERIC) / CAST(gps.shots_against AS NUMERIC) * 40.0)
+                 - LEAST(CAST(gps.goals_against AS NUMERIC) * 1.0, 10.0)
+                 + CASE WHEN gps.goals_against = 0 AND gps.shots_against > 0 THEN 5.0 ELSE 0.0 END
+                 + CASE WHEN gps.goalie_wins = 1 OR gps.goalie_otw = 1 THEN 3.0 ELSE 0.0 END
                ))
-               ELSE 60.0
+               ELSE 75.0
           END), 0) AS overall_rating,
   ROUND(AVG(NULLIF(gps.offensive_rating,0)),0)  AS offensive_rating,
   ROUND(AVG(NULLIF(gps.defensive_rating,0)),0)  AS defensive_rating,
@@ -1558,60 +1618,127 @@ app.get('/api/teams/:id/stats', async (req, res) => {
     rp = [req.params.id, req.params.id];
   }
 
-  // Fetch rostered players – when a specific season is selected, derive from game stats
-  // so historical rosters reflect who actually played that season
-  const rosterPromise = seasonId
-    ? db.prepare(`
-        SELECT DISTINCT ON (gps.player_name)
-          gps.player_name AS name, gps.position,
-          p.id, p.number, p.user_id, u.platform
-        FROM game_player_stats gps
-        JOIN games g ON gps.game_id = g.id
-        LEFT JOIN players p ON p.name = gps.player_name AND p.team_id = gps.team_id
+  // Fetch rostered players – only players officially assigned to the team's roster
+  let rosterPromise;
+  if (seasonId) {
+    rosterPromise = db.prepare(`
+      SELECT p.id, p.name, p.position, p.number, p.user_id, sr.role, u.platform
+      FROM season_rosters sr
+      JOIN players p ON p.id = sr.player_id
+      LEFT JOIN users u ON p.user_id = u.id
+      WHERE sr.team_id = ? AND sr.season_id = ?
+      ORDER BY p.name
+    `).all(req.params.id, seasonId);
+  } else {
+    // If no season specified, try team's active season first, or fallback to current team_id on players
+    rosterPromise = (async () => {
+      const activeSeason = await db.prepare('SELECT id FROM seasons WHERE is_active = 1 AND is_playoff = 0 LIMIT 1').get();
+      if (activeSeason) {
+        const activeRoster = await db.prepare(`
+          SELECT p.id, p.name, p.position, p.number, p.user_id, sr.role, u.platform
+          FROM season_rosters sr
+          JOIN players p ON p.id = sr.player_id
+          LEFT JOIN users u ON p.user_id = u.id
+          WHERE sr.team_id = ? AND sr.season_id = ?
+          ORDER BY p.name
+        `).all(req.params.id, activeSeason.id);
+        if (activeRoster.length > 0) return activeRoster;
+      }
+      return db.prepare(`
+        SELECT p.id, p.name, p.position, p.number, p.user_id, u.platform
+        FROM players p
         LEFT JOIN users u ON p.user_id = u.id
-        WHERE gps.team_id = ? AND g.season_id = ? AND g.status IN ('complete','forfeit')
-        ORDER BY gps.player_name
-      `).all(req.params.id, seasonId)
-    : filterType
-    ? db.prepare(`
-        SELECT DISTINCT ON (gps.player_name)
-          gps.player_name AS name, gps.position,
-          p.id, p.number, p.user_id, u.platform
-        FROM game_player_stats gps
-        JOIN games g ON gps.game_id = g.id
-        LEFT JOIN players p ON p.name = gps.player_name AND p.team_id = gps.team_id
+        WHERE p.team_id = ? AND p.is_rostered = 1
+        ORDER BY p.name
+      `).all(req.params.id);
+    })();
+  }
+
+  let staffPromise;
+  if (seasonId) {
+    staffPromise = (async () => {
+      const seasonStaff = await db.prepare(`
+        SELECT
+          sr.role,
+          p.user_id,
+          p.name AS username,
+          COALESCE(u.platform, 'xbox') AS platform
+        FROM season_rosters sr
+        JOIN players p ON p.id = sr.player_id
         LEFT JOIN users u ON p.user_id = u.id
-        WHERE gps.team_id = ? AND g.status IN ('complete','forfeit') ${sf}
-        ORDER BY gps.player_name
-      `).all(req.params.id)
-    : db.prepare(`
-        WITH historical AS (
+        WHERE sr.team_id = ? AND sr.season_id = ? AND sr.role IN ('owner', 'gm', 'captain')
+        ORDER BY
+          CASE sr.role WHEN 'owner' THEN 0 WHEN 'gm' THEN 1 ELSE 2 END,
+          p.name
+      `).all(req.params.id, seasonId);
+      if (seasonStaff.length > 0) return seasonStaff;
+      return db.prepare(`
+        SELECT
+          ts.role,
+          ts.user_id,
+          COALESCE(u.username, p.name, ts.user_id::text) AS username,
+          COALESCE(u.platform, 'xbox') AS platform
+        FROM team_staff ts
+        LEFT JOIN users u ON ts.user_id = u.id
+        LEFT JOIN players p ON p.user_id = ts.user_id AND p.team_id = ts.team_id
+        WHERE ts.team_id = ?
+        ORDER BY
+          CASE ts.role WHEN 'owner' THEN 0 WHEN 'gm' THEN 1 ELSE 2 END,
+          COALESCE(u.username, p.name, ts.user_id::text)
+      `).all(req.params.id);
+    })();
+  } else {
+    staffPromise = (async () => {
+      const activeSeason = await db.prepare('SELECT id FROM seasons WHERE is_active = 1 AND is_playoff = 0 LIMIT 1').get();
+      if (activeSeason) {
+        const activeStaff = await db.prepare(`
           SELECT
-            gps.player_name AS name,
-            MAX(NULLIF(gps.position, '')) AS position
-          FROM game_player_stats gps
-          JOIN games g ON gps.game_id = g.id
-          WHERE gps.team_id = ? AND g.status IN ('complete','forfeit')
-          GROUP BY gps.player_name
-        ),
-        current_roster AS (
-          SELECT p.name, p.position
-          FROM players p
-          WHERE p.team_id = ? AND p.is_rostered = 1
-        ),
-        combined AS (
-          SELECT name, position FROM historical
-          UNION
-          SELECT name, position FROM current_roster
-        )
-        SELECT DISTINCT ON (c.name)
-          p.id, c.name, COALESCE(NULLIF(c.position, ''), p.position) AS position,
-          p.number, p.user_id, u.platform
-        FROM combined c
-        LEFT JOIN players p ON p.name = c.name AND p.team_id = ?
+            sr.role,
+            p.user_id,
+            p.name AS username,
+            COALESCE(u.platform, 'xbox') AS platform
+          FROM season_rosters sr
+          JOIN players p ON p.id = sr.player_id
+          LEFT JOIN users u ON p.user_id = u.id
+          WHERE sr.team_id = ? AND sr.season_id = ? AND sr.role IN ('owner', 'gm', 'captain')
+          ORDER BY
+            CASE sr.role WHEN 'owner' THEN 0 WHEN 'gm' THEN 1 ELSE 2 END,
+            p.name
+        `).all(req.params.id, activeSeason.id);
+        if (activeStaff.length > 0) return activeStaff;
+      }
+      const latestStaff = await db.prepare(`
+        SELECT
+          sr.role,
+          p.user_id,
+          p.name AS username,
+          COALESCE(u.platform, 'xbox') AS platform
+        FROM season_rosters sr
+        JOIN players p ON p.id = sr.player_id
         LEFT JOIN users u ON p.user_id = u.id
-        ORDER BY c.name
-      `).all(req.params.id, req.params.id, req.params.id);
+        WHERE sr.team_id = ? AND sr.role IN ('owner', 'gm', 'captain')
+        ORDER BY sr.season_id DESC,
+          CASE sr.role WHEN 'owner' THEN 0 WHEN 'gm' THEN 1 ELSE 2 END,
+          p.name
+      `).all(req.params.id);
+      if (latestStaff.length > 0) return latestStaff;
+
+      return db.prepare(`
+        SELECT
+          ts.role,
+          ts.user_id,
+          COALESCE(u.username, p.name, ts.user_id::text) AS username,
+          COALESCE(u.platform, 'xbox') AS platform
+        FROM team_staff ts
+        LEFT JOIN users u ON ts.user_id = u.id
+        LEFT JOIN players p ON p.user_id = ts.user_id AND p.team_id = ts.team_id
+        WHERE ts.team_id = ?
+        ORDER BY
+          CASE ts.role WHEN 'owner' THEN 0 WHEN 'gm' THEN 1 ELSE 2 END,
+          COALESCE(u.username, p.name, ts.user_id::text)
+      `).all(req.params.id);
+    })();
+  }
 
   const [roster, skaterStats, goalieStats, recentGames, staff, record, transactions, upcoming] = await Promise.all([
     rosterPromise,
@@ -1635,20 +1762,7 @@ app.get('/api/teams/:id/stats', async (req, res) => {
       WHERE (g.home_team_id = ? OR g.away_team_id = ?) AND g.status IN ('complete','forfeit') ${sf}
       ORDER BY g.date DESC LIMIT 10
     `).all(...rp),
-    db.prepare(`
-      SELECT
-        ts.role,
-        ts.user_id,
-        COALESCE(u.username, p.name, ts.user_id::text) AS username,
-        COALESCE(u.platform, 'xbox') AS platform
-      FROM team_staff ts
-      LEFT JOIN users u ON ts.user_id = u.id
-      LEFT JOIN players p ON p.user_id = ts.user_id AND p.team_id = ts.team_id
-      WHERE ts.team_id = ?
-      ORDER BY
-        CASE ts.role WHEN 'owner' THEN 0 WHEN 'gm' THEN 1 ELSE 2 END,
-        COALESCE(u.username, p.name, ts.user_id::text)
-    `).all(req.params.id),
+    staffPromise,
     db.prepare(`
       SELECT
         SUM(CASE WHEN (home_team_id=@id AND home_score>away_score) OR (away_team_id=@id AND away_score>home_score) THEN 1 ELSE 0 END) AS wins,
@@ -2350,33 +2464,39 @@ app.get('/api/players/profile/:name', async (req, res) => {
 
   // Per-season per-team splits – always fetch both modes
   const goalieStatsPromise = db.prepare(`
-      SELECT g.season_id, MAX(COALESCE(s.name,'No Season')) AS season_name,
-        MAX(COALESCE(s.league_type,'')) AS league_type,
-        MAX(COALESCE(s.sort_order, g.season_id)) AS _sort_order,
-        CASE WHEN g.playoff_series_id IS NOT NULL THEN 1 ELSE 0 END AS is_playoff,
+      SELECT
+        COALESCE(s.parent_season_id, g.season_id) AS season_id,
+        MAX(COALESCE(ps.name, TRIM(REPLACE(s.name, 'Playoffs', '')), s.name, 'No Season')) AS season_name,
+        MAX(COALESCE(ps.league_type, s.league_type, '')) AS league_type,
+        MAX(COALESCE(ps.sort_order, s.sort_order, g.season_id)) AS _sort_order,
+        CASE WHEN g.playoff_series_id IS NOT NULL OR s.is_playoff = 1 OR s.parent_season_id IS NOT NULL THEN 1 ELSE 0 END AS is_playoff,
         ${GOALIE_SELECT}
       FROM game_player_stats gps
       JOIN teams t ON gps.team_id = t.id
       JOIN games g ON gps.game_id = g.id
       LEFT JOIN seasons s ON g.season_id = s.id
+      LEFT JOIN seasons ps ON s.parent_season_id = ps.id
       WHERE gps.player_name = ? AND gps.position = 'G' AND g.status IN ('complete','forfeit')
-      GROUP BY g.season_id, gps.team_id, CASE WHEN g.playoff_series_id IS NOT NULL THEN 1 ELSE 0 END
-      ORDER BY MAX(COALESCE(s.sort_order, g.season_id)) DESC, CASE WHEN g.playoff_series_id IS NOT NULL THEN 1 ELSE 0 END
+      GROUP BY COALESCE(s.parent_season_id, g.season_id), gps.team_id, CASE WHEN g.playoff_series_id IS NOT NULL OR s.is_playoff = 1 OR s.parent_season_id IS NOT NULL THEN 1 ELSE 0 END
+      ORDER BY MAX(COALESCE(ps.sort_order, s.sort_order, g.season_id)) DESC, CASE WHEN g.playoff_series_id IS NOT NULL OR s.is_playoff = 1 OR s.parent_season_id IS NOT NULL THEN 1 ELSE 0 END
     `).all(name);
 
   const skaterStatsPromise = db.prepare(`
-      SELECT g.season_id, MAX(COALESCE(s.name,'No Season')) AS season_name,
-        MAX(COALESCE(s.league_type,'')) AS league_type,
-        MAX(COALESCE(s.sort_order, g.season_id)) AS _sort_order,
-        CASE WHEN g.playoff_series_id IS NOT NULL THEN 1 ELSE 0 END AS is_playoff,
+      SELECT
+        COALESCE(s.parent_season_id, g.season_id) AS season_id,
+        MAX(COALESCE(ps.name, TRIM(REPLACE(s.name, 'Playoffs', '')), s.name, 'No Season')) AS season_name,
+        MAX(COALESCE(ps.league_type, s.league_type, '')) AS league_type,
+        MAX(COALESCE(ps.sort_order, s.sort_order, g.season_id)) AS _sort_order,
+        CASE WHEN g.playoff_series_id IS NOT NULL OR s.is_playoff = 1 OR s.parent_season_id IS NOT NULL THEN 1 ELSE 0 END AS is_playoff,
         ${SKATER_SELECT}
       FROM game_player_stats gps
       JOIN teams t ON gps.team_id = t.id
       JOIN games g ON gps.game_id = g.id
       LEFT JOIN seasons s ON g.season_id = s.id
+      LEFT JOIN seasons ps ON s.parent_season_id = ps.id
       WHERE gps.player_name = ? AND gps.position != 'G' AND g.status IN ('complete','forfeit')
-      GROUP BY g.season_id, gps.team_id, CASE WHEN g.playoff_series_id IS NOT NULL THEN 1 ELSE 0 END
-      ORDER BY MAX(COALESCE(s.sort_order, g.season_id)) DESC, CASE WHEN g.playoff_series_id IS NOT NULL THEN 1 ELSE 0 END
+      GROUP BY COALESCE(s.parent_season_id, g.season_id), gps.team_id, CASE WHEN g.playoff_series_id IS NOT NULL OR s.is_playoff = 1 OR s.parent_season_id IS NOT NULL THEN 1 ELSE 0 END
+      ORDER BY MAX(COALESCE(ps.sort_order, s.sort_order, g.season_id)) DESC, CASE WHEN g.playoff_series_id IS NOT NULL OR s.is_playoff = 1 OR s.parent_season_id IS NOT NULL THEN 1 ELSE 0 END
     `).all(name);
 
   // Last 5 games
@@ -2400,22 +2520,25 @@ app.get('/api/players/profile/:name', async (req, res) => {
       gps.breakaway_shots, gps.breakaway_saves,
       gps.overall_rating,
       CASE WHEN gps.team_id = g.home_team_id THEN g.home_score ELSE g.away_score END AS goal_support,
-      COALESCE(s.league_type,'') AS league_type,
-      CASE WHEN g.playoff_series_id IS NOT NULL THEN 1 ELSE 0 END AS is_playoff
+      COALESCE(ps.league_type, s.league_type, '') AS league_type,
+      CASE WHEN g.playoff_series_id IS NOT NULL OR s.is_playoff = 1 OR s.parent_season_id IS NOT NULL THEN 1 ELSE 0 END AS is_playoff
     FROM game_player_stats gps
     JOIN games g ON gps.game_id = g.id
     JOIN teams ht ON g.home_team_id = ht.id
     JOIN teams at ON g.away_team_id = at.id
     LEFT JOIN seasons s ON g.season_id = s.id
+    LEFT JOIN seasons ps ON s.parent_season_id = ps.id
     WHERE gps.player_name = ? AND g.status IN ('complete','forfeit')
     ORDER BY g.date DESC, g.id DESC LIMIT 5
   `).all(name);
 
   // Historical season stats (from season_player_stats, for imported seasons)
   const historicalStatsPromise = db.prepare(`
-    SELECT sps.season_id, COALESCE(s.name,'No Season') AS season_name,
-      COALESCE(s.league_type,'') AS league_type,
-      COALESCE(s.sort_order, sps.season_id) AS _sort_order,
+    SELECT
+      COALESCE(s.parent_season_id, sps.season_id) AS season_id,
+      COALESCE(ps.name, TRIM(REPLACE(s.name, 'Playoffs', '')), s.name, 'No Season') AS season_name,
+      COALESCE(ps.league_type, s.league_type, '') AS league_type,
+      COALESCE(ps.sort_order, s.sort_order, sps.season_id) AS _sort_order,
       t.id AS team_id, COALESCE(t.name,'FA') AS team_name,
       t.logo_url AS team_logo, t.color1 AS team_color1, t.color2 AS team_color2,
       sps.position, sps.games_played AS gp,
@@ -2423,12 +2546,14 @@ app.get('/api/players/profile/:name', async (req, res) => {
       sps.plus_minus, sps.pim, sps.shots, sps.pp_goals, sps.sh_goals, sps.gwg,
       sps.saves, sps.save_pct, sps.goals_against,
       sps.goalie_wins, sps.goalie_losses, sps.shutouts, sps.gaa,
-      0 AS is_playoff, 1 AS is_historical
+      CASE WHEN s.is_playoff = 1 OR s.parent_season_id IS NOT NULL THEN 1 ELSE 0 END AS is_playoff,
+      1 AS is_historical
     FROM season_player_stats sps
     LEFT JOIN seasons s ON s.id = sps.season_id
+    LEFT JOIN seasons ps ON s.parent_season_id = ps.id
     LEFT JOIN teams t ON t.id = sps.team_id
     WHERE sps.player_name = ?
-    ORDER BY COALESCE(s.sort_order, sps.season_id) DESC
+    ORDER BY COALESCE(ps.sort_order, s.sort_order, sps.season_id) DESC
   `).all(name);
 
   const [player, posRow, rawGoalieStats, rawSkaterStats, lastGames, historicalStats] = await Promise.all([
@@ -2443,10 +2568,10 @@ app.get('/api/players/profile/:name', async (req, res) => {
 
   // Merge historical rows for seasons not already covered by game stats
   async function mergeWithHistorical(gameStats, histFilter) {
-    const covered = new Set(gameStats.map(r => r.season_id));
+    const covered = new Set(gameStats.map(r => `${r.season_id}_${r.is_playoff}`));
     const merged = [
       ...gameStats.map(r => ({ ...r, is_historical: 0 })),
-      ...historicalStats.filter(r => histFilter(r) && !covered.has(r.season_id)),
+      ...historicalStats.filter(r => histFilter(r) && !covered.has(`${r.season_id}_${r.is_playoff}`)),
     ];
     merged.sort((a, b) => (b._sort_order || b.season_id || 0) - (a._sort_order || a.season_id || 0));
     return merged;
@@ -2557,15 +2682,46 @@ app.get('/api/users/free-agents', requirePlayer, async (_req, res) => {
 });
 
 app.post('/api/players', requireOwner, async (req, res) => {
-  const { name, team_id, position, number, discord, discord_id } = req.body;
-  if (!name) return res.status(400).json({ error: 'name is required' });
-  const result = await db.prepare('INSERT INTO players (name, team_id, position, number, is_rostered, discord, discord_id) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .run(name, team_id || null, position || null, number || null, team_id ? 1 : 0, discord || null, discord_id || null);
-  res.status(201).json({ id: result.lastInsertRowid, name, team_id, position, number, discord, discord_id });
+  const { name, team_id, position, number, discord, discord_id, merge } = req.body;
+  if (!name || !name.trim()) return res.status(400).json({ error: 'name is required' });
+  const cleanName = name.trim();
+
+  // Check for duplicate player name (case-insensitive)
+  const existing = await db.prepare('SELECT * FROM players WHERE LOWER(TRIM(name)) = LOWER(?) LIMIT 1').get(cleanName);
+  if (existing) {
+    if (!merge) {
+      return res.status(409).json({
+        error: `A player with the name "${existing.name}" already exists.`,
+        duplicate: true,
+        existing_id: existing.id,
+        existing_name: existing.name,
+      });
+    }
+    // Merge into existing player: update fields if provided
+    await db.prepare(`
+      UPDATE players SET
+        team_id = COALESCE(?, team_id),
+        position = COALESCE(?, position),
+        number = COALESCE(?, number),
+        discord = COALESCE(?, discord),
+        discord_id = COALESCE(?, discord_id),
+        is_rostered = CASE WHEN ? IS NOT NULL THEN 1 ELSE is_rostered END
+      WHERE id = ?
+    `).run(team_id || null, position || null, number || null, discord || null, discord_id || null, team_id || null, existing.id);
+    return res.json({ id: existing.id, name: existing.name, team_id: team_id || existing.team_id, position: position || existing.position, number: number || existing.number, discord: discord || existing.discord, discord_id: discord_id || existing.discord_id, merged: true });
+  }
+
+  const user = await db.prepare('SELECT id, position FROM users WHERE LOWER(TRIM(username)) = LOWER(?) LIMIT 1').get(cleanName);
+  const pos = position || (user ? user.position : null) || null;
+  const result = await db.prepare('INSERT INTO players (name, team_id, position, number, is_rostered, discord, discord_id, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(cleanName, team_id || null, pos, number || null, team_id ? 1 : 0, discord || null, discord_id || null, user ? user.id : null);
+  res.status(201).json({ id: result.lastInsertRowid, name: cleanName, team_id, position: pos, number, discord, discord_id });
 });
 
 app.delete('/api/players/:id', requireOwner, async (req, res) => {
-  const result = await db.prepare('DELETE FROM players WHERE id = ?').run(req.params.id);
+  const pid = Number(req.params.id);
+  await db.prepare('DELETE FROM season_rosters WHERE player_id = ?').run(pid).catch(() => {});
+  const result = await db.prepare('DELETE FROM players WHERE id = ?').run(pid);
   if (result.changes === 0) return res.status(404).json({ error: 'Player not found' });
   res.json({ deleted: true });
 });
@@ -2573,7 +2729,51 @@ app.delete('/api/players/:id', requireOwner, async (req, res) => {
 app.patch('/api/players/:id', requireOwner, async (req, res) => {
   const player = await db.prepare('SELECT * FROM players WHERE id = ?').get(req.params.id);
   if (!player) return res.status(404).json({ error: 'Player not found' });
-  const name       = req.body.name       !== undefined ? (req.body.name || player.name)        : player.name;
+  const rawName = req.body.name !== undefined ? (req.body.name || player.name) : player.name;
+  const name = typeof rawName === 'string' ? rawName.trim() : player.name;
+
+  // Check if renaming causes a duplicate with another player
+  if (name.toLowerCase() !== player.name.toLowerCase()) {
+    const existing = await db.prepare('SELECT * FROM players WHERE LOWER(TRIM(name)) = LOWER(?) AND id != ? LIMIT 1').get(name, req.params.id);
+    if (existing) {
+      if (!req.body.merge) {
+        return res.status(409).json({
+          error: `A player with the name "${existing.name}" already exists.`,
+          duplicate: true,
+          existing_id: existing.id,
+          existing_name: existing.name,
+        });
+      }
+      // Execute merge of player into existing
+      await db.prepare('UPDATE game_player_stats SET player_name = ? WHERE LOWER(TRIM(player_name)) = LOWER(?)').run(existing.name, player.name);
+      await db.prepare('UPDATE season_player_stats SET player_name = ? WHERE LOWER(TRIM(player_name)) = LOWER(?)').run(existing.name, player.name);
+      await db.prepare('UPDATE season_awards SET player_name = ? WHERE LOWER(TRIM(player_name)) = LOWER(?)').run(existing.name, player.name);
+      await db.prepare('UPDATE transactions SET player_name = ? WHERE LOWER(TRIM(player_name)) = LOWER(?)').run(existing.name, player.name);
+
+      const rosters = await db.prepare('SELECT season_id, team_id, role FROM season_rosters WHERE player_id = ?').all(player.id);
+      for (const r of rosters) {
+        const targetInSeason = await db.prepare('SELECT id FROM season_rosters WHERE season_id = ? AND player_id = ?').get(r.season_id, existing.id);
+        if (!targetInSeason) {
+          await db.prepare('INSERT INTO season_rosters (season_id, player_id, team_id, role) VALUES (?, ?, ?, ?)').run(r.season_id, existing.id, r.team_id, r.role);
+        }
+      }
+      await db.prepare('DELETE FROM season_rosters WHERE player_id = ?').run(player.id);
+
+      const newPos = req.body.position || player.position || existing.position;
+      const newNum = req.body.number || player.number || existing.number;
+      const newDisc = req.body.discord || player.discord || existing.discord;
+      const newDiscId = req.body.discord_id || player.discord_id || existing.discord_id;
+      const newUserId = req.body.user_id || player.user_id || existing.user_id;
+      const newTeamId = req.body.team_id || existing.team_id || player.team_id;
+
+      await db.prepare('UPDATE players SET position=?, number=?, discord=?, discord_id=?, user_id=?, team_id=? WHERE id=?')
+        .run(newPos || null, newNum || null, newDisc || null, newDiscId || null, newUserId || null, newTeamId || null, existing.id);
+
+      await db.prepare('DELETE FROM players WHERE id = ?').run(player.id);
+      return res.json({ ok: true, merged: true, id: existing.id, name: existing.name });
+    }
+  }
+
   const team_id    = req.body.team_id    !== undefined ? (req.body.team_id || null)             : player.team_id;
   const is_rostered = req.body.is_rostered !== undefined ? Number(req.body.is_rostered)         : player.is_rostered;
   const position   = req.body.position   !== undefined ? (req.body.position || null)            : player.position;
@@ -2600,6 +2800,16 @@ app.patch('/api/players/:id', requireOwner, async (req, res) => {
 });
 
 // ── Games ──────────────────────────────────────────────────────────────────
+
+function capScoreDifferential(homeScore, awayScore, maxDiff = 7) {
+  let h = parseInt(homeScore, 10);
+  let a = parseInt(awayScore, 10);
+  if (isNaN(h)) h = 0;
+  if (isNaN(a)) a = 0;
+  if (h - a > maxDiff) return { home_score: a + maxDiff, away_score: a };
+  if (a - h > maxDiff) return { home_score: h, away_score: h + maxDiff };
+  return { home_score: h, away_score: a };
+}
 
 /** Validate and normalise a game_time string (HH:MM local wall time) or return null. */
 function parseGameTime(t) {
@@ -2629,20 +2839,35 @@ app.get('/api/games', async (req, res) => {
     LEFT JOIN playoff_series ps ON g.playoff_series_id = ps.id
     ${where} ORDER BY g.date ${order}, g.id ${order} ${limitClause}
   `).all(...params);
+  for (const g of games) {
+    if (g.home_score != null && g.away_score != null && (g.status === 'complete' || g.status === 'forfeit')) {
+      const capped = capScoreDifferential(g.home_score, g.away_score);
+      g.home_score = capped.home_score;
+      g.away_score = capped.away_score;
+    }
+  }
   res.json(games);
 });
 
 app.post('/api/games', requireAdmin, async (req, res) => {
-  const { home_team_id, away_team_id, home_score, away_score, date, season_id, status, is_overtime, playoff_series_id, game_time } = req.body;
+  const { home_team_id, away_team_id, home_score, away_score, date, season_id, status, is_overtime, is_forfeit, playoff_series_id, game_time } = req.body;
   if (!home_team_id || !away_team_id || !date) return res.status(400).json({ error: 'home_team_id, away_team_id, and date are required' });
-  const gameStatus = status === 'complete' ? 'complete' : 'scheduled';
+  const gameStatus = (status === 'complete' || status === 'forfeit') ? status : 'scheduled';
   const ot = is_overtime ? 1 : 0;
+  const forfeit = is_forfeit !== undefined ? (is_forfeit ? 1 : 0) : (gameStatus === 'forfeit' ? 1 : 0);
   const psi = playoff_series_id ? Number(playoff_series_id) : null;
   const gt = parseGameTime(game_time);
+  let hScore = parseInt(home_score, 10) || 0;
+  let aScore = parseInt(away_score, 10) || 0;
+  if (gameStatus === 'complete' || gameStatus === 'forfeit') {
+    const capped = capScoreDifferential(hScore, aScore);
+    hScore = capped.home_score;
+    aScore = capped.away_score;
+  }
   const result = await db.prepare(
-    'INSERT INTO games (home_team_id, away_team_id, home_score, away_score, date, status, season_id, is_overtime, playoff_series_id, game_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(home_team_id, away_team_id, home_score || 0, away_score || 0, date, gameStatus, season_id || null, ot, psi, gt);
-  res.status(201).json({ id: result.lastInsertRowid, home_team_id, away_team_id, home_score: home_score || 0, away_score: away_score || 0, date, status: gameStatus, season_id: season_id || null, is_overtime: ot, playoff_series_id: psi, game_time: gt });
+    'INSERT INTO games (home_team_id, away_team_id, home_score, away_score, date, status, season_id, is_overtime, is_forfeit, playoff_series_id, game_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(home_team_id, away_team_id, hScore, aScore, date, gameStatus, season_id || null, ot, forfeit, psi, gt);
+  res.status(201).json({ id: result.lastInsertRowid, home_team_id, away_team_id, home_score: hScore, away_score: aScore, date, status: gameStatus, season_id: season_id || null, is_overtime: ot, is_forfeit: forfeit, playoff_series_id: psi, game_time: gt });
 });
 
 app.delete('/api/games/:id', requireAdmin, async (req, res) => {
@@ -2660,7 +2885,7 @@ app.patch('/api/games/:id', requireAdmin, async (req, res) => {
   const status = req.body.status !== undefined ? req.body.status : game.status;
   const season_id = req.body.season_id !== undefined ? req.body.season_id : game.season_id;
   const is_overtime = req.body.is_overtime !== undefined ? (req.body.is_overtime ? 1 : 0) : (game.is_overtime || 0);
-  const is_forfeit  = req.body.is_forfeit  !== undefined ? (req.body.is_forfeit  ? 1 : 0) : (game.is_forfeit  || 0);
+  const is_forfeit  = req.body.is_forfeit  !== undefined ? (req.body.is_forfeit  ? 1 : 0) : (status === 'forfeit' ? 1 : (game.is_forfeit  || 0));
   const date = req.body.date !== undefined ? req.body.date : game.date;
   const game_time = req.body.game_time !== undefined ? parseGameTime(req.body.game_time) : game.game_time;
   const home_shots = req.body.home_shots !== undefined ? (req.body.home_shots != null ? parseInt(req.body.home_shots, 10) : null) : (game.home_shots ?? null);
@@ -2672,6 +2897,34 @@ app.patch('/api/games/:id', requireAdmin, async (req, res) => {
   if (req.body.away_score !== undefined) {
     away_score = parseInt(req.body.away_score, 10);
     if (isNaN(away_score) || away_score < 0 || away_score > 99) return res.status(400).json({ error: 'away_score must be 0–99' });
+  }
+  if (status === 'complete') {
+    // Final score can never be lower than the goals credited to that team's players
+    let homeGoals = 0, awayGoals = 0;
+    if (req.body.player_stats) {
+      const sum = (l) => (l || []).reduce((n, p) => n + (Number(p.goals) || 0), 0);
+      homeGoals = sum(req.body.player_stats.home_players);
+      awayGoals = sum(req.body.player_stats.away_players);
+    } else {
+      const rows = await db.prepare('SELECT team_id, COALESCE(SUM(goals),0) AS g FROM game_player_stats WHERE game_id = ? GROUP BY team_id').all(req.params.id);
+      for (const r of rows) {
+        if (r.team_id === game.home_team_id) homeGoals = Number(r.g) || 0;
+        else if (r.team_id === game.away_team_id) awayGoals = Number(r.g) || 0;
+      }
+    }
+    if (ea_match_id && req.body.player_stats && homeGoals + awayGoals > 0) {
+      // EA team scores are sometimes wrong (e.g. 3-0 defaults); player goals are authoritative
+      home_score = homeGoals;
+      away_score = awayGoals;
+    } else {
+      home_score = Math.max(home_score, homeGoals);
+      away_score = Math.max(away_score, awayGoals);
+    }
+  }
+  if (status === 'complete' || status === 'forfeit') {
+    const capped = capScoreDifferential(home_score, away_score);
+    home_score = capped.home_score;
+    away_score = capped.away_score;
   }
   await db.prepare('UPDATE games SET home_score=?, away_score=?, ea_match_id=?, status=?, season_id=?, is_overtime=?, is_forfeit=?, date=?, game_time=?, home_shots=?, away_shots=? WHERE id=?')
     .run(home_score, away_score, ea_match_id, status, season_id, is_overtime, is_forfeit, date, game_time, home_shots, away_shots, req.params.id);
@@ -2706,6 +2959,7 @@ app.patch('/api/games/:id', requireAdmin, async (req, res) => {
     const insertResults = [];
     const saveList = async (players, teamId, teamWon) => {
       for (const p of (players || [])) {
+        await ensurePlayerRecord(p.name, p.position);
         const isGoalie = (p.position || '').toUpperCase() === 'G';
         let goalieWins = 0, goalieLosses = 0, goalieOtw = 0, goalieOtl = 0, shutouts = 0;
         if (isGoalie) {
@@ -2716,10 +2970,17 @@ app.patch('/api/games/:id', requireAdmin, async (req, res) => {
             if (is_overtime) { goalieOtl = 1; } else { goalieLosses = 1; }
           }
         }
+        const off = Number(p.offensiveRating) || 0;
+        const def = Number(p.defensiveRating) || 0;
+        const tpl = Number(p.teamPlayRating) || 0;
+        let ovr = Number(p.overallRating) || 0;
+        if (!ovr && (off > 0 || def > 0 || tpl > 0)) {
+          ovr = Math.round((off + def + tpl) / 3);
+        }
         try {
           const r = await ins.run(
             req.params.id, teamId, p.name, p.position,
-            p.overallRating||0, p.offensiveRating||0, p.defensiveRating||0, p.teamPlayRating||0,
+            ovr, off, def, tpl,
             p.goals||0, p.assists||0, p.shots||0, p.shotAttempts||0, p.hits||0, p.plusMinus||0, p.pim||0,
             p.blockedShots||0, p.takeaways||0, p.giveaways||0,
             p.possessionSecs||0, p.passAttempts||0, p.passCompletions||0, p.passPct||null,
@@ -2739,28 +3000,16 @@ app.patch('/api/games/:id', requireAdmin, async (req, res) => {
         }
       }
     };
-    // #region agent log
-    fetch('http://127.0.0.1:7370/ingest/09eeda4e-053a-4a95-a317-63a92e5d9089',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a43d81'},body:JSON.stringify({sessionId:'a43d81',location:'server.js:PATCH:player_stats',message:'player_stats_save_started',data:{gameId:req.params.id,homeCount:(home_players||[]).length,awayCount:(away_players||[]).length,pendingInserts:(home_players||[]).length+(away_players||[]).length,eaMatchId:ea_match_id,runId:'post-fix'},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
-    // #endregion
     try {
       await saveList(home_players, game.home_team_id, homeWon);
       await saveList(away_players, game.away_team_id, awayWon);
-      // #region agent log
-      fetch('http://127.0.0.1:7370/ingest/09eeda4e-053a-4a95-a317-63a92e5d9089',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a43d81'},body:JSON.stringify({sessionId:'a43d81',location:'server.js:PATCH:player_stats',message:'player_stats_inserts_done',data:{gameId:req.params.id,successCount:insertResults.filter(r=>r.ok).length,failCount:insertResults.filter(r=>!r.ok).length,errors:insertResults.filter(r=>!r.ok).map(r=>r.err),runId:'post-fix'},timestamp:Date.now(),hypothesisId:'A/E'})}).catch(()=>{});
-      // #endregion
     } catch (e) {
-      // #region agent log
-      fetch('http://127.0.0.1:7370/ingest/09eeda4e-053a-4a95-a317-63a92e5d9089',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a43d81'},body:JSON.stringify({sessionId:'a43d81',location:'server.js:PATCH:player_stats',message:'player_stats_inserts_failed',data:{gameId:req.params.id,error:e.message,runId:'post-fix'},timestamp:Date.now(),hypothesisId:'E'})}).catch(()=>{});
-      // #endregion
       return res.status(500).json({ error: `Failed to save player stats: ${e.message}` });
     }
   }
   if (req.body.ea_match_id === null && !req.body.player_stats) {
     await db.prepare('DELETE FROM game_player_stats WHERE game_id = ?').run(req.params.id);
   }
-  // #region agent log
-  fetch('http://127.0.0.1:7370/ingest/09eeda4e-053a-4a95-a317-63a92e5d9089',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a43d81'},body:JSON.stringify({sessionId:'a43d81',location:'server.js:PATCH:response',message:'patch_response_sent',data:{gameId:req.params.id,hadPlayerStats:!!req.body.player_stats,eaMatchId:req.body.ea_match_id,runId:'post-fix'},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
-  // #endregion
   res.json({ updated: true });
 });
 
@@ -2779,12 +3028,16 @@ app.get('/api/games/:id/stats', async (req, res) => {
     db.prepare('SELECT * FROM game_player_stats WHERE game_id = ? ORDER BY position, goals DESC').all(req.params.id),
   ]);
   if (!game) return res.status(404).json({ error: 'Game not found' });
+  const capped = (game.home_score != null && game.away_score != null && (game.status === 'complete' || game.status === 'forfeit'))
+    ? capScoreDifferential(game.home_score, game.away_score)
+    : { home_score: game.home_score, away_score: game.away_score };
   res.json({
     game: {
       id: game.id, date: game.date, status: game.status, season_id: game.season_id, is_overtime: game.is_overtime,
+      is_forfeit: game.is_forfeit || 0,
       home_team: { id: game.home_team_id, name: game.home_team_name, logo_url: game.home_logo, color1: game.home_color1 || null, color2: game.home_color2 || null },
       away_team: { id: game.away_team_id, name: game.away_team_name, logo_url: game.away_logo, color1: game.away_color1 || null, color2: game.away_color2 || null },
-      home_score: game.home_score, away_score: game.away_score, ea_match_id: game.ea_match_id,
+      home_score: capped.home_score, away_score: capped.away_score, ea_match_id: game.ea_match_id,
       home_shots: game.home_shots ?? null, away_shots: game.away_shots ?? null,
     },
     home_players: stats.filter(s => s.team_id === game.home_team_id),
@@ -2976,12 +3229,14 @@ app.get('/api/stats/leaders', async (req, res) => {
                           + CAST(gps.offensive_rating AS NUMERIC)
                           + CAST(gps.team_play_rating AS NUMERIC) * 1.5) / 4.5
                        ))
-                     WHEN gps.shots_against > 0 THEN GREATEST(0.0, LEAST(99.0,
-                       60.0
-                       + (CAST(gps.shots_against - gps.goals_against AS NUMERIC) / CAST(gps.shots_against AS NUMERIC) * 100.0 - 88.0) * 3.0
-                       + CASE WHEN gps.goals_against = 0 THEN 8.0 ELSE 0.0 END
+                     WHEN gps.shots_against > 0 THEN GREATEST(50.0, LEAST(99.0,
+                       50.0
+                       + (CAST(gps.shots_against - gps.goals_against AS NUMERIC) / CAST(gps.shots_against AS NUMERIC) * 40.0)
+                       - LEAST(CAST(gps.goals_against AS NUMERIC) * 1.0, 10.0)
+                       + CASE WHEN gps.goals_against = 0 AND gps.shots_against > 0 THEN 5.0 ELSE 0.0 END
+                       + CASE WHEN gps.goalie_wins = 1 OR gps.goalie_otw = 1 THEN 3.0 ELSE 0.0 END
                      ))
-                     ELSE 60.0
+                     ELSE 75.0
                 END), 0) AS overall_rating,
       ROUND(AVG(NULLIF(gps.offensive_rating,0)),0)  AS offensive_rating,
       ROUND(AVG(NULLIF(gps.defensive_rating,0)),0)  AS defensive_rating,
@@ -3131,16 +3386,19 @@ async function calcStandings(seasonId) {
   for (const g of games) {
     const home = stats[g.home_team_id], away = stats[g.away_team_id];
     if (!home || !away) continue;
+    const capped = capScoreDifferential(g.home_score, g.away_score);
+    const hScore = capped.home_score;
+    const aScore = capped.away_score;
     home.gp++; away.gp++;
-    home.gf += g.home_score; home.ga += g.away_score;
-    away.gf += g.away_score; away.ga += g.home_score;
+    home.gf += hScore; home.ga += aScore;
+    away.gf += aScore; away.ga += hScore;
     const ot = !!g.is_overtime;
     ensureH2h(g.home_team_id); ensureH2h(g.away_team_id);
-    if (g.home_score > g.away_score) {
+    if (hScore > aScore) {
       if (ot) { home.w++; home.otw++; home.pts += 2; home.home_w++; away.otl++; away.pts++; away.away_otl++; home._results.push('W'); away._results.push('OTL'); }
       else    { home.w++; home.pts += 2; home.home_w++; away.l++; away.away_l++; home._results.push('W'); away._results.push('L'); }
       h2h[g.home_team_id][g.away_team_id] = (h2h[g.home_team_id][g.away_team_id] || 0) + 1;
-    } else if (g.away_score > g.home_score) {
+    } else if (aScore > hScore) {
       if (ot) { away.w++; away.otw++; away.pts += 2; away.away_w++; home.otl++; home.pts++; home.home_otl++; away._results.push('W'); home._results.push('OTL'); }
       else    { away.w++; away.pts += 2; away.away_w++; home.l++; home.home_l++; away._results.push('W'); home._results.push('L'); }
       h2h[g.away_team_id][g.home_team_id] = (h2h[g.away_team_id][g.home_team_id] || 0) + 1;
@@ -3327,6 +3585,72 @@ async function calcStandings(seasonId) {
           }
         }
       }
+    } else if (cutoffRows.some(r => r.scope === 'conference')) {
+      // Per-conference cutoffs configured
+      const confCutMap = {};
+      for (const r of cutoffRows) {
+        if (r.scope === 'conference') confCutMap[r.scope_name] = r.cutoff;
+      }
+
+      // Group sorted teams by conference
+      const confMap = {};
+      for (const t of sorted) {
+        const conf = t.conference || 'Unassigned';
+        if (!confMap[conf]) confMap[conf] = [];
+        confMap[conf].push(t);
+      }
+
+      for (const conf of Object.keys(confMap)) {
+        const confTeams = confMap[conf];
+        const rawConfCut = confCutMap[conf];
+        const confN = rawConfCut != null ? Math.min(rawConfCut, confTeams.length) : null;
+
+        for (let i = 0; i < confTeams.length; i++) {
+          const t = confTeams[i];
+          const rank = i + 1;
+          t.clinch = null;
+
+          // P – clinched Presidents' Trophy (best overall record)
+          if (sorted[0].id === t.id && !sorted.slice(1).some(o => canSurpass(o, t))) {
+            t.clinch = 'P';
+            continue;
+          }
+
+          // Z – clinched conference title
+          if (conf !== 'Unassigned') {
+            const confPeers = confTeams.filter(o => o.id !== t.id);
+            if (isLeader(t, confPeers) && !confPeers.some(o => canSurpass(o, t))) {
+              t.clinch = 'Z';
+              continue;
+            }
+          }
+
+          // Y – clinched division title
+          if (t.division && conf !== 'Unassigned') {
+            const divPeers = confTeams.filter(o => o.id !== t.id && o.division === t.division);
+            if (isLeader(t, divPeers) && !divPeers.some(o => canSurpass(o, t))) {
+              t.clinch = 'Y';
+              continue;
+            }
+          }
+
+          if (confN != null) {
+            if (rank <= confN) {
+              // X – clinched playoff spot in conference
+              const outside = confTeams.slice(confN);
+              if (!outside.some(o => o.pts + 2 * o.remaining >= t.pts)) {
+                t.clinch = 'X';
+              }
+            } else {
+              // E – eliminated from conference playoff spot
+              const lastQual = confTeams[confN - 1];
+              if (lastQual && t.pts + 2 * t.remaining < lastQual.pts) {
+                t.clinch = 'E';
+              }
+            }
+          }
+        }
+      }
     } else {
       const rawN = pc ? pc.teams_qualify : (seasonRow && seasonRow.playoff_cutoff != null ? seasonRow.playoff_cutoff : null);
       if (rawN != null) {
@@ -3443,9 +3767,11 @@ app.get('/api/seasons/:id/teams', requireAdmin, async (req, res) => {
       SELECT away_team_id FROM games WHERE season_id = ?
       UNION
       SELECT team_id FROM season_team_conf WHERE season_id = ?
+      UNION
+      SELECT team_id FROM season_rosters WHERE season_id = ?
     )
     ORDER BY t.name
-  `).all(req.params.id, req.params.id, req.params.id);
+  `).all(req.params.id, req.params.id, req.params.id, req.params.id);
   res.json(teams);
 });
 
@@ -3634,16 +3960,39 @@ async function getPlayoffBracket(playoffId) {
   const playoff = await db.prepare('SELECT * FROM playoffs WHERE id = ?').get(playoffId);
   if (!playoff) return null;
   const teams = await db.prepare(`
-    SELECT pt.seed, t.id AS team_id, t.name, t.abbreviation, t.logo_url, t.color1, t.color2
+    SELECT pt.seed, t.id AS team_id, t.name, t.abbreviation, t.logo_url, t.color1, t.color2, t.conference, t.division
     FROM playoff_teams pt JOIN teams t ON pt.team_id = t.id
     WHERE pt.playoff_id = ? ORDER BY pt.seed
   `).all(playoffId);
+
+  // Auto-calculate regular season seed based on regular season standings finish
+  if (playoff.season_id) {
+    try {
+      const regStandings = await calcStandings(playoff.season_id);
+      const confMap = {};
+      for (const t of regStandings) {
+        const c = t.conference || 'Unassigned';
+        if (!confMap[c]) confMap[c] = [];
+        confMap[c].push(t);
+      }
+      for (const team of teams) {
+        if (team.conference && confMap[team.conference]) {
+          const rank = confMap[team.conference].findIndex(x => x.id === team.team_id) + 1;
+          if (rank > 0) team.seed = rank;
+        } else {
+          const rank = regStandings.findIndex(x => x.id === team.team_id) + 1;
+          if (rank > 0) team.seed = rank;
+        }
+      }
+    } catch {}
+  }
+
   const allSeries = await db.prepare(`
     SELECT ps.*,
       ht.name AS high_seed_name, ht.abbreviation AS high_seed_abbrev, ht.logo_url AS high_seed_logo,
-      ht.color1 AS high_seed_color1, ht.color2 AS high_seed_color2,
+      ht.color1 AS high_seed_color1, ht.color2 AS high_seed_color2, ht.conference AS high_seed_conf,
       lt.name AS low_seed_name, lt.abbreviation AS low_seed_abbrev, lt.logo_url AS low_seed_logo,
-      lt.color1 AS low_seed_color1, lt.color2 AS low_seed_color2,
+      lt.color1 AS low_seed_color1, lt.color2 AS low_seed_color2, lt.conference AS low_seed_conf,
       wt.name AS winner_name
     FROM playoff_series ps
     LEFT JOIN teams ht ON ps.high_seed_id = ht.id
@@ -3652,6 +4001,19 @@ async function getPlayoffBracket(playoffId) {
     WHERE ps.playoff_id = ?
     ORDER BY ps.round_number, ps.series_number
   `).all(playoffId);
+
+  // Auto-fill series high/low seed numbers from regular season seeds
+  for (const s of allSeries) {
+    if (s.high_seed_id) {
+      const ht = teams.find(t => t.team_id === s.high_seed_id);
+      if (ht && ht.seed != null) s.high_seed_num = ht.seed;
+    }
+    if (s.low_seed_id) {
+      const lt = teams.find(t => t.team_id === s.low_seed_id);
+      if (lt && lt.seed != null) s.low_seed_num = lt.seed;
+    }
+  }
+
   const rounds = {};
   for (const s of allSeries) {
     if (!rounds[s.round_number]) rounds[s.round_number] = [];
@@ -3779,6 +4141,12 @@ app.post('/api/playoffs', requireOwner, async (req, res) => {
 
     for (const conf of confNames) {
       const confTeams = confMap[conf];
+      // Assign regular season conference finish rank to each team
+      confTeams.forEach((t, i) => {
+        t.confRank = i + 1;
+        t.seed = i + 1;
+      });
+
       // Group by division in this conference
       const divMap = {};
       for (const t of confTeams) {
@@ -3827,43 +4195,47 @@ app.post('/api/playoffs', requireOwner, async (req, res) => {
 
         // Matchup 1: Top Division Winner vs Lowest Wildcard (WC2)
         if (topDivTeams[0] && wc2) {
-          r1SeriesList.push({ high: topDivTeams[0], low: wc2, highSeedNum: 1, lowSeedNum: 8 });
+          r1SeriesList.push({ high: topDivTeams[0], low: wc2, highSeedNum: topDivTeams[0].seed, lowSeedNum: wc2.seed });
         }
         // Matchup 2: Top Division #2 vs Top Division #3
         if (topDivTeams[1] && topDivTeams[2]) {
-          r1SeriesList.push({ high: topDivTeams[1], low: topDivTeams[2], highSeedNum: 2, lowSeedNum: 3 });
+          r1SeriesList.push({ high: topDivTeams[1], low: topDivTeams[2], highSeedNum: topDivTeams[1].seed, lowSeedNum: topDivTeams[2].seed });
         } else if (topDivTeams[1]) {
-          r1SeriesList.push({ high: topDivTeams[1], low: topDivTeams[topDivTeams.length - 1], highSeedNum: 2, lowSeedNum: topDivTeams.length });
+          const lo = topDivTeams[topDivTeams.length - 1];
+          r1SeriesList.push({ high: topDivTeams[1], low: lo, highSeedNum: topDivTeams[1].seed, lowSeedNum: lo.seed });
         }
         // Matchup 3: Other Division Winner vs 1st Wildcard (WC1)
         if (otherDivTeams[0] && wc1) {
-          r1SeriesList.push({ high: otherDivTeams[0], low: wc1, highSeedNum: 1, lowSeedNum: 7 });
+          r1SeriesList.push({ high: otherDivTeams[0], low: wc1, highSeedNum: otherDivTeams[0].seed, lowSeedNum: wc1.seed });
         }
         // Matchup 4: Other Division #2 vs Other Division #3
         if (otherDivTeams[1] && otherDivTeams[2]) {
-          r1SeriesList.push({ high: otherDivTeams[1], low: otherDivTeams[2], highSeedNum: 2, lowSeedNum: 3 });
+          r1SeriesList.push({ high: otherDivTeams[1], low: otherDivTeams[2], highSeedNum: otherDivTeams[1].seed, lowSeedNum: otherDivTeams[2].seed });
         } else if (otherDivTeams[1]) {
-          r1SeriesList.push({ high: otherDivTeams[1], low: otherDivTeams[otherDivTeams.length - 1], highSeedNum: 2, lowSeedNum: otherDivTeams.length });
+          const lo = otherDivTeams[otherDivTeams.length - 1];
+          r1SeriesList.push({ high: otherDivTeams[1], low: lo, highSeedNum: otherDivTeams[1].seed, lowSeedNum: lo.seed });
         }
       } else {
         // Fallback for conference with 1 division or no divisions
         const allConfQual = [...(divQualifiers[divNames[0]] || []), ...wcQualifiers];
         const m = Math.floor(allConfQual.length / 2);
         for (let i = 0; i < m; i++) {
+          const hi = allConfQual[i];
+          const lo = allConfQual[allConfQual.length - 1 - i];
           r1SeriesList.push({
-            high: allConfQual[i],
-            low: allConfQual[allConfQual.length - 1 - i],
-            highSeedNum: i + 1,
-            lowSeedNum: allConfQual.length - i
+            high: hi,
+            low: lo,
+            highSeedNum: hi.seed,
+            lowSeedNum: lo.seed
           });
         }
       }
     }
 
-    // Insert seeded teams
+    // Insert seeded teams with their true regular season conference seeds
     for (let i = 0; i < allQualified.length; i++) {
       const t = allQualified[i];
-      await db.prepare('INSERT INTO playoff_teams (playoff_id, team_id, seed) VALUES (?, ?, ?)').run(playoffId, t.id, i + 1);
+      await db.prepare('INSERT INTO playoff_teams (playoff_id, team_id, seed) VALUES (?, ?, ?)').run(playoffId, t.id, t.seed || (i + 1));
     }
 
     // Insert Round 1 series & schedules
@@ -3882,10 +4254,11 @@ app.post('/api/playoffs', requireOwner, async (req, res) => {
   const qualified = eligible.slice(0, n);
   const effectiveN = qualified.length;
 
-  // Insert seeded teams
+  // Insert seeded teams with their true regular season league rank
   for (let i = 0; i < qualified.length; i++) {
     const t = qualified[i];
-    await db.prepare('INSERT INTO playoff_teams (playoff_id, team_id, seed) VALUES (?, ?, ?)').run(playoffId, t.id, i + 1);
+    t.seed = i + 1;
+    await db.prepare('INSERT INTO playoff_teams (playoff_id, team_id, seed) VALUES (?, ?, ?)').run(playoffId, t.id, t.seed);
   }
 
   // Compute byes for non-power-of-2 field sizes.
@@ -3902,7 +4275,7 @@ app.post('/api/playoffs', requireOwner, async (req, res) => {
     const byeTeam = qualified[i];
     await db.prepare(
       'INSERT INTO playoff_series (playoff_id, round_number, series_number, high_seed_id, low_seed_id, high_seed_num, low_seed_num, winner_id) VALUES (?, 1, ?, ?, NULL, ?, NULL, ?)'
-    ).run(playoffId, seriesNum++, byeTeam.id, i + 1, byeTeam.id);
+    ).run(playoffId, seriesNum++, byeTeam.id, byeTeam.seed, byeTeam.id);
   }
 
   // Insert real round-1 series (the remaining teams, paired 1st vs last, 2nd vs 2nd-last, etc.)
@@ -3913,7 +4286,7 @@ app.post('/api/playoffs', requireOwner, async (req, res) => {
     const lo = roundTeams[roundTeams.length - 1 - i];
     const sr = await db.prepare(
       'INSERT INTO playoff_series (playoff_id, round_number, series_number, high_seed_id, low_seed_id, high_seed_num, low_seed_num) VALUES (?, 1, ?, ?, ?, ?, ?)'
-    ).run(playoffId, seriesNum++, hi.id, lo.id, numByes + i + 1, effectiveN - i);
+    ).run(playoffId, seriesNum++, hi.id, lo.id, hi.seed, lo.seed);
     await createSeriesSchedule(sr.lastInsertRowid, hi.id, lo.id, playoffSeasonId, seriesLen, series_start_date);
   }
 
@@ -4040,6 +4413,13 @@ app.get('/api/playoff-series/:id/games', async (req, res) => {
     WHERE g.playoff_series_id = ?
     ORDER BY g.date, g.id
   `).all(req.params.id);
+  for (const g of games) {
+    if (g.home_score != null && g.away_score != null && (g.status === 'complete' || g.status === 'forfeit')) {
+      const capped = capScoreDifferential(g.home_score, g.away_score);
+      g.home_score = capped.home_score;
+      g.away_score = capped.away_score;
+    }
+  }
   res.json(games);
 });
 
@@ -4078,6 +4458,111 @@ app.delete('/api/playoffs/:id', requireOwner, async (req, res) => {
 
 // ── EA Matches ─────────────────────────────────────────────────────────────
 
+function mapResult(val) {
+  const str = String(val ?? '');
+  if (str === '1') return 'W';
+  if (str === '2') return 'L';
+  if (str === '5') return 'OTL';
+  if (str === '6') return 'OTW';
+  return str;
+}
+
+function readEAField(obj, candidates) {
+  if (!obj || typeof obj !== 'object') return undefined;
+  for (const c of candidates) {
+    if (obj[c] !== undefined && obj[c] !== null && obj[c] !== '') return obj[c];
+    const lc = c.toLowerCase();
+    for (const k of Object.keys(obj)) {
+      if (k.toLowerCase() === lc && obj[k] !== undefined && obj[k] !== null && obj[k] !== '') {
+        return obj[k];
+      }
+    }
+  }
+  return undefined;
+}
+
+function normalizeEAPosition(pos) {
+  if (!pos) return '';
+  const p = String(pos).toLowerCase();
+  if (p === 'goalie' || p === 'g' || p === '0') return 'G';
+  if (p === 'defensemen' || p === 'defense' || p === 'd') return 'D';
+  if (p === 'leftwing' || p === 'lw') return 'LW';
+  if (p === 'rightwing' || p === 'rw') return 'RW';
+  if (p === 'center' || p === 'c') return 'C';
+  return String(pos);
+}
+
+function mapEAPlayer(player) {
+  let position = normalizeEAPosition(readEAField(player, ['position']));
+  if (position === 'D') {
+    const ps = String(player.posSorted ?? '');
+    if (ps === '2') position = 'LD';
+    else if (ps === '1') position = 'RD';
+  }
+  const goals = Number(readEAField(player, ['goals', 'skgoals'])) || 0;
+  const assists = Number(readEAField(player, ['assists', 'skassists'])) || 0;
+  const passAttempts = Number(readEAField(player, ['passAttempts', 'skpassattempts'])) || 0;
+  const rawPassPct = readEAField(player, ['passPct', 'skpasspct']);
+  const passPct = rawPassPct != null ? parseFloat(rawPassPct) : null;
+  const passCompletions = (passAttempts > 0 && passPct != null)
+    ? Math.round((passPct / 100) * passAttempts)
+    : 0;
+
+  const offensiveRating = Number(readEAField(player, ['offensiveRating', 'skoffense', 'ratingOffense'])) || 0;
+  const defensiveRating = Number(readEAField(player, ['defensiveRating', 'skdefense', 'ratingDefense'])) || 0;
+  const teamPlayRating = Number(readEAField(player, ['teamPlayRating', 'skteamplay', 'ratingTeamplay'])) || 0;
+  let overallRating = Number(readEAField(player, ['overallRating', 'rating', 'skoverall', 'skrating'])) || 0;
+  if (!overallRating && (offensiveRating > 0 || defensiveRating > 0 || teamPlayRating > 0)) {
+    overallRating = Math.round((offensiveRating + defensiveRating + teamPlayRating) / 3);
+  }
+
+  return {
+    name: readEAField(player, ['playerName', 'name', 'playername']) || 'Unknown',
+    position,
+    overallRating,
+    offensiveRating,
+    defensiveRating,
+    teamPlayRating,
+    goals,
+    assists,
+    points: goals + assists,
+    shots: Number(readEAField(player, ['shots', 'skshots'])) || 0,
+    shotAttempts: Number(readEAField(player, ['shotAttempts', 'skshotattempts'])) || 0,
+    hits: Number(readEAField(player, ['hits', 'skhits'])) || 0,
+    plusMinus: Number(readEAField(player, ['plusMinus', 'skplusmin'])) || 0,
+    pim: Number(readEAField(player, ['pim', 'skpim'])) || 0,
+    blockedShots: Number(readEAField(player, ['blockedShots', 'skbs'])) || 0,
+    ppGoals: Number(readEAField(player, ['ppGoals', 'skppg'])) || 0,
+    shGoals: Number(readEAField(player, ['shGoals', 'skshg'])) || 0,
+    gwg: Number(readEAField(player, ['gwg', 'skgwg'])) || 0,
+    penaltiesDrawn: Number(readEAField(player, ['penaltiesDrawn', 'skpenaltiesdrawn', 'skpd'])) || 0,
+    deflections: Number(readEAField(player, ['deflections', 'skdeflections', 'skdfl'])) || 0,
+    interceptions: Number(readEAField(player, ['interceptions', 'skinterceptions', 'skint'])) || 0,
+    hatTricks: Number(readEAField(player, ['hatTricks', 'skhattricks', 'skht'])) || 0,
+    saucerPasses: Number(readEAField(player, ['saucerPasses', 'sksaucerpasses'])) || 0,
+    pkClears: Number(readEAField(player, ['pkClears', 'skpkclearzone'])) || 0,
+    penaltyShotAttempts: Number(readEAField(player, ['penaltyShotAttempts', 'glpenshots'])) || 0,
+    penaltyShotGa: Number(readEAField(player, ['penaltyShotGa', 'glpensaves'])) || 0,
+    breakawayShots: Number(readEAField(player, ['breakawayShots', 'glbrkshots'])) || 0,
+    breakawaySaves: Number(readEAField(player, ['breakawaySaves', 'glbrksaves'])) || 0,
+    desperationSaves: Number(readEAField(player, ['desperationSaves', 'gldsaves'])) || 0,
+    pokeCheckSaves: Number(readEAField(player, ['pokeCheckSaves', 'glpokechecks'])) || 0,
+    takeaways: Number(readEAField(player, ['takeaways', 'sktakeaways'])) || 0,
+    giveaways: Number(readEAField(player, ['giveaways', 'skgiveaways'])) || 0,
+    possessionSecs: Number(readEAField(player, ['possessionSecs', 'skpossession'])) || 0,
+    passAttempts,
+    passPct,
+    passCompletions,
+    faceoffWins: Number(readEAField(player, ['faceoffWins', 'skfow'])) || 0,
+    faceoffLosses: Number(readEAField(player, ['faceoffLosses', 'skfol'])) || 0,
+    toi: Number(readEAField(player, ['toiseconds', 'skToi', 'toi'])) || 0,
+    saves: Number(readEAField(player, ['saves', 'glsaves'])) || 0,
+    savesPct: readEAField(player, ['savesPct', 'glsavePct']) != null ? parseFloat(readEAField(player, ['savesPct', 'glsavePct'])) : null,
+    goalsAgainst: Number(readEAField(player, ['goalsAgainst', 'glga'])) || 0,
+    shotsAgainst: Number(readEAField(player, ['shotsAgainst', 'glshots'])) || 0,
+  };
+}
+
 // Helper: build the structured game object used by both EA match endpoints
 function _eaGameInfo(game) {
   return {
@@ -4089,7 +4574,17 @@ function _eaGameInfo(game) {
 }
 
 // Helper: process raw EA match array into the picker-friendly format
-function _processEAMatches(raw, game) {
+function _processEAMatches(raw, game, side) {
+  if (side === 'away') {
+    const swapped = { ...game, home_ea_club_id: game.away_ea_club_id, away_ea_club_id: game.home_ea_club_id };
+    return _processEAMatches(raw, swapped).map(m => ({
+      ...m,
+      homeScore: m.awayScore, awayScore: m.homeScore,
+      homeShots: m.awayShots, awayShots: m.homeShots,
+      players: m.awayPlayers, awayPlayers: m.players,
+      result: ({ W: 'L', L: 'W', OTW: 'OTL', OTL: 'OTW' })[m.result] || m.result,
+    }));
+  }
   const matchArray = Array.isArray(raw) ? raw : (raw.raw || []);
   return matchArray.map(m => {
     const myClub = m.clubs && m.clubs[String(game.home_ea_club_id)];
@@ -4100,10 +4595,14 @@ function _processEAMatches(raw, game) {
     const isScheduledOpponent = !!game.away_ea_club_id && String(game.away_ea_club_id) === oppId;
     const players = Object.values((m.players && m.players[String(game.home_ea_club_id)]) || {}).map(mapEAPlayer);
     const awayPlayers = Object.values((m.players && m.players[oppId]) || {}).map(mapEAPlayer);
+    const isOvertime = String(myClub.result) === '5' || String(myClub.result) === '6'
+      || (oppClub && (String(oppClub.result) === '5' || String(oppClub.result) === '6'));
     return {
       matchId: m.matchId, timestamp: m.timestamp || 0,
       date: m.timestamp ? new Date(m.timestamp * 1000).toISOString().split('T')[0] : null,
-      result: mapResult(myClub.result), homeScore: Number(myClub.score) || 0, awayScore: Number(myClub.opponentScore) || 0,
+      result: mapResult(myClub.result),
+      isOvertime,
+      homeScore: Number(myClub.score) || 0, awayScore: Number(myClub.opponentScore) || 0,
       homeShots: myClub.shots != null ? Number(myClub.shots) : null,
       awayShots: oppClub && oppClub.shots != null ? Number(oppClub.shots) : null,
       opponentClubId: oppId, opponentClubName: oppName, isScheduledOpponent, players, awayPlayers,
@@ -4111,6 +4610,44 @@ function _processEAMatches(raw, game) {
   }).filter(Boolean);
 }
 
+const _eaMatchCache = new Map();
+const EA_CACHE_TTL_MS = 60 * 1000;
+
+async function fetchEA(url) {
+  const targetUrl = EA_PROXY_URL ? url.replace('https://proclubs.ea.com', EA_PROXY_URL) : url;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const res = await fetch(targetUrl, {
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
+        Accept: 'application/json, text/plain, */*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        Referer: 'https://www.ea.com/',
+        Origin: 'https://www.ea.com',
+      },
+    });
+    const body = await res.text();
+    if (!res.ok) {
+      const err = new Error(`EA API returned HTTP ${res.status}`);
+      err.eaStatus = res.status;
+      err.eaBody = body.slice(0, 500);
+      throw err;
+    }
+    try { return JSON.parse(body); } catch (e) {
+      const err = new Error(`Failed to parse EA JSON: ${e.message}`);
+      err.eaStatus = res.status;
+      err.eaBody = body.slice(0, 500);
+      throw err;
+    }
+  } catch (e) {
+    if (e.name === 'AbortError') throw new Error('EA API request timed out');
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 // GET: fetches EA Pro Clubs API server-side and returns processed match data.
 app.get('/api/games/:id/ea-matches', async (req, res) => {
   const game = await db.prepare(`
@@ -4120,24 +4657,26 @@ app.get('/api/games/:id/ea-matches', async (req, res) => {
     WHERE g.id = ?
   `).get(req.params.id);
   if (!game) return res.status(404).json({ error: 'Game not found' });
-  if (!game.home_ea_club_id) return res.status(400).json({ error: 'Home team has no EA club ID configured' });
+  const side = req.query.side === 'away' ? 'away' : 'home';
+  const clubId = side === 'away' ? game.away_ea_club_id : game.home_ea_club_id;
+  if (!clubId) return res.status(400).json({ error: (side === 'away' ? 'Away' : 'Home') + ' team has no EA club ID configured' });
 
-  // Return cached result if fresh
-  const _cached = _eaMatchCache.get(req.params.id);
+  const cacheKey = req.params.id + ':' + side;
+  const _cached = _eaMatchCache.get(cacheKey);
   if (_cached && Date.now() - _cached.ts < EA_CACHE_TTL_MS) {
-    return res.json(_cached.data);
+    return res.json({ ..._cached.data, game: _eaGameInfo(game) });
   }
 
-  const eaUrl = `https://proclubs.ea.com/api/nhl/clubs/matches?matchType=club_private&platform=common-gen5&clubIds=${game.home_ea_club_id}`;
+  const eaUrl = `https://proclubs.ea.com/api/nhl/clubs/matches?matchType=club_private&platform=common-gen5&clubIds=${clubId}`;
   let raw;
   try {
     raw = await fetchEA(eaUrl);
   } catch (err) {
     return res.status(502).json({ error: 'EA Pro Clubs API is currently unreachable', details: err.message, ea_status: err.eaStatus || null, ea_body: err.eaBody || null, ea_url: eaUrl, game: _eaGameInfo(game) });
   }
-  const matches = _processEAMatches(raw, game);
+  const matches = _processEAMatches(raw, game, side);
   const result = { game: _eaGameInfo(game), matches };
-  _eaMatchCache.set(req.params.id, { data: result, ts: Date.now() });
+  _eaMatchCache.set(cacheKey, { data: result, ts: Date.now() });
   res.json(result);
 });
 
@@ -4792,6 +5331,7 @@ app.post('/api/admin/import-mso-json', requireOwner, async (req, res) => {
 
         const insertPlayers = async (players, teamId, teamWon) => {
           for (const p of players) {
+            await ensurePlayerRecord(p.player_name, p.position);
             const isGoalie = p.position === 'G';
             let gw = 0, gl = 0, otw = 0, otl = 0, so = 0;
             if (isGoalie) {
@@ -5268,35 +5808,122 @@ function _mso_parseGameDetailHtml(html) {
   return { homePlayers, awayPlayers };
 }
 
-// ── Excel schedule import endpoint ────────────────────────────────────────
+// ── Schedule date & time helpers ──────────────────────────────────────────
+
+function _parseScheduleDate(val) {
+  if (!val) return null;
+  if (val instanceof Date) {
+    const y = val.getFullYear();
+    const m = String(val.getMonth() + 1).padStart(2, '0');
+    const d = String(val.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  let s = String(val).trim();
+  const isoMatch = s.match(/^\d{4}-\d{2}-\d{2}$/);
+  if (isoMatch) return s;
+
+  // Strip day of week e.g. "Tuesday September 29, 2026" or "Tuesday, September 29, 2026"
+  const stripped = s.replace(/^[A-Za-z]+,?\s+/, '');
+  const parsed = new Date(stripped);
+  if (!isNaN(parsed.getTime()) && parsed.getFullYear() > 1990) {
+    const y = parsed.getFullYear();
+    const m = String(parsed.getMonth() + 1).padStart(2, '0');
+    const d = String(parsed.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  const parsedOrig = new Date(s);
+  if (!isNaN(parsedOrig.getTime()) && parsedOrig.getFullYear() > 1990) {
+    const y = parsedOrig.getFullYear();
+    const m = String(parsedOrig.getMonth() + 1).padStart(2, '0');
+    const d = String(parsedOrig.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  return null;
+}
+
+function _parseScheduleTime(val) {
+  if (!val) return null;
+  if (val instanceof Date) {
+    const hh = String(val.getHours()).padStart(2, '0');
+    const mm = String(val.getMinutes()).padStart(2, '0');
+    return `${hh}:${mm}`;
+  }
+  let s = String(val).trim();
+  // 12-hour format e.g. "9:00 PM", "09:35 AM", "9:35pm"
+  const match12 = s.match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(am|pm)$/i);
+  if (match12) {
+    let h = parseInt(match12[1], 10);
+    const m = match12[2];
+    const ampm = match12[3].toLowerCase();
+    if (ampm === 'pm' && h < 12) h += 12;
+    if (ampm === 'am' && h === 12) h = 0;
+    return `${String(h).padStart(2, '0')}:${m}`;
+  }
+  // 24-hour format e.g. "21:00", "09:35"
+  const match24 = s.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+  if (match24) {
+    const h = parseInt(match24[1], 10);
+    const m = match24[2];
+    if (h >= 0 && h <= 23) {
+      return `${String(h).padStart(2, '0')}:${m}`;
+    }
+  }
+  return null;
+}
+
+// ── Excel / CSV schedule import endpoint ──────────────────────────────────
 
 app.post('/api/admin/import-excel', requireOwner, excelUpload.single('file'), async (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No Excel file uploaded.' });
+  if (!req.file) return res.status(400).json({ error: 'No Excel or CSV file uploaded.' });
 
-  const seasonName  = String(req.body.season_name  || '').trim();
-  const leagueType  = String(req.body.league_type  || '').trim();
+  let seasonId      = req.body.season_id ? parseInt(req.body.season_id, 10) : null;
+  let seasonName    = String(req.body.season_name  || '').trim();
+  let leagueType    = String(req.body.league_type  || '').trim();
   const leagueId    = String(req.body.league_id    || '').trim();
 
-  if (!seasonName) return res.status(400).json({ error: '"season_name" is required.' });
+  // ── Resolve or create season ───────────────────────────────────────────
+  if (seasonId) {
+    const existing = await db.prepare('SELECT id, name, league_type FROM seasons WHERE id = ?').get(seasonId);
+    if (!existing) return res.status(404).json({ error: `Season with ID ${seasonId} not found.` });
+    seasonName = existing.name;
+    if (!leagueType) leagueType = existing.league_type || '';
+  } else {
+    if (!seasonName) return res.status(400).json({ error: 'Please choose an existing season or enter a new season name.' });
+    const existing = await db.prepare('SELECT id, name, league_type FROM seasons WHERE LOWER(name) = LOWER(?)').get(seasonName);
+    if (existing) {
+      seasonId = existing.id;
+      seasonName = existing.name;
+      if (!leagueType) leagueType = existing.league_type || '';
+    } else {
+      const r = await db.prepare('INSERT INTO seasons (name, is_active, league_type) VALUES (?, 0, ?)').run(seasonName, leagueType || '');
+      seasonId = r.lastInsertRowid;
+    }
+  }
 
-  // ── Parse the workbook ─────────────────────────────────────────────────
+  // ── Parse the workbook / CSV ───────────────────────────────────────────
   let workbook;
   try {
     const ExcelJS = require('exceljs');
     workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.load(req.file.buffer);
+    const isCsv = /\.csv$/i.test(req.file.originalname) || req.file.mimetype === 'text/csv';
+    if (isCsv) {
+      const stream = require('stream');
+      await workbook.csv.read(stream.Readable.from(req.file.buffer));
+    } else {
+      await workbook.xlsx.load(req.file.buffer);
+    }
   } catch (e) {
-    return res.status(400).json({ error: `Could not parse Excel file: ${e.message}` });
+    return res.status(400).json({ error: `Could not parse file: ${e.message}` });
   }
 
   const sheet = workbook.worksheets[0];
-  if (!sheet) return res.status(400).json({ error: 'The workbook contains no worksheets.' });
+  if (!sheet) return res.status(400).json({ error: 'The uploaded file contains no sheets/data.' });
 
   // ── Find the header row ────────────────────────────────────────────────
-  // Scan rows top→bottom for the first row containing "home team" (case-insensitive).
   let headerRowNum = -1;
-  let colHomeTeam = -1, colHomeScore = -1, colOT = -1, colAwayScore = -1;
-  let colAwayTeam = -1, colStatus = -1, colIdGame = -1, colDateTime = -1;
+  let colDateTime = -1, colDate = -1, colTime = -1;
+  let colHomeTeam = -1, colHomeScore = -1, colOT = -1;
+  let colAwayScore = -1, colAwayTeam = -1, colStatus = -1, colIdGame = -1, colLocation = -1;
 
   sheet.eachRow((row, rowNum) => {
     if (headerRowNum >= 0) return; // already found
@@ -5307,41 +5934,47 @@ app.post('/api/admin/import-excel', requireOwner, excelUpload.single('file'), as
     if (vals.some(v => v.includes('home team') || v === 'home')) {
       headerRowNum = rowNum;
       vals.forEach((v, i) => {
-        if (v.includes('date') || v.includes('time')) colDateTime   = i;
-        if (v.includes('home team') || v === 'home')  colHomeTeam   = i;
+        if (v === 'date / time' || v === 'date/time' || v.includes('date / time')) colDateTime = i;
+        else if (v === 'date' || (v.includes('date') && !v.includes('time'))) colDate = i;
+        else if (v === 'time' || (v.includes('time') && !v.includes('date'))) colTime = i;
+        if (v.includes('home team') || v === 'home') colHomeTeam = i;
         if (v.includes('away team') || v === 'away' || v.includes('visitor') || v === 'vis') colAwayTeam = i;
-        if (v.includes('status'))                     colStatus     = i;
+        if (v.includes('status')) colStatus = i;
         if (v.includes('idgame') || v.includes('id game') || v === 'id') colIdGame = i;
+        if (v.includes('location') || v.includes('arena') || v.includes('rink')) colLocation = i;
+        if (v.includes('ot') || v.includes('overtime')) colOT = i;
       });
-      // Home score: first blank/numeric column after home team, before away team
+      if (colDateTime < 0 && colDate < 0 && colTime < 0) {
+        vals.forEach((v, i) => {
+          if (v.includes('date') || v.includes('time')) colDateTime = i;
+        });
+      }
+      // Infer score columns if between home and away team
       if (colHomeTeam >= 0 && colAwayTeam > colHomeTeam) {
         for (let c = colHomeTeam + 1; c < colAwayTeam; c++) {
-          if (vals[c] === '') {
+          if (vals[c] === '' || vals[c].includes('score') || vals[c] === 'hs' || vals[c] === 'as') {
             if (colHomeScore < 0) { colHomeScore = c; continue; }
-            if (colOT < 0)        { colOT = c;        continue; }
+            if (colOT < 0 && (c === colHomeScore + 1 && colAwayTeam > c + 1)) { colOT = c; continue; }
             if (colAwayScore < 0) { colAwayScore = c; break; }
           }
         }
-        // fallback: just use colHomeTeam+1 and colHomeTeam+2
         if (colHomeScore < 0) colHomeScore = colHomeTeam + 1;
-        if (colOT < 0)        colOT        = colHomeTeam + 2;
+        if (colOT < 0 && colAwayTeam >= colHomeTeam + 3) colOT = colHomeScore + 1;
         if (colAwayScore < 0 && colOT >= 0) colAwayScore = colOT + 1;
+        else if (colAwayScore < 0) colAwayScore = colHomeScore + 1;
       }
-      // Outer fallback when the away-team column was not found by header name
-      // (e.g. the export labels it "Visitor" and the inner block didn't run)
-      if (colHomeTeam >= 0) {
+      if (colHomeTeam >= 0 && colAwayTeam < 0) {
         if (colHomeScore < 0) colHomeScore = colHomeTeam + 1;
-        if (colOT < 0)        colOT        = colHomeScore + 1;
+        if (colOT < 0) colOT = colHomeScore + 1;
         if (colAwayScore < 0) colAwayScore = colOT + 1;
-        if (colAwayTeam < 0)  colAwayTeam  = colAwayScore + 1;
+        if (colAwayTeam < 0) colAwayTeam = colAwayScore + 1;
       }
     }
   });
 
   // If no header row with "home team" was found, try a positional fallback
   if (headerRowNum < 0) {
-    // Assume standard layout: A=datetime, B=home, C=homeScore, D=OT, E=awayScore, F=away, G=loc, H=status, I=IDGame
-    headerRowNum = 0; // will skip 0 rows before data
+    headerRowNum = 1;
     colDateTime  = 0; colHomeTeam  = 1; colHomeScore = 2;
     colOT        = 3; colAwayScore = 4; colAwayTeam  = 5;
     colStatus    = 7; colIdGame    = 8;
@@ -5355,152 +5988,165 @@ app.post('/api/admin/import-excel', requireOwner, excelUpload.single('file'), as
     if (rowNum <= headerRowNum) return; // skip header and anything above
 
     const cells = [];
-    // Read all cells including empty (1-indexed in exceljs; we convert to 0-indexed)
-    const maxCol = Math.max(colIdGame, colAwayTeam, colStatus, colAwayScore, colOT, colHomeScore, colHomeTeam) + 2;
-    for (let c = 1; c <= maxCol + 1; c++) {
+    const maxCol = Math.max(colDateTime, colDate, colTime, colHomeTeam, colHomeScore, colOT, colAwayScore, colAwayTeam, colStatus, colIdGame, colLocation) + 5;
+    for (let c = 1; c <= maxCol; c++) {
       const cell = row.getCell(c);
       let val = cell.value;
       if (val instanceof Date) val = val.toISOString();
-      else if (val && typeof val === 'object' && val.result !== undefined) val = val.result; // formula
-      cells[c - 1] = String(val ?? '').trim();
+      else if (val && typeof val === 'object' && val.result !== undefined) val = val.result;
+      cells[c - 1] = val != null ? String(val).trim() : '';
     }
 
-    const dateTimeVal = cells[colDateTime] || '';
-    const homeTeamVal = cells[colHomeTeam] || '';
+    const dtVal   = colDateTime >= 0 ? cells[colDateTime] : '';
+    const dateVal = colDate >= 0 ? cells[colDate] : '';
+    const timeVal = colTime >= 0 ? cells[colTime] : '';
+    const homeVal = colHomeTeam >= 0 ? cells[colHomeTeam] : '';
+    const awayVal = colAwayTeam >= 0 ? cells[colAwayTeam] : '';
 
-    // Detect date-header rows (e.g. "Saturday September 7, 2024")
-    // They typically have no home team value and the first cell looks like a date
-    if (!homeTeamVal && dateTimeVal) {
-      // Try to parse as a date string
-      const d = new Date(dateTimeVal);
-      if (!isNaN(d.getTime())) {
-        currentDate = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-      } else {
-        // Could be "Saturday September 7, 2024" — strip day-of-week and try
-        const stripped = dateTimeVal.replace(/^[a-zA-Z]+\s*/,'');
-        const d2 = new Date(stripped);
-        if (!isNaN(d2.getTime())) {
-          currentDate = `${d2.getFullYear()}-${String(d2.getMonth()+1).padStart(2,'0')}-${String(d2.getDate()).padStart(2,'0')}`;
-        } else {
-          // ISO date embedded somewhere?
-          const iso = dateTimeVal.match(/(\d{4}-\d{2}-\d{2})/);
-          if (iso) currentDate = iso[1];
-        }
+    // Date header row (e.g. "Tuesday September 29, 2026"): homeVal is blank, but date found in dtVal or dateVal
+    if (!homeVal) {
+      const candidateDate = _parseScheduleDate(dtVal || dateVal);
+      if (candidateDate) {
+        currentDate = candidateDate;
       }
-      return; // not a game row
+      return;
     }
 
-    if (!homeTeamVal) return; // blank row
+    if (!awayVal) return;
 
-    // It's a game row — try to use the date portion of column A as a date if it looks like one
-    // (some exports put the full date+time in col A for every row)
-    let gameDate = currentDate;
-    if (dateTimeVal) {
-      const d = new Date(dateTimeVal);
-      if (!isNaN(d.getTime()) && d.getFullYear() > 2000) {
-        gameDate = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-      } else {
-        const iso = dateTimeVal.match(/(\d{4}-\d{2}-\d{2})/);
-        if (iso) gameDate = iso[1];
-      }
+    const gameDate = _parseScheduleDate(dateVal) || _parseScheduleDate(dtVal) || currentDate;
+    const gameTime = _parseScheduleTime(timeVal) || _parseScheduleTime(dtVal) || null;
+
+    const rawHomeScore = colHomeScore >= 0 ? cells[colHomeScore] : '';
+    const rawAwayScore = colAwayScore >= 0 ? cells[colAwayScore] : '';
+    const rawOT        = colOT >= 0 ? cells[colOT] : '';
+    const rawStatus    = colStatus >= 0 ? cells[colStatus] : '';
+    const idGameVal    = colIdGame >= 0 ? cells[colIdGame] : '';
+
+    const hasHomeScore = rawHomeScore !== '' && !isNaN(Number(rawHomeScore));
+    const hasAwayScore = rawAwayScore !== '' && !isNaN(Number(rawAwayScore));
+    const isForfeit    = /forfeit/i.test(rawStatus);
+    const isOT         = /^ot$/i.test(rawOT.trim()) || /\bot\b/i.test(rawStatus);
+
+    let status = 'scheduled';
+    if (isForfeit) {
+      status = 'forfeit';
+    } else if (/incomplete|scheduled|postponed|pending|tbd/i.test(rawStatus)) {
+      status = 'scheduled';
+    } else if (/\bcomplete\b|completed/i.test(rawStatus) || (hasHomeScore && hasAwayScore)) {
+      status = 'complete';
+    } else {
+      status = 'scheduled';
     }
 
-    const awayTeamVal  = colAwayTeam  >= 0 ? (cells[colAwayTeam]  || '') : '';
-    const homeScoreVal = colHomeScore >= 0 ? (cells[colHomeScore] || '') : '';
-    const awayScoreVal = colAwayScore >= 0 ? (cells[colAwayScore] || '') : '';
-    const otVal        = colOT        >= 0 ? (cells[colOT]        || '') : '';
-    const statusVal    = colStatus    >= 0 ? (cells[colStatus]    || '') : '';
-    const idGameVal    = colIdGame    >= 0 ? (cells[colIdGame]    || '') : '';
-
-    const homeScore = parseInt(homeScoreVal, 10);
-    const awayScore = parseInt(awayScoreVal, 10);
-    const isOT      = /^OT$/i.test(otVal.trim());
-    const idGame    = idGameVal.trim();
-
-    if (!awayTeamVal) return; // must have away team
+    const homeScore = (status === 'complete' || status === 'forfeit') && hasHomeScore
+      ? parseInt(rawHomeScore, 10)
+      : (isForfeit ? 1 : 0);
+    const awayScore = (status === 'complete' || status === 'forfeit') && hasAwayScore
+      ? parseInt(rawAwayScore, 10)
+      : 0;
 
     games.push({
-      date:       gameDate,
-      home_team:  homeTeamVal.trim(),
-      away_team:  awayTeamVal.trim(),
-      home_score: isNaN(homeScore) ? 0 : homeScore,
-      away_score: isNaN(awayScore) ? 0 : awayScore,
+      date:        gameDate,
+      game_time:   gameTime,
+      home_team:   homeVal,
+      away_team:   awayVal,
+      home_score:  homeScore,
+      away_score:  awayScore,
+      status,
       is_overtime: isOT ? 1 : 0,
-      status:     statusVal.trim(),
-      idGame,
+      is_forfeit:  isForfeit ? 1 : 0,
+      idGame:      idGameVal.trim(),
     });
   });
 
   if (games.length === 0) {
-    return res.status(400).json({ error: 'No game rows found in the uploaded file. Check that the file has the expected column layout (Home team, Away team, IDGame).' });
+    return res.status(400).json({ error: 'No game rows found in the uploaded file. Check that the file has Home team and Away team columns.' });
   }
 
   // ── DB helpers ────────────────────────────────────────────────────────
   const teamCache = new Map();
-
-  async function getOrCreateTeam(name) {
-    if (!name) return null;
-    if (teamCache.has(name)) return teamCache.get(name);
-    let row = await db.prepare('SELECT id FROM teams WHERE name = ?').get(name);
-    if (!row) {
-      const r = await db.prepare('INSERT INTO teams (name, conference, division, league_type, color1, color2) VALUES (?, \'\', \'\', ?, \'\', \'\')').run(name, leagueType || '');
-      teamCache.set(name, r.lastInsertRowid);
-      summary.teams_created++;
-      return r.lastInsertRowid;
-    }
-    teamCache.set(name, row.id);
-    return row.id;
-  }
-
   const summary = {
     season: seasonName,
+    season_id: seasonId,
+    total_games_in_file: games.length,
     teams_created: 0,
+    created_team_names: [],
     games_created: 0,
+    games_updated: 0,
     games_skipped: 0,
     stats_fetched: 0,
     stats_skipped: 0,
     errors: [],
   };
 
-  // ── Create / find the season ──────────────────────────────────────────
-  let seasonId;
-  const existingSeason = await db.prepare('SELECT id FROM seasons WHERE name = ?').get(seasonName);
-  if (existingSeason) {
-    seasonId = existingSeason.id;
-  } else {
-    const r = await db.prepare('INSERT INTO seasons (name, is_active, league_type) VALUES (?, 0, ?)').run(seasonName, leagueType || '');
-    seasonId = r.lastInsertRowid;
+  async function getOrCreateTeam(name) {
+    if (!name) return null;
+    const trimmed = name.trim();
+    const key = trimmed.toLowerCase();
+    if (teamCache.has(key)) return teamCache.get(key);
+    let row = await db.prepare('SELECT id FROM teams WHERE LOWER(TRIM(name)) = LOWER(?)').get(trimmed);
+    if (!row) {
+      const r = await db.prepare(
+        'INSERT INTO teams (name, conference, division, league_type, color1, color2) VALUES (?, \'\', \'\', ?, \'\', \'\')'
+      ).run(trimmed, leagueType || '');
+      teamCache.set(key, r.lastInsertRowid);
+      summary.teams_created++;
+      summary.created_team_names.push(trimmed);
+      return r.lastInsertRowid;
+    }
+    teamCache.set(key, row.id);
+    return row.id;
   }
 
-  // ── Insert games ──────────────────────────────────────────────────────
-  const gameIds = []; // { dbId, game } pairs for games that need stat fetching
+  // ── Insert or update games ────────────────────────────────────────────
+  const gameIds = []; // { dbId, homeId, awayId, game }
   for (const g of games) {
     if (!g.date) { summary.games_skipped++; continue; }
     const homeId = await getOrCreateTeam(g.home_team);
     const awayId = await getOrCreateTeam(g.away_team);
     if (!homeId || !awayId) { summary.games_skipped++; continue; }
 
-    let existing = await db.prepare('SELECT id FROM games WHERE home_team_id=? AND away_team_id=? AND date=?').get(homeId, awayId, g.date);
+    let existing = await db.prepare(
+      'SELECT id, status, home_score, away_score, game_time, is_overtime, is_forfeit FROM games WHERE home_team_id = ? AND away_team_id = ? AND date = ? AND season_id = ?'
+    ).get(homeId, awayId, g.date, seasonId);
+
     let dbId;
+    if (g.status === 'complete' || g.status === 'forfeit') {
+      const capped = capScoreDifferential(g.home_score, g.away_score);
+      g.home_score = capped.home_score;
+      g.away_score = capped.away_score;
+    }
     if (existing) {
       dbId = existing.id;
-      summary.games_skipped++;
+      const shouldUpdateScore = (existing.status === 'scheduled') && (g.status === 'complete' || g.status === 'forfeit');
+      const shouldUpdateTime = !existing.game_time && g.game_time;
+
+      if (shouldUpdateScore) {
+        await db.prepare(`
+          UPDATE games
+          SET home_score = ?, away_score = ?, status = ?, is_overtime = ?, is_forfeit = ?, game_time = COALESCE(?, game_time)
+          WHERE id = ?
+        `).run(g.home_score, g.away_score, g.status, g.is_overtime, g.is_forfeit, g.game_time, existing.id);
+        summary.games_updated++;
+      } else if (shouldUpdateTime) {
+        await db.prepare('UPDATE games SET game_time = ? WHERE id = ?').run(g.game_time, existing.id);
+        summary.games_updated++;
+      } else {
+        summary.games_skipped++;
+      }
     } else {
-      const statusRaw = (g.status || '').toLowerCase();
-      const status = /forfeit/i.test(statusRaw) ? 'forfeit'
-                   : /complete/i.test(statusRaw) ? 'complete'
-                   : (g.status || 'complete');
       const r = await db.prepare(`
-        INSERT INTO games (home_team_id, away_team_id, home_score, away_score, date, status, season_id, is_overtime)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(homeId, awayId, g.home_score, g.away_score, g.date, status, seasonId, g.is_overtime);
+        INSERT INTO games (home_team_id, away_team_id, home_score, away_score, date, status, season_id, is_overtime, is_forfeit, game_time)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(homeId, awayId, g.home_score, g.away_score, g.date, g.status, seasonId, g.is_overtime, g.is_forfeit, g.game_time);
       dbId = r.lastInsertRowid;
       summary.games_created++;
     }
     gameIds.push({ dbId, homeId, awayId, game: g });
   }
 
-  // ── Fetch player stats from mystatsonline (async, per-game) ───────────
+  // ── Fetch player stats from mystatsonline (optional, if leagueId is provided) ─
   if (leagueId) {
     for (const { dbId, homeId, awayId, game } of gameIds) {
       if (!game.idGame || /forfeit/i.test(game.status || '')) continue;
@@ -5526,6 +6172,7 @@ app.post('/api/admin/import-excel', requireOwner, excelUpload.single('file'), as
         await db.prepare('DELETE FROM game_player_stats WHERE game_id = ?').run(dbId);
         const insertPlayers = async (players, teamId, teamWon) => {
           for (const p of players) {
+            await ensurePlayerRecord(p.player_name, p.position);
             const isGoalie = p.position === 'G';
             let gw = 0, gl = 0, otw = 0, otl = 0, so = 0;
             if (isGoalie) {
@@ -5593,6 +6240,91 @@ app.get('/api/awards/season/:seasonId/team-awards', async (req, res) => {
   res.json(rows);
 });
 
+// ── Team Award Auto-Sync Helper ───────────────────────────────────────────
+// Automatically assigns Champion / President's Trophy player awards to rostered players
+// who played at least the minimum required games for the winning team in that season.
+async function syncTeamAwardPlayers(seasonId, awardKey, teamId) {
+  if (!seasonId || !teamId || (awardKey !== 'champion' && awardKey !== 'presidents_trophy')) return [];
+
+  const isChamp = awardKey === 'champion';
+  const minGpKey = isChamp ? 'award_champ_min_gp' : 'award_pres_min_gp';
+  const minGPRow = await db.prepare('SELECT value FROM settings WHERE key = ?').get(minGpKey);
+  const minGP = parseInt(minGPRow ? minGPRow.value : '6', 10);
+
+  // 1. Get rostered players for this team in this season (season_rosters first, fallback to players table)
+  let rosterPlayers = await db.prepare(`
+    SELECT DISTINCT p.name AS player_name
+    FROM season_rosters sr
+    JOIN players p ON sr.player_id = p.id
+    WHERE sr.season_id = ? AND sr.team_id = ?
+  `).all(seasonId, teamId);
+
+  if (!rosterPlayers || rosterPlayers.length === 0) {
+    rosterPlayers = await db.prepare(`
+      SELECT DISTINCT name AS player_name
+      FROM players
+      WHERE team_id = ? AND is_rostered = 1
+    `).all(teamId);
+  }
+
+  if (!rosterPlayers || rosterPlayers.length === 0) {
+    await db.prepare('DELETE FROM season_awards WHERE season_id = ? AND award_key = ?').run(seasonId, awardKey);
+    return [];
+  }
+
+  // 2. Count games played for that team in that season
+  let gpRows;
+  if (isChamp) {
+    gpRows = await db.prepare(`
+      SELECT gps.player_name, COUNT(DISTINCT gps.game_id) AS gp
+      FROM game_player_stats gps
+      JOIN games g ON gps.game_id = g.id
+      LEFT JOIN playoff_series ps ON g.playoff_series_id = ps.id
+      LEFT JOIN playoffs pl ON ps.playoff_id = pl.id
+      WHERE (g.season_id = ? OR pl.season_id = ? OR (pl.playoff_season_id IS NOT NULL AND g.season_id = pl.playoff_season_id))
+        AND gps.team_id = ?
+        AND g.status IN ('complete', 'forfeit')
+      GROUP BY gps.player_name
+    `).all(seasonId, seasonId, teamId);
+  } else {
+    gpRows = await db.prepare(`
+      SELECT gps.player_name, COUNT(DISTINCT gps.game_id) AS gp
+      FROM game_player_stats gps
+      JOIN games g ON gps.game_id = g.id
+      WHERE g.season_id = ?
+        AND g.playoff_series_id IS NULL
+        AND gps.team_id = ?
+        AND g.status IN ('complete', 'forfeit')
+      GROUP BY gps.player_name
+    `).all(seasonId, teamId);
+  }
+
+  const gpMap = new Map();
+  for (const r of gpRows) {
+    gpMap.set((r.player_name || '').trim().toLowerCase(), Number(r.gp));
+  }
+
+  const eligible = rosterPlayers.filter(p => {
+    const gp = gpMap.get((p.player_name || '').trim().toLowerCase()) || 0;
+    return gp >= minGP;
+  });
+
+  // Clear existing season_awards for this award in this season
+  await db.prepare('DELETE FROM season_awards WHERE season_id = ? AND award_key = ?').run(seasonId, awardKey);
+
+  // Insert all eligible players
+  for (const p of eligible) {
+    const gp = gpMap.get((p.player_name || '').trim().toLowerCase()) || 0;
+    await db.prepare(`
+      INSERT INTO season_awards (season_id, award_key, player_name, notes)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT (season_id, award_key, player_name) DO UPDATE SET notes = EXCLUDED.notes
+    `).run(seasonId, awardKey, p.player_name.trim(), `${gp} GP`);
+  }
+
+  return eligible.map(p => p.player_name);
+}
+
 // POST /api/admin/awards/season/:seasonId/team – set team winner for champion/presidents
 app.post('/api/admin/awards/season/:seasonId/team', requireOwner, async (req, res) => {
   const { award_key, team_id, notes } = req.body;
@@ -5608,12 +6340,27 @@ app.post('/api/admin/awards/season/:seasonId/team', requireOwner, async (req, re
     VALUES (?, ?, ?, ?)
     ON CONFLICT (season_id, award_key) DO UPDATE SET team_id = EXCLUDED.team_id, notes = EXCLUDED.notes
   `).run(req.params.seasonId, award_key, team_id, notes || null);
-  res.json({ ok: true });
+
+  const awardedPlayers = await syncTeamAwardPlayers(Number(req.params.seasonId), award_key, Number(team_id));
+  res.json({ ok: true, awarded_players: awardedPlayers });
+});
+
+// POST /api/admin/awards/season/:seasonId/team/sync-roster – re-sync roster winners for a team award
+app.post('/api/admin/awards/season/:seasonId/team/sync-roster', requireOwner, async (req, res) => {
+  const { award_key } = req.body;
+  if (!award_key) return res.status(400).json({ error: 'award_key is required' });
+  const teamRow = await db.prepare('SELECT team_id FROM season_award_teams WHERE season_id = ? AND award_key = ?')
+    .get(req.params.seasonId, award_key);
+  if (!teamRow) return res.status(404).json({ error: 'No team set for this award in this season' });
+  const awardedPlayers = await syncTeamAwardPlayers(Number(req.params.seasonId), award_key, Number(teamRow.team_id));
+  res.json({ ok: true, awarded_players: awardedPlayers });
 });
 
 // DELETE /api/admin/awards/season/:seasonId/team/:awardKey – remove team selection
 app.delete('/api/admin/awards/season/:seasonId/team/:awardKey', requireOwner, async (req, res) => {
   await db.prepare('DELETE FROM season_award_teams WHERE season_id = ? AND award_key = ?')
+    .run(req.params.seasonId, req.params.awardKey);
+  await db.prepare('DELETE FROM season_awards WHERE season_id = ? AND award_key = ?')
     .run(req.params.seasonId, req.params.awardKey);
   res.json({ ok: true });
 });
@@ -5720,6 +6467,17 @@ app.post('/api/admin/awards/settings', requireOwner, async (req, res) => {
     await db.prepare(`INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value`)
       .run(key, String(n));
   }
+
+  // Automatically re-sync all existing team awards across seasons with updated thresholds
+  try {
+    const allTeamAwards = await db.prepare("SELECT season_id, award_key, team_id FROM season_award_teams WHERE award_key IN ('champion', 'presidents_trophy')").all();
+    for (const ta of allTeamAwards) {
+      await syncTeamAwardPlayers(ta.season_id, ta.award_key, ta.team_id);
+    }
+  } catch (err) {
+    console.error('[awards] Failed to re-sync team awards after settings update:', err);
+  }
+
   res.json({ ok: true });
 });
 
@@ -5730,37 +6488,34 @@ app.get('/api/admin/awards/season/:seasonId/calder-eligible', requireOwner, asyn
   if (!season) return res.status(404).json({ error: 'Season not found' });
   const minGPRow = await db.prepare("SELECT value FROM settings WHERE key = 'award_calder_max_prior_gp'").get();
   const maxPriorGP = parseInt(minGPRow ? minGPRow.value : '6', 10);
-
-  // Get all players who appeared in this season's games
-  const seasonPlayers = await db.prepare(`
-    SELECT DISTINCT gps.player_name
-    FROM game_player_stats gps
-    JOIN games g ON gps.game_id = g.id
-    WHERE g.season_id = ? AND g.status IN ('complete','forfeit')
-  `).all(req.params.seasonId);
-
   const leagueType = season.league_type || '';
-  const eligible = [];
 
-  for (const p of seasonPlayers) {
-    // Count games in same league type, in seasons BEFORE this season's sort_order
-    const prior = await db.prepare(`
-      SELECT COUNT(DISTINCT gps2.game_id) AS cnt
+  // Single aggregated query to find all season players and their prior GP in this league
+  const rows = await db.prepare(`
+    WITH season_players AS (
+      SELECT DISTINCT gps.player_name
+      FROM game_player_stats gps
+      JOIN games g ON gps.game_id = g.id
+      WHERE g.season_id = ? AND g.status IN ('complete','forfeit')
+    ),
+    prior_counts AS (
+      SELECT gps2.player_name, COUNT(DISTINCT gps2.game_id) AS prior_gp
       FROM game_player_stats gps2
       JOIN games g2 ON gps2.game_id = g2.id
       LEFT JOIN seasons s2 ON g2.season_id = s2.id
-      WHERE gps2.player_name = ?
-        AND g2.status IN ('complete','forfeit')
+      WHERE g2.status IN ('complete','forfeit')
         AND g2.season_id != ?
         AND (s2.league_type = ? OR (? = '' AND (s2.league_type IS NULL OR s2.league_type = '')))
-    `).get(p.player_name, req.params.seasonId, leagueType, leagueType);
-    if ((prior?.cnt || 0) < maxPriorGP) {
-      eligible.push({ player_name: p.player_name, prior_gp: prior?.cnt || 0 });
-    }
-  }
+      GROUP BY gps2.player_name
+    )
+    SELECT sp.player_name, COALESCE(pc.prior_gp, 0) AS prior_gp
+    FROM season_players sp
+    LEFT JOIN prior_counts pc ON sp.player_name = pc.player_name
+    WHERE COALESCE(pc.prior_gp, 0) < ?
+    ORDER BY sp.player_name
+  `).all(req.params.seasonId, req.params.seasonId, leagueType, leagueType, maxPriorGP);
 
-  eligible.sort((a, b) => a.player_name.localeCompare(b.player_name));
-  res.json({ eligible, max_prior_gp: maxPriorGP });
+  res.json({ eligible: rows, max_prior_gp: maxPriorGP });
 });
 
 // POST /api/admin/awards/season/:seasonId/auto-compute – auto-compute statistical awards
@@ -5893,7 +6648,8 @@ app.post('/api/admin/awards/season/:seasonId/auto-compute', requireOwner, async 
             ON CONFLICT (season_id, award_key) DO UPDATE SET team_id = EXCLUDED.team_id, notes = EXCLUDED.notes
           `).run(seasonId, winnerTeamId, 'Playoff Champion');
 
-          result.computed.push({ award: 'champion', team: teamRow?.name || winnerTeamId });
+          const awardedPlayers = await syncTeamAwardPlayers(seasonId, 'champion', winnerTeamId);
+          result.computed.push({ award: 'champion', team: teamRow?.name || winnerTeamId, players: awardedPlayers });
         }
       }
     } catch (e) { result.errors.push({ award: 'champion', error: e.message }); }
@@ -5933,7 +6689,8 @@ app.post('/api/admin/awards/season/:seasonId/auto-compute', requireOwner, async 
           ON CONFLICT (season_id, award_key) DO UPDATE SET team_id = EXCLUDED.team_id, notes = EXCLUDED.notes
         `).run(seasonId, topTeamId, `${maxPts} pts`);
 
-        result.computed.push({ award: 'presidents_trophy', team: teamRow?.name || topTeamId, pts: maxPts });
+        const awardedPlayers = await syncTeamAwardPlayers(seasonId, 'presidents_trophy', topTeamId);
+        result.computed.push({ award: 'presidents_trophy', team: teamRow?.name || topTeamId, pts: maxPts, players: awardedPlayers });
       }
     } catch (e) { result.errors.push({ award: 'presidents_trophy', error: e.message }); }
   }

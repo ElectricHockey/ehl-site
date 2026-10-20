@@ -1,7 +1,7 @@
 const API = '/api';
 
 function buildScoreCards(games) {
-  const completed = games.filter(g => g.status === 'complete');
+  const completed = games.filter(g => g.status === 'complete' || g.status === 'forfeit');
   if (completed.length === 0) return '<p style="color:#8b949e;">No completed games yet for this season.</p>';
 
   // Sort most recent first
@@ -18,7 +18,9 @@ function buildScoreCards(games) {
     const homeCls = homeWin ? 'score-winner' : '';
     const awayCls = awayWin ? 'score-winner' : '';
     const date = g.date ? new Date(g.date + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '';
-    const ot = g.is_overtime ? '<span style="font-size:0.72rem;color:#8b949e;margin-left:0.3rem;">OT</span>' : '';
+    const ot = g.is_overtime
+      ? '<span style="font-size:0.72rem;color:#e3b341;font-weight:700;margin-left:0.3rem;">OT</span>'
+      : ((g.status === 'forfeit' || g.is_forfeit) ? '<span style="font-size:0.72rem;color:#f85149;font-weight:700;margin-left:0.3rem;">FORFEIT</span>' : '');
     return `<a class="score-card score-card-link" href="game.html?id=${g.id}">
       <div class="score-teams">
         ${logoHtml(g.home_logo, g.home_team_name)}

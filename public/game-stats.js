@@ -8,9 +8,15 @@
   // ── Tiny formatters ─────────────────────────────────────────────────────
 
   function formatToi(s) {
+  if (!s) return '0:00';
+  const m = Math.floor(s / 60), sec = Math.round(s % 60);
+  return m + ':' + String(sec).padStart(2, '0');
+}
+
+  function formatClock(s) {
     if (!s) return '0:00';
     const m = Math.floor(Number(s) / 60);
-    const sec = Number(s) % 60;
+    const sec = Math.round(Number(s) % 60);
     return `${m}:${String(sec).padStart(2, '0')}`;
   }
 
@@ -31,23 +37,29 @@
   // available (most accurate), then falls back to position-weighted sub-ratings,
   // then to a stat-based score when no ratings are present.
   function computeOvr(p) {
-    if (p.overall_rating && p.overall_rating > 0) return p.overall_rating;
+    if (p.overall_rating && Number(p.overall_rating) > 0) return Number(p.overall_rating);
+    const isG = /goalie/i.test(p.position || '') || (p.position || '').toUpperCase() === 'G';
     const off = Number(p.offensive_rating) || 0;
     const def = Number(p.defensive_rating) || 0;
     const tpl = Number(p.team_play_rating) || 0;
     if (off > 0 || def > 0 || tpl > 0) {
-      const isD = /defense/i.test(p.position || '') || /^[lr]d$/i.test(p.position || '');
-      const isG = /goalie/i.test(p.position || '') || (p.position || '').toUpperCase() === 'G';
-      if (isG || isD) return Math.round((def * 2 + off + tpl * 1.5) / 4.5);
-      return Math.round((off * 2 + def + tpl * 1.5) / 4.5);
+      return Math.round((off + def + tpl) / 3);
     }
-    // Stat-based fallback so top-3 stars can still be selected
-    const isG = (p.position || '').toUpperCase() === 'G';
+    // Stat-based fallback
     if (isG) {
-      const sv = Number(p.saves) || 0;
       const sa = Number(p.shots_against) || 0;
-      const svp = sa > 0 ? sv / sa : 0;
-      return Math.round(svp * 60 + sv * 0.5 + (Number(p.shutouts) || 0) * 10);
+      if (sa > 0) {
+        const ga = Number(p.goals_against) || 0;
+        const sv = Number(p.saves) !== 0 ? Number(p.saves) : (sa - ga);
+        const svp = sv / sa;
+        const isWin = Number(p.goalie_wins) === 1 || Number(p.goalie_otw) === 1 || Number(p.wins) === 1;
+        const isShutout = (Number(p.shutouts) || 0) > 0 || (ga === 0 && sa > 0);
+        let ovr = 50.0 + (svp * 40.0) - Math.min(ga * 1.0, 10.0);
+        if (isShutout) ovr += 5.0;
+        if (isWin) ovr += 3.0;
+        return Math.max(50, Math.min(99, Math.round(ovr)));
+      }
+      return 75;
     }
     return Math.round(Math.max(0, Math.min(99,
       60 +
@@ -290,20 +302,33 @@
       }
     });
 
-    // Build tooltip text showing each position's %
-    const tooltipLines = posOrder
-      .filter(pos => totals[pos] > 0)
-      .map(pos => `${pos}: ${pctByPos[pos]}%`)
-      .join('&#10;');
+    const R = 28;
+    const present = posOrder.filter(pos => totals[pos] > 0);
+    let angle = -Math.PI / 2;
+    const labels = present.map((pos, i) => `<text class="gs-slice-label gs-l${i}" y="3">${pos} ${pctByPos[pos]}%</text>`).join('');
+    const slices = present.map((pos, i) => {
+      const frac = totals[pos] / total;
+      const color = POSITION_COLORS[pos] || '#484f58';
+      if (frac >= 0.9999) {
+        return `<g class="gs-slice gs-s${i}" style="--dx:0px;--dy:0px;"><circle r="${R}" fill="${color}"></circle></g>`;
+      }
+      const a0 = angle, a1 = angle + frac * 2 * Math.PI;
+      angle = a1;
+      const mid = (a0 + a1) / 2;
+      const x0 = R * Math.cos(a0), y0 = R * Math.sin(a0);
+      const x1 = R * Math.cos(a1), y1 = R * Math.sin(a1);
+      const large = frac > 0.5 ? 1 : 0;
+      const dx = (Math.cos(mid) * 4).toFixed(2), dy = (Math.sin(mid) * 4).toFixed(2);
+      return `<g class="gs-slice gs-s${i}" style="--dx:${dx}px;--dy:${dy}px;"><path d="M0 0 L${x0.toFixed(2)} ${y0.toFixed(2)} A${R} ${R} 0 ${large} 1 ${x1.toFixed(2)} ${y1.toFixed(2)} Z" fill="${color}"></path></g>`;
+    }).join('');
 
-    const legend = posOrder
-      .filter(pos => totals[pos] > 0)
+    const legend = present
       .map(pos =>
         `<span class="gs-pie-item"><span class="gs-pie-dot" style="background:${POSITION_COLORS[pos]};"></span>${pos}</span>`
       ).join('');
 
     return `<div class="gs-pie-wrap">
-      <div class="gs-pie" style="background: conic-gradient(${gradParts.join(', ')});" title="${tooltipLines}"></div>
+      <svg class="gs-pie gs-pie-svg" viewBox="-32 -32 64 64" aria-label="${title}">${slices}${labels}</svg>
       <div class="gs-pie-title">${title}</div>
       <div class="gs-pie-legend">${legend}</div>
     </div>`;

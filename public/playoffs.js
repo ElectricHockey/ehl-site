@@ -26,7 +26,7 @@ function logoImg(url, name, cls = 'b-logo') {
 
 // ── Series card ─────────────────────────────────────────────────────────────
 
-function seriesCard(s, seriesLength) {
+function seriesCard(s, seriesLength, teams) {
   const winsToWin = Math.ceil((seriesLength || 7) / 2);
   const isComplete = s.winner_id != null;
   const cls = isComplete ? ' b-series-complete' : '';
@@ -40,11 +40,19 @@ function seriesCard(s, seriesLength) {
   const highWinsCls = highIsWinner ? ' b-wins-champion' : '';
   const lowWinsCls  = lowIsWinner  ? ' b-wins-champion' : '';
 
+  const highSeed = (s.high_seed_num != null && s.high_seed_num !== '')
+    ? s.high_seed_num
+    : ((teams && s.high_seed_id) ? teams.find(t => t.team_id === s.high_seed_id)?.seed : null) || '—';
+
+  const lowSeed = (s.low_seed_num != null && s.low_seed_num !== '')
+    ? s.low_seed_num
+    : ((teams && s.low_seed_id) ? teams.find(t => t.team_id === s.low_seed_id)?.seed : null) || '—';
+
   let html = `<div class="b-series${cls}" data-series-id="${s.id}" onclick="openSeriesDetail(${s.id})">`;
 
   if (s.high_seed_id) {
     html += `<div class="b-team${highCls}">
-      <span class="b-seed">${s.high_seed_num}</span>
+      <span class="b-seed">${highSeed}</span>
       ${logoImg(s.high_seed_logo, s.high_seed_name)}
       <span class="b-team-name">${abbrev(s.high_seed_name, s.high_seed_abbrev)}</span>
       <span class="b-wins${highWinsCls}">${s.high_seed_wins}</span>
@@ -55,7 +63,7 @@ function seriesCard(s, seriesLength) {
 
   if (s.low_seed_id) {
     html += `<div class="b-team${lowCls}">
-      <span class="b-seed">${s.low_seed_num}</span>
+      <span class="b-seed">${lowSeed}</span>
       ${logoImg(s.low_seed_logo, s.low_seed_name)}
       <span class="b-team-name">${abbrev(s.low_seed_name, s.low_seed_abbrev)}</span>
       <span class="b-wins${lowWinsCls}">${s.low_seed_wins}</span>
@@ -85,6 +93,126 @@ function renderBracket(playoff, teams, rounds) {
   const champion = finalSeries && finalSeries.winner_id
     ? teams.find(t => t.team_id === finalSeries.winner_id) : null;
 
+  // Check if we have 2 distinct conferences
+  const confNames = [...new Set(teams.map(t => t.conference).filter(Boolean))];
+  const isTwoConf = confNames.length === 2 && numRounds >= 2;
+
+  if (isTwoConf) {
+    const eastConf = confNames.find(c => /east/i.test(c)) || confNames[0];
+    const westConf = confNames.find(c => c !== eastConf) || confNames[1];
+    const numConfRounds = numRounds - 1;
+
+    const colWidth = 210;
+    const eastWidth = numConfRounds * colWidth;
+    const westWidth = numConfRounds * colWidth;
+    const centerWidth = 220;
+
+    let html = `<div class="bracket-outer"><svg class="bracket-svg" id="bracket-svg"></svg>`;
+
+    // Conference Title Banners Above Bracket
+    html += `<div class="bracket-header-row">
+      <div class="b-conf-banner b-conf-east" style="width:${eastWidth}px;box-sizing:border-box;">${eastConf}${!/conference/i.test(eastConf) ? ' Conference' : ''}</div>
+      <div class="b-conf-banner b-conf-center" style="width:${centerWidth}px;box-sizing:border-box;margin:0 10px;">🏆 Finals</div>
+      <div class="b-conf-banner b-conf-west" style="width:${westWidth}px;box-sizing:border-box;">${westConf}${!/conference/i.test(westConf) ? ' Conference' : ''}</div>
+    </div>`;
+
+    html += `<div class="bracket-grid" id="bracket-grid">`;
+
+    // LEFT SIDE: Eastern Conference (cr = 1 .. numConfRounds)
+    for (let cr = 1; cr <= numConfRounds; cr++) {
+      const slotsPerMatch = Math.pow(2, cr - 1);
+      const initGapSlots  = (slotsPerMatch - 1) / 2;
+      const betweenGapSlots = slotsPerMatch - 1;
+
+      const roundSeries = (rounds[cr] || []).slice().sort((a, b) => a.series_number - b.series_number);
+      const eastSeries = roundSeries.slice(0, Math.ceil(roundSeries.length / 2));
+      const rName = cr === numConfRounds ? 'Conf. Finals' : cr === numConfRounds - 1 ? 'Round 2' : cr === 1 ? 'Round 1' : `Round ${cr}`;
+
+      html += `<div class="b-round">`;
+      html += `<div class="b-round-title">${rName}</div>`;
+
+      if (initGapSlots > 0) {
+        html += `<div class="b-spacer" style="height:${initGapSlots * SLOT_H}px"></div>`;
+      }
+
+      eastSeries.forEach((s, i) => {
+        html += seriesCard(s, seriesLength, teams);
+        if (i < eastSeries.length - 1 && betweenGapSlots > 0) {
+          html += `<div class="b-spacer" style="height:${betweenGapSlots * SLOT_H}px"></div>`;
+        }
+      });
+
+      if (initGapSlots > 0) {
+        html += `<div class="b-spacer" style="height:${initGapSlots * SLOT_H}px"></div>`;
+      }
+
+      html += `</div>`; // .b-round
+    }
+
+    // CENTER: Finals & Champion
+    const finalTopSlots = (Math.pow(2, numConfRounds - 1) - 1) / 2;
+    html += `<div class="b-champion-col" style="width:${centerWidth}px;margin:0 10px;">
+      <div class="b-round-title">Stanley Cup Final</div>`;
+
+    if (finalTopSlots > 0) {
+      html += `<div class="b-spacer" style="height:${finalTopSlots * SLOT_H}px"></div>`;
+    }
+
+    if (finalSeries) {
+      html += seriesCard(finalSeries, seriesLength, teams);
+    }
+
+    html += `<div style="margin-top:1.25rem;">`;
+    if (champion) {
+      html += `<div class="b-champ-box">
+        <div class="b-champ-trophy">🏆</div>
+        <div class="b-champ-label">Champion</div>
+        ${champion.logo_url ? `<img src="${champion.logo_url}" alt="${champion.name}" class="b-champ-logo" />` : ''}
+        <div class="b-champ-name">${champion.name}</div>
+      </div>`;
+    } else {
+      html += `<div class="b-champ-tbd">🏆<br><br>Champion<br>TBD</div>`;
+    }
+    html += `</div>`; // champ wrapper
+
+    html += `</div>`; // .b-champion-col
+
+    // RIGHT SIDE: Western Conference (cr = numConfRounds .. 1)
+    for (let cr = numConfRounds; cr >= 1; cr--) {
+      const slotsPerMatch = Math.pow(2, cr - 1);
+      const initGapSlots  = (slotsPerMatch - 1) / 2;
+      const betweenGapSlots = slotsPerMatch - 1;
+
+      const roundSeries = (rounds[cr] || []).slice().sort((a, b) => a.series_number - b.series_number);
+      const westSeries = roundSeries.slice(Math.ceil(roundSeries.length / 2));
+      const rName = cr === numConfRounds ? 'Conf. Finals' : cr === numConfRounds - 1 ? 'Round 2' : cr === 1 ? 'Round 1' : `Round ${cr}`;
+
+      html += `<div class="b-round">`;
+      html += `<div class="b-round-title">${rName}</div>`;
+
+      if (initGapSlots > 0) {
+        html += `<div class="b-spacer" style="height:${initGapSlots * SLOT_H}px"></div>`;
+      }
+
+      westSeries.forEach((s, i) => {
+        html += seriesCard(s, seriesLength, teams);
+        if (i < westSeries.length - 1 && betweenGapSlots > 0) {
+          html += `<div class="b-spacer" style="height:${betweenGapSlots * SLOT_H}px"></div>`;
+        }
+      });
+
+      if (initGapSlots > 0) {
+        html += `<div class="b-spacer" style="height:${initGapSlots * SLOT_H}px"></div>`;
+      }
+
+      html += `</div>`; // .b-round
+    }
+
+    html += `</div></div>`; // .bracket-grid .bracket-outer
+    return html;
+  }
+
+  // Fallback: 1-sided standard bracket
   let html = `<div class="bracket-outer"><svg class="bracket-svg" id="bracket-svg"></svg><div class="bracket-grid" id="bracket-grid">`;
 
   for (let r = 1; r <= numRounds; r++) {
@@ -103,7 +231,7 @@ function renderBracket(playoff, teams, rounds) {
     }
 
     roundSeries.forEach((s, i) => {
-      html += seriesCard(s, seriesLength);
+      html += seriesCard(s, seriesLength, teams);
       if (i < roundSeries.length - 1 && betweenGapSlots > 0) {
         html += `<div class="b-spacer" style="height:${betweenGapSlots * SLOT_H}px"></div>`;
       }
@@ -142,15 +270,15 @@ function renderBracket(playoff, teams, rounds) {
 
 // ── Draw SVG connector lines ────────────────────────────────────────────────
 
-function drawBracketLines(rounds) {
+function drawBracketLines(rounds, teams) {
   const svg   = document.getElementById('bracket-svg');
   const grid  = document.getElementById('bracket-grid');
   if (!svg || !grid) return;
 
   const numRounds = Object.keys(rounds).length;
   const gridRect  = grid.getBoundingClientRect();
-  const svgW = grid.scrollWidth;
-  const svgH = grid.scrollHeight;
+  const svgW = Math.max(grid.scrollWidth, grid.offsetWidth);
+  const svgH = Math.max(grid.scrollHeight, grid.offsetHeight);
   svg.setAttribute('viewBox', `0 0 ${svgW} ${svgH}`);
   svg.setAttribute('width', svgW);
   svg.setAttribute('height', svgH);
@@ -163,39 +291,158 @@ function drawBracketLines(rounds) {
     ])
   );
 
-  for (let r = 1; r < numRounds; r++) {
-    const curSeries  = (rounds[r]   || []).slice().sort((a,b) => a.series_number - b.series_number);
-    const nextSeries = (rounds[r+1] || []).slice().sort((a,b) => a.series_number - b.series_number);
+  const confNames = teams ? [...new Set(teams.map(t => t.conference).filter(Boolean))] : [];
+  const isTwoConf = confNames.length === 2 && numRounds >= 2;
 
-    for (let i = 0; i < nextSeries.length; i++) {
-      const s1 = curSeries[i * 2];
-      const s2 = curSeries[i * 2 + 1];
-      const t  = nextSeries[i];
-      if (!s1 || !s2 || !t) continue;
+  const ox = gridRect.left;
+  const oy = gridRect.top;
 
-      const r1 = seriesRects.get(String(s1.id));
-      const r2 = seriesRects.get(String(s2.id));
-      const rT = seriesRects.get(String(t.id));
-      if (!r1 || !r2 || !rT) continue;
-      const ox = gridRect.left;
-      const oy = gridRect.top;
+  if (isTwoConf) {
+    const numConfRounds = numRounds - 1;
 
-      const x1 = r1.right - ox + grid.scrollLeft;
-      const y1 = (r1.top + r1.bottom) / 2 - oy + grid.scrollTop;
-      const x2 = r2.right - ox + grid.scrollLeft;
-      const y2 = (r2.top + r2.bottom) / 2 - oy + grid.scrollTop;
-      const xT = rT.left  - ox + grid.scrollLeft;
-      const yT = (rT.top + rT.bottom) / 2 - oy + grid.scrollTop;
+    // 1. Eastern Side: flow from left to right (cr = 1 .. numConfRounds - 1 into cr + 1)
+    for (let cr = 1; cr < numConfRounds; cr++) {
+      const curSeriesAll  = (rounds[cr]   || []).slice().sort((a,b) => a.series_number - b.series_number);
+      const nextSeriesAll = (rounds[cr+1] || []).slice().sort((a,b) => a.series_number - b.series_number);
+      const eastCur  = curSeriesAll.slice(0, Math.ceil(curSeriesAll.length / 2));
+      const eastNext = nextSeriesAll.slice(0, Math.ceil(nextSeriesAll.length / 2));
 
-      const midX = (x1 + xT) / 2;
-      const midY = (y1 + y2) / 2;
+      for (let i = 0; i < eastNext.length; i++) {
+        const s1 = eastCur[i * 2];
+        const s2 = eastCur[i * 2 + 1];
+        const t  = eastNext[i];
+        if (!t) continue;
 
-      // s1 → right → down/up to midY
-      paths.push(`M ${x1} ${y1} H ${midX} V ${midY}`);
-      // s2 → right → up/down to midY
-      paths.push(`M ${x2} ${y2} H ${midX} V ${midY}`);
-      // midY → right to next series
-      paths.push(`M ${midX} ${midY} H ${xT}`);
+        const rT = seriesRects.get(String(t.id));
+        if (!rT) continue;
+        const xT = rT.left - ox + grid.scrollLeft;
+        const yT = (rT.top + rT.bottom) / 2 - oy + grid.scrollTop;
+
+        const r1 = s1 ? seriesRects.get(String(s1.id)) : null;
+        const r2 = s2 ? seriesRects.get(String(s2.id)) : null;
+
+        if (r1 && r2) {
+          const x1 = r1.right - ox + grid.scrollLeft;
+          const y1 = (r1.top + r1.bottom) / 2 - oy + grid.scrollTop;
+          const x2 = r2.right - ox + grid.scrollLeft;
+          const y2 = (r2.top + r2.bottom) / 2 - oy + grid.scrollTop;
+          const midX = (Math.max(x1, x2) + xT) / 2;
+          const midY = (y1 + y2) / 2;
+
+          paths.push(`M ${x1} ${y1} H ${midX} V ${midY}`);
+          paths.push(`M ${x2} ${y2} H ${midX} V ${midY}`);
+          paths.push(`M ${midX} ${midY} H ${xT}`);
+        } else if (r1) {
+          const x1 = r1.right - ox + grid.scrollLeft;
+          const y1 = (r1.top + r1.bottom) / 2 - oy + grid.scrollTop;
+          paths.push(`M ${x1} ${y1} H ${xT} V ${yT}`);
+        }
+      }
+    }
+
+    // East Conf Final into Final
+    const confFinalSeries = (rounds[numConfRounds] || []).slice().sort((a,b) => a.series_number - b.series_number);
+    const finalSeries = (rounds[numRounds] || [])[0];
+    if (confFinalSeries[0] && finalSeries) {
+      const rEast = seriesRects.get(String(confFinalSeries[0].id));
+      const rFinal = seriesRects.get(String(finalSeries.id));
+      if (rEast && rFinal) {
+        const x1 = rEast.right - ox + grid.scrollLeft;
+        const y1 = (rEast.top + rEast.bottom) / 2 - oy + grid.scrollTop;
+        const xT = rFinal.left - ox + grid.scrollLeft;
+        const yT = (rFinal.top + rFinal.bottom) / 2 - oy + grid.scrollTop;
+        const midX = (x1 + xT) / 2;
+        paths.push(`M ${x1} ${y1} H ${midX} V ${yT} H ${xT}`);
+      }
+    }
+
+    // 2. Western Side: flow from right to left (cr = 1 .. numConfRounds - 1 into cr + 1)
+    for (let cr = 1; cr < numConfRounds; cr++) {
+      const curSeriesAll  = (rounds[cr]   || []).slice().sort((a,b) => a.series_number - b.series_number);
+      const nextSeriesAll = (rounds[cr+1] || []).slice().sort((a,b) => a.series_number - b.series_number);
+      const westCur  = curSeriesAll.slice(Math.ceil(curSeriesAll.length / 2));
+      const westNext = nextSeriesAll.slice(Math.ceil(nextSeriesAll.length / 2));
+
+      for (let i = 0; i < westNext.length; i++) {
+        const s1 = westCur[i * 2];
+        const s2 = westCur[i * 2 + 1];
+        const t  = westNext[i];
+        if (!t) continue;
+
+        const rT = seriesRects.get(String(t.id));
+        if (!rT) continue;
+        const xT = rT.right - ox + grid.scrollLeft;
+        const yT = (rT.top + rT.bottom) / 2 - oy + grid.scrollTop;
+
+        const r1 = s1 ? seriesRects.get(String(s1.id)) : null;
+        const r2 = s2 ? seriesRects.get(String(s2.id)) : null;
+
+        if (r1 && r2) {
+          const x1 = r1.left - ox + grid.scrollLeft;
+          const y1 = (r1.top + r1.bottom) / 2 - oy + grid.scrollTop;
+          const x2 = r2.left - ox + grid.scrollLeft;
+          const y2 = (r2.top + r2.bottom) / 2 - oy + grid.scrollTop;
+          const midX = (Math.min(x1, x2) + xT) / 2;
+          const midY = (y1 + y2) / 2;
+
+          paths.push(`M ${x1} ${y1} H ${midX} V ${midY}`);
+          paths.push(`M ${x2} ${y2} H ${midX} V ${midY}`);
+          paths.push(`M ${midX} ${midY} H ${xT}`);
+        } else if (r1) {
+          const x1 = r1.left - ox + grid.scrollLeft;
+          const y1 = (r1.top + r1.bottom) / 2 - oy + grid.scrollTop;
+          paths.push(`M ${x1} ${y1} H ${xT} V ${yT}`);
+        }
+      }
+    }
+
+    // West Conf Final into Final
+    if (confFinalSeries[1] && finalSeries) {
+      const rWest = seriesRects.get(String(confFinalSeries[1].id));
+      const rFinal = seriesRects.get(String(finalSeries.id));
+      if (rWest && rFinal) {
+        const x1 = rWest.left - ox + grid.scrollLeft;
+        const y1 = (rWest.top + rWest.bottom) / 2 - oy + grid.scrollTop;
+        const xT = rFinal.right - ox + grid.scrollLeft;
+        const yT = (rFinal.top + rFinal.bottom) / 2 - oy + grid.scrollTop;
+        const midX = (x1 + xT) / 2;
+        paths.push(`M ${x1} ${y1} H ${midX} V ${yT} H ${xT}`);
+      }
+    }
+  } else {
+    // 1-sided standard bracket
+    for (let r = 1; r < numRounds; r++) {
+      const curSeries  = (rounds[r]   || []).slice().sort((a,b) => a.series_number - b.series_number);
+      const nextSeries = (rounds[r+1] || []).slice().sort((a,b) => a.series_number - b.series_number);
+
+      for (let i = 0; i < nextSeries.length; i++) {
+        const s1 = curSeries[i * 2];
+        const s2 = curSeries[i * 2 + 1];
+        const t  = nextSeries[i];
+        if (!s1 || !s2 || !t) continue;
+
+        const r1 = seriesRects.get(String(s1.id));
+        const r2 = seriesRects.get(String(s2.id));
+        const rT = seriesRects.get(String(t.id));
+        if (!r1 || !r2 || !rT) continue;
+
+        const x1 = r1.right - ox + grid.scrollLeft;
+        const y1 = (r1.top + r1.bottom) / 2 - oy + grid.scrollTop;
+        const x2 = r2.right - ox + grid.scrollLeft;
+        const y2 = (r2.top + r2.bottom) / 2 - oy + grid.scrollTop;
+        const xT = rT.left  - ox + grid.scrollLeft;
+        const yT = (rT.top + rT.bottom) / 2 - oy + grid.scrollTop;
+
+        const midX = (x1 + xT) / 2;
+        const midY = (y1 + y2) / 2;
+
+        // s1 → right → down/up to midY
+        paths.push(`M ${x1} ${y1} H ${midX} V ${midY}`);
+        // s2 → right → up/down to midY
+        paths.push(`M ${x2} ${y2} H ${midX} V ${midY}`);
+        // midY → right to next series
+        paths.push(`M ${midX} ${midY} H ${xT}`);
+      }
     }
   }
 
@@ -263,14 +510,16 @@ async function openSeriesDetail(seriesId) {
         <thead><tr><th>Date</th><th>Home</th><th>Score</th><th>Away</th><th>Status</th></tr></thead>
         <tbody>
           ${games.map(g => {
-            const score = g.status === 'complete' ? `${g.home_score} – ${g.away_score}` : '—';
-            const ot    = g.is_overtime ? ' <span style="color:#8b949e;font-size:0.75rem;">OT</span>' : '';
+            const isDone = g.status === 'complete' || g.status === 'forfeit';
+            const score = isDone ? `${g.home_score} – ${g.away_score}` : '—';
+            const ot    = g.is_overtime ? ' <span style="color:#e3b341;font-size:0.75rem;font-weight:700;">OT</span>' : '';
+            const statusLabel = (g.status === 'forfeit' || g.is_forfeit) ? '🏳 Forfeit' : (g.status === 'complete' ? '✅ Final' : '🕐 Scheduled');
             return `<tr onclick="window.location.href='game.html?id=${g.id}'" title="View game stats">
               <td>${g.date}</td>
               <td>${g.home_team_name}</td>
               <td><strong>${score}</strong>${ot}</td>
               <td>${g.away_team_name}</td>
-              <td>${g.status === 'complete' ? '✅ Final' : '🕐 Scheduled'}</td>
+              <td>${statusLabel}</td>
             </tr>`;
           }).join('')}
         </tbody>
@@ -321,13 +570,20 @@ async function loadPlayoff() {
 
     // Draw SVG connector lines after DOM is painted
     requestAnimationFrame(() => {
-      requestAnimationFrame(() => drawBracketLines(data.rounds));
+      requestAnimationFrame(() => drawBracketLines(data.rounds, data.teams));
     });
 
   } catch (err) {
     root.innerHTML = `<p class="error">Failed to load playoff bracket. Is the server running?</p>`;
   }
 }
+
+// Window resize redraw for SVG bracket lines
+window.addEventListener('resize', () => {
+  if (_bracketData && _bracketData.rounds) {
+    drawBracketLines(_bracketData.rounds, _bracketData.teams);
+  }
+});
 
 // ── Init ────────────────────────────────────────────────────────────────────
 

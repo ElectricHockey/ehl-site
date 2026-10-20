@@ -16,6 +16,18 @@ let currentPickerMatches = [];
 let currentPickerSelected = new Set();
 let scheduleTeamFilter = '';   // team id (as string) or '' for all
 let scheduleTimeFilter = 'all'; // 'all' | 'upcoming' | '15days'
+let _filterSeasonId = null;
+try {
+  const _sf = JSON.parse(sessionStorage.getItem('scheduleFilters') || 'null');
+  if (_sf && _sf.time) scheduleTimeFilter = _sf.time;
+} catch {}
+function saveScheduleFilters() {
+  try {
+    sessionStorage.setItem('scheduleFilters', JSON.stringify({
+      season: _filterSeasonId, team: scheduleTeamFilter, time: scheduleTimeFilter,
+    }));
+  } catch {}
+}
 
 // ── Schedule filter helpers ────────────────────────────────────────────────
 
@@ -99,9 +111,29 @@ async function adminLogout() {
 // ── Badge helpers ──────────────────────────────────────────────────────────
 
 function resultBadge(r) {
-  if (r === 'W') return '<span class="badge badge-win">W</span>';
-  if (r === 'L') return '<span class="badge badge-loss">L</span>';
+  if (r === 'W' || r === 'OTW') return `<span class="badge badge-win">${r}</span>`;
+  if (r === 'L' || r === 'OTL') return `<span class="badge badge-loss">${r}</span>`;
   return `<span class="badge badge-tie">${r}</span>`;
+}
+
+function capScoreDifferential(homeScore, awayScore, maxDiff = 7) {
+  let h = parseInt(homeScore, 10);
+  let a = parseInt(awayScore, 10);
+  if (isNaN(h)) h = 0;
+  if (isNaN(a)) a = 0;
+  if (h - a > maxDiff) return { home_score: a + maxDiff, away_score: a };
+  if (a - h > maxDiff) return { home_score: h, away_score: h + maxDiff };
+  return { home_score: h, away_score: a };
+}
+
+function formatGameScore(g) {
+  if (g.status !== 'complete' && g.status !== 'forfeit') return '–';
+  const capped = capScoreDifferential(g.home_score, g.away_score);
+  const otBadge = g.is_overtime ? ' <span style="color:#e3b341;font-size:0.75rem;font-weight:700;letter-spacing:0.04em;">OT</span>' : '';
+  const h = capped.home_score, a = capped.away_score;
+  const hs = h > a ? `<strong>${h}</strong>` : h;
+  const as = a > h ? `<strong>${a}</strong>` : a;
+  return `${hs} – ${as}${otBadge}`;
 }
 
 function statusBadge(s, isForfeit) {
@@ -110,11 +142,10 @@ function statusBadge(s, isForfeit) {
   return '<span class="status-badge status-scheduled">Scheduled</span>';
 }
 
-function formatToi(seconds) {
-  if (!seconds) return '0:00';
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  return `${m}:${String(s).padStart(2, '0')}`;
+function formatToi(s) {
+  if (!s) return '0:00';
+  const m = Math.floor(s / 60), sec = Math.round(s % 60);
+  return m + ':' + String(sec).padStart(2, '0');
 }
 
 // game-stats.js (loaded before this file) provides GameStats.renderTeamPanel
@@ -172,12 +203,18 @@ async function loadSchedule() {
     allGames = res.ok ? await res.json() : [];
   } catch { allGames = []; }
 
-  // Reset team filter when season changes (new season may have different teams)
-  scheduleTeamFilter = '';
-  const teamSel = document.getElementById('schedule-team-filter');
-  if (teamSel) teamSel.value = '';
+  // Keep the team filter for the same season; reset it when the season changes
+  if (String(sid) !== String(_filterSeasonId)) {
+    scheduleTeamFilter = '';
+    _filterSeasonId = sid;
+    try {
+      const saved = JSON.parse(sessionStorage.getItem('scheduleFilters') || 'null');
+      if (saved && String(saved.season) === String(sid)) scheduleTeamFilter = saved.team || '';
+    } catch {}
+  }
 
   populateTeamFilter(allGames);
+  saveScheduleFilters();
   renderSchedule();
 
   // Check for ?g= URL param to auto-open a game
@@ -210,17 +247,33 @@ function formatGameTime(dateStr, timeStr) {
   try {
     const [h, m] = String(timeStr).split(':').map(Number);
     if (!Number.isFinite(h) || !Number.isFinite(m)) return timeStr;
-    const dt = new Date();
-    dt.setHours(h, m, 0, 0);
-    return dt.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    const [yy, mo, dd] = /^\d{4}-\d{2}-\d{2}/.test(dateStr || '')
+      ? String(dateStr).slice(0, 10).split('-').map(Number)
+      : [new Date().getFullYear(), new Date().getMonth() + 1, new Date().getDate()];
+    // Stored game times are Eastern wall-clock; convert to the viewer's timezone.
+    const wallAsUtc = Date.UTC(yy, mo - 1, dd, h, m, 0);
+    const fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York', hourCycle: 'h23',
+      year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric',
+    });
+    const zoneWall = (ts) => {
+      const p = {};
+      fmt.formatToParts(new Date(ts)).forEach(x => { p[x.type] = Number(x.value); });
+      return Date.UTC(p.year, p.month - 1, p.day, p.hour % 24, p.minute, 0);
+    };
+    let ts = wallAsUtc - (zoneWall(wallAsUtc) - wallAsUtc);
+    ts = wallAsUtc - (zoneWall(ts) - ts);
+    return new Date(ts).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
   } catch { return timeStr; }
 }
 
 function currentLocalTimeHHMM() {
-  const now = new Date();
-  const hh = String(now.getHours()).padStart(2, '0');
-  const mm = String(now.getMinutes()).padStart(2, '0');
-  return `${hh}:${mm}`;
+  // Game times are stored as Eastern wall-clock time.
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York', hourCycle: 'h23', hour: '2-digit', minute: '2-digit',
+  }).formatToParts(new Date());
+  const get = (t) => (parts.find(p => p.type === t) || {}).value || '00';
+  return `${String(get('hour') % 24).padStart(2, '0')}:${get('minute')}`;
 }
 
 function buildGameRow(g) {
@@ -230,7 +283,7 @@ function buildGameRow(g) {
       style="cursor:pointer;">
       <td>${g.date}${g.game_time ? `<br><span style="color:#8b949e;font-size:0.78rem;">${formatGameTime(g.date, g.game_time)}</span>` : ''}</td>
       <td>${g.home_logo ? `<img src="${g.home_logo}" style="width:22px;height:22px;object-fit:contain;vertical-align:middle;margin-right:0.3rem;border-radius:3px;" />` : ''}${g.home_team_name}</td>
-      <td>${(g.status === 'complete' || g.status === 'forfeit') ? `${g.home_score} – ${g.away_score}` : '–'}</td>
+      <td>${formatGameScore(g)}</td>
       <td>${g.away_logo ? `<img src="${g.away_logo}" style="width:22px;height:22px;object-fit:contain;vertical-align:middle;margin-right:0.3rem;border-radius:3px;" />` : ''}${g.away_team_name}</td>
       <td id="status-cell-${g.id}">${statusBadge(g.status, g.is_forfeit)}</td>
       ${isAdmin ? `
@@ -375,7 +428,10 @@ async function openGameDetail(gameId) {
   if (forfeitBtn) forfeitBtn.dataset.gameId = gameId;
 
   try {
-    const res = await fetch(`${API}/games/${gameId}/stats`);
+    const res = await fetch(`${API}/games/${gameId}/stats?_t=${Date.now()}`, {
+      headers: adminHeaders(),
+      cache: 'no-store',
+    });
     if (!res.ok) { body.innerHTML = '<p class="picker-error">Failed to load game stats.</p>'; return; }
     const data = await res.json();
     renderGameDetail(data);
@@ -388,13 +444,16 @@ function renderGameDetail(data) {
   const body = document.getElementById('detail-body');
   const { game, home_players, away_players, has_stats } = data;
 
-  const isComplete = game.status === 'complete';
+  const isComplete = game.status === 'complete' || game.status === 'forfeit';
   const finalLabel = isComplete
-    ? `<div style="text-align:center;font-size:0.72rem;font-weight:700;letter-spacing:0.1em;color:#8b949e;text-transform:uppercase;padding-bottom:0.2rem;">${game.is_forfeit ? 'FORFEIT' : game.is_overtime ? 'FINAL · OT' : 'FINAL'}</div>`
+    ? `<div style="text-align:center;font-size:0.72rem;font-weight:700;letter-spacing:0.1em;color:#8b949e;text-transform:uppercase;padding-bottom:0.2rem;">${game.is_forfeit || game.status === 'forfeit' ? 'FORFEIT' : game.is_overtime ? 'FINAL · OT' : 'FINAL'}</div>`
     : '';
 
-  const homeWin = isComplete && game.home_score > game.away_score;
-  const awayWin = isComplete && game.away_score > game.home_score;
+  const capped = capScoreDifferential(game.home_score, game.away_score);
+  const homeScore = isComplete ? capped.home_score : '–';
+  const awayScore = isComplete ? capped.away_score : '–';
+  const homeWin = isComplete && capped.home_score > capped.away_score;
+  const awayWin = isComplete && capped.away_score > capped.home_score;
 
   const logoImg = (team) => team.logo_url
     ? `<img src="${team.logo_url}" style="width:36px;height:36px;object-fit:contain;border-radius:6px;background:#21262d;padding:3px;" alt="${team.name}" />`
@@ -432,9 +491,9 @@ function renderGameDetail(data) {
         ${logoImg(game.home_team)}
         <span class="detail-team-name">${game.home_team.name}</span>
       </div>
-      <span class="detail-score-num${homeWin ? ' detail-score-winner' : ''}">${isComplete ? game.home_score : '–'}</span>
+      <span class="detail-score-num${homeWin ? ' detail-score-winner' : ''}">${homeScore}</span>
       <span class="detail-vs">–</span>
-      <span class="detail-score-num${awayWin ? ' detail-score-winner' : ''}">${isComplete ? game.away_score : '–'}</span>
+      <span class="detail-score-num${awayWin ? ' detail-score-winner' : ''}">${awayScore}</span>
       <div style="display:flex;flex-direction:column;align-items:center;gap:0.3rem;">
         ${logoImg(game.away_team)}
         <span class="detail-team-name">${game.away_team.name}</span>
@@ -554,6 +613,8 @@ function pasteEAJsonUI(gameId) {
 function mapEAResultToBadge(result) {
   if (result === '1' || result === 1) return 'W';
   if (result === '2' || result === 2) return 'L';
+  if (result === '5' || result === 5) return 'OTL';
+  if (result === '6' || result === 6) return 'OTW';
   return '?';
 }
 
@@ -586,9 +647,21 @@ function mapEAPlayerFromRaw(player) {
   const passPct = readEAField(player, ['passPct', 'skpasspct']) != null ? parseFloat(readEAField(player, ['passPct', 'skpasspct'])) : null;
   const passCompletions = passPct !== null ? Math.round(passAttempts * passPct / 100) : 0;
 
+  const offensiveRating = Number(readEAField(player, ['offensiveRating', 'skoffense'])) || 0;
+  const defensiveRating = Number(readEAField(player, ['defensiveRating', 'skdefense'])) || 0;
+  const teamPlayRating = Number(readEAField(player, ['teamPlayRating', 'skteamplay'])) || 0;
+  let overallRating = Number(readEAField(player, ['overallRating', 'rating', 'skoverall'])) || 0;
+  if (!overallRating && (offensiveRating > 0 || defensiveRating > 0 || teamPlayRating > 0)) {
+    overallRating = Math.round((offensiveRating + defensiveRating + teamPlayRating) / 3);
+  }
+
   return {
     name: readEAField(player, ['playerName', 'name']) || 'Unknown',
     position,
+    overallRating,
+    offensiveRating,
+    defensiveRating,
+    teamPlayRating,
     goals,
     assists,
     points: goals + assists,
@@ -597,7 +670,22 @@ function mapEAPlayerFromRaw(player) {
     hits: Number(readEAField(player, ['hits', 'skhits'])) || 0,
     plusMinus: Number(readEAField(player, ['plusMinus', 'skplusmin'])) || 0,
     pim: Number(readEAField(player, ['pim', 'skpim'])) || 0,
-    blockedShots: Number(readEAField(player, ['blockedShots', 'skblockedshots'])) || 0,
+    blockedShots: Number(readEAField(player, ['blockedShots', 'skbs', 'skblockedshots'])) || 0,
+    ppGoals: Number(readEAField(player, ['ppGoals', 'skppg'])) || 0,
+    shGoals: Number(readEAField(player, ['shGoals', 'skshg'])) || 0,
+    gwg: Number(readEAField(player, ['gwg', 'skgwg'])) || 0,
+    penaltiesDrawn: Number(readEAField(player, ['penaltiesDrawn', 'skpenaltiesdrawn', 'skpd'])) || 0,
+    deflections: Number(readEAField(player, ['deflections', 'skdeflections', 'skdfl'])) || 0,
+    interceptions: Number(readEAField(player, ['interceptions', 'skinterceptions', 'skint'])) || 0,
+    hatTricks: Number(readEAField(player, ['hatTricks', 'skhattricks', 'skht'])) || 0,
+    saucerPasses: Number(readEAField(player, ['saucerPasses', 'sksaucerpasses'])) || 0,
+    pkClears: Number(readEAField(player, ['pkClears', 'skpkclearzone'])) || 0,
+    penaltyShotAttempts: Number(readEAField(player, ['penaltyShotAttempts', 'glpenshots'])) || 0,
+    penaltyShotGa: Number(readEAField(player, ['penaltyShotGa', 'glpensaves'])) || 0,
+    breakawayShots: Number(readEAField(player, ['breakawayShots', 'glbrkshots'])) || 0,
+    breakawaySaves: Number(readEAField(player, ['breakawaySaves', 'glbrksaves'])) || 0,
+    desperationSaves: Number(readEAField(player, ['desperationSaves', 'gldsaves'])) || 0,
+    pokeCheckSaves: Number(readEAField(player, ['pokeCheckSaves', 'glpokechecks'])) || 0,
     takeaways: Number(readEAField(player, ['takeaways', 'sktakeaways'])) || 0,
     giveaways: Number(readEAField(player, ['giveaways', 'skgiveaways'])) || 0,
     possessionSecs: Number(readEAField(player, ['possessionSecs', 'skpossession'])) || 0,
@@ -606,7 +694,7 @@ function mapEAPlayerFromRaw(player) {
     passCompletions,
     faceoffWins: Number(readEAField(player, ['faceoffWins', 'skfow'])) || 0,
     faceoffLosses: Number(readEAField(player, ['faceoffLosses', 'skfol'])) || 0,
-    toi: Number(readEAField(player, ['toi', 'sktoi'])) || 0,
+    toi: Number(readEAField(player, ['toiseconds', 'sktoi', 'toi'])) || 0,
     saves: Number(readEAField(player, ['saves', 'glsaves'])) || 0,
     savesPct: readEAField(player, ['savesPct', 'glsavepct']) != null ? parseFloat(readEAField(player, ['savesPct', 'glsavepct'])) : null,
     goalsAgainst: Number(readEAField(player, ['goalsAgainst', 'glga'])) || 0,
@@ -644,11 +732,14 @@ function processEAMatchesInBrowser(raw, game) {
     const oppClub = m?.clubs?.[oppId];
     const players = Object.values(m?.players?.[homeClubId] || {}).map(mapEAPlayerFromRaw);
     const awayPlayers = Object.values(m?.players?.[oppId] || {}).map(mapEAPlayerFromRaw);
+    const isOvertime = String(myClub.result) === '5' || String(myClub.result) === '6'
+      || (oppClub && (String(oppClub.result) === '5' || String(oppClub.result) === '6'));
     return {
       matchId: m.matchId,
       timestamp: m.timestamp || 0,
       date: m.timestamp ? new Date(m.timestamp * 1000).toISOString().split('T')[0] : null,
       result: mapEAResultToBadge(myClub.result),
+      isOvertime,
       homeScore: Number(myClub.score) || 0,
       awayScore: Number(myClub.opponentScore) || 0,
       homeShots: myClub.shots != null ? Number(myClub.shots) : null,
@@ -671,7 +762,7 @@ function normalizePlayerKey(player) {
     .replace(/\s+/g, ' ');
 }
 
-function mergePlayerStats(players) {
+function mergePlayerStats(players, useCustomOverall) {
   const merged = new Map();
   const numericKeys = [
     'goals', 'assists', 'points', 'shots', 'hits', 'plusMinus', 'pim', 'blockedShots',
@@ -691,6 +782,15 @@ function mergePlayerStats(players) {
       merged.set(key, {
         name: p.name || 'Unknown',
         position: p.position || '',
+        _matchCount: 0,
+        _totalOverall: 0,
+        _totalOffensive: 0,
+        _totalDefensive: 0,
+        _totalTeamPlay: 0,
+        overallRating: 0,
+        offensiveRating: 0,
+        defensiveRating: 0,
+        teamPlayRating: 0,
         goals: 0,
         assists: 0,
         points: 0,
@@ -732,11 +832,42 @@ function mergePlayerStats(players) {
     }
     const row = merged.get(key);
     if (!row.position && p.position) row.position = p.position;
+    const off = Number(p.offensiveRating) || 0;
+    const def = Number(p.defensiveRating) || 0;
+    const tpl = Number(p.teamPlayRating) || 0;
+    let ovr = Number(p.overallRating) || 0;
+    if (!ovr && (off > 0 || def > 0 || tpl > 0)) {
+      ovr = (off + def + tpl) / 3;
+    }
+    if (ovr > 0 || off > 0 || def > 0 || tpl > 0) {
+      row._matchCount += 1;
+      row._totalOverall += ovr;
+      row._totalOffensive += off;
+      row._totalDefensive += def;
+      row._totalTeamPlay += tpl;
+    }
     for (const k of numericKeys) row[k] += Number(p[k]) || 0;
   }
 
   const out = [...merged.values()];
   for (const p of out) {
+    if (useCustomOverall) {
+      // Zeroed so the site's own stat-based overall is computed from the merged totals
+      p.overallRating = 0;
+      p.offensiveRating = 0;
+      p.defensiveRating = 0;
+      p.teamPlayRating = 0;
+    } else if (p._matchCount > 0) {
+      p.overallRating = Math.round(p._totalOverall / p._matchCount);
+      p.offensiveRating = Math.round(p._totalOffensive / p._matchCount);
+      p.defensiveRating = Math.round(p._totalDefensive / p._matchCount);
+      p.teamPlayRating = Math.round(p._totalTeamPlay / p._matchCount);
+    }
+    delete p._matchCount;
+    delete p._totalOverall;
+    delete p._totalOffensive;
+    delete p._totalDefensive;
+    delete p._totalTeamPlay;
     p.points = (Number(p.goals) || 0) + (Number(p.assists) || 0);
     p.savesPct = p.shotsAgainst > 0 ? (p.saves / p.shotsAgainst) : null;
     p.passPct = p.passAttempts > 0 ? (p.passCompletions * 100 / p.passAttempts) : null;
@@ -761,12 +892,13 @@ function mergeSelectedMatches() {
   };
   return {
     matchIds: selected.map(m => String(m.matchId)),
+    isOvertime: selected.some(m => m.isOvertime),
     homeScore: selected.reduce((t, m) => t + (Number(m.homeScore) || 0), 0),
     awayScore: selected.reduce((t, m) => t + (Number(m.awayScore) || 0), 0),
     homeShots: sumOrNull(selected, 'homeShots'),
     awayShots: sumOrNull(selected, 'awayShots'),
-    homePlayers: mergePlayerStats(selected.flatMap(m => m.players || [])),
-    awayPlayers: mergePlayerStats(selected.flatMap(m => m.awayPlayers || [])),
+    homePlayers: mergePlayerStats(selected.flatMap(m => m.players || []), selected.length > 1),
+    awayPlayers: mergePlayerStats(selected.flatMap(m => m.awayPlayers || []), selected.length > 1),
   };
 }
 
@@ -836,7 +968,18 @@ async function tryBrowserFetchEA(eaUrl) {
   }
 }
 
-async function openPicker(gameId) {
+let pickerSide = 'home';
+
+function pickerSideBar(game) {
+  if (!game || !game.id) return '';
+  const showing = pickerSide === 'away' ? game.away_team_name : game.home_team_name;
+  const other = pickerSide === 'away' ? game.home_team_name : game.away_team_name;
+  return `<div style="padding:0.5rem 1rem 0;display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;"><span style="font-size:0.82rem;color:#8b949e;">Showing ${showing} matches</span><button class="btn-secondary" data-action="switch-side" data-game-id="${game.id}" style="padding:0.25rem 0.7rem;font-size:0.8rem;">Switch to ${other}</button></div>`;
+}
+
+async function openPicker(gameId, side) {
+  if (side) pickerSide = side;
+  else if (activePickerGameId !== gameId) pickerSide = 'home';
   activePickerGameId = gameId;
   const game = allGames.find(g => g.id === gameId);
   const picker = document.getElementById('ea-picker');
@@ -863,22 +1006,22 @@ async function openPicker(gameId) {
   picker.classList.remove('hidden');
   picker.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
-  const homeEaClubId = game && game.home_ea_club_id;
-  if (!homeEaClubId) {
-    body.innerHTML = `<p class="picker-error">⚠️ Home team has no EA club ID configured</p>
-      <p class="picker-empty">Set the home team's EA Club ID in the <a href="admin.html">Admin Panel</a>.</p>`;
+  const sideClubId = game && (pickerSide === 'away' ? game.away_ea_club_id : game.home_ea_club_id);
+  if (!sideClubId) {
+    body.innerHTML = pickerSideBar(game) + `<p class="picker-error">⚠️ ${pickerSide === 'away' ? 'Away' : 'Home'} team has no EA club ID configured</p>
+      <p class="picker-empty">Set the team's EA Club ID in the <a href="admin.html">Admin Panel</a>.</p>`;
     return;
   }
 
   try {
-    const res = await fetch(`${API}/games/${gameId}/ea-matches`, { cache: 'no-store' });
+    const res = await fetch(`${API}/games/${gameId}/ea-matches?side=${pickerSide}`, { cache: 'no-store' });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       throw new Error(data.error || `Failed to load EA matches (HTTP ${res.status})`);
     }
     renderPickerMatches(data, gameId);
   } catch (err) {
-    body.innerHTML = `<p class="picker-error">⚠️ ${err.message || 'Failed to load EA matches.'}</p>`;
+    body.innerHTML = pickerSideBar(game) + `<p class="picker-error">⚠️ ${err.message || 'Failed to load EA matches.'}</p>`;
   }
 }
 
@@ -891,7 +1034,8 @@ function renderPickerMatches(data, gameId) {
   currentPickerSelected = new Set();
 
   if (matches.length === 0) {
-    body.innerHTML = `<p class="picker-empty">No recent EA private matches found for <strong>${game.home_team.name}</strong>. Check that the EA Club ID is correct in the Admin Panel, or enter stats manually.</p>`;
+    const sideName = pickerSide === 'away' ? game.away_team.name : game.home_team.name;
+    body.innerHTML = pickerSideBar(allGames.find(x => x.id === gameId)) + `<p class="picker-empty">No recent EA private matches found for <strong>${sideName}</strong>. Check that the EA Club ID is correct in the Admin Panel, or enter stats manually.</p>`;
     return;
   }
 
@@ -913,7 +1057,7 @@ function renderPickerMatches(data, gameId) {
           </label>
           <div class="ea-match-score">
             ${resultBadge(m.result)}
-            <span style="margin-left:0.4rem;">${m.homeScore} – ${m.awayScore}</span>
+            <span style="margin-left:0.4rem;">${capScoreDifferential(m.homeScore, m.awayScore).home_score} – ${capScoreDifferential(m.homeScore, m.awayScore).away_score}</span>
           </div>
           <div class="ea-match-opponent">vs ${m.opponentClubName}
             ${m.isScheduledOpponent ? '<span class="scheduled-tag">⭐ scheduled opponent</span>' : ''}
@@ -940,7 +1084,7 @@ function renderPickerMatches(data, gameId) {
       </div>`;
   }).join('');
 
-  body.innerHTML = hint + `
+  body.innerHTML = pickerSideBar(allGames.find(x => x.id === gameId)) + hint + `
     <div style="padding:0.45rem 1rem 0;display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
       <button class="btn-assign" data-action="assign-selected" data-game-id="${gameId}" style="padding:0.35rem 0.85rem;">Assign selected (merged)</button>
       <button class="btn-secondary" data-action="clear-selected" style="padding:0.35rem 0.85rem;">Clear selection</button>
@@ -982,7 +1126,9 @@ document.getElementById('ea-picker').addEventListener('click', e => {
     const idx = parseInt(btn.dataset.matchIdx, 10);
     const gameId = parseInt(btn.dataset.gameId, 10);
     const m = currentPickerMatches[idx];
-    if (m) assignMatch(gameId, m.matchId, m.homeScore, m.awayScore, m.players, m.awayPlayers, m.homeShots, m.awayShots);
+    if (m) assignMatch(gameId, m.matchId, m.homeScore, m.awayScore, m.players, m.awayPlayers, m.homeShots, m.awayShots, m.isOvertime ? 1 : 0);
+  } else if (action === 'switch-side') {
+    openPicker(parseInt(btn.dataset.gameId, 10), pickerSide === 'away' ? 'home' : 'away');
   } else if (action === 'clear') {
     clearAssignment(parseInt(btn.dataset.gameId, 10));
   } else if (action === 'toggle-stats') {
@@ -1003,6 +1149,7 @@ document.getElementById('ea-picker').addEventListener('click', e => {
       merged.awayPlayers,
       merged.homeShots,
       merged.awayShots,
+      merged.isOvertime ? 1 : 0,
     );
   } else if (action === 'clear-selected') {
     currentPickerSelected.clear();
@@ -1023,17 +1170,19 @@ document.getElementById('ea-picker').addEventListener('change', e => {
 
 // ── Assign / Clear ─────────────────────────────────────────────────────────
 
-async function assignMatch(gameId, matchId, homeScore, awayScore, homePlayers, awayPlayers, homeShots, awayShots) {
+async function assignMatch(gameId, matchId, homeScore, awayScore, homePlayers, awayPlayers, homeShots, awayShots, isOvertime) {
   try {
+    const capped = capScoreDifferential(homeScore, awayScore);
     const res = await fetch(`${API}/games/${gameId}`, {
       method: 'PATCH',
       headers: adminHeaders(),
       body: JSON.stringify({
         ea_match_id: matchId,
-        home_score: homeScore,
-        away_score: awayScore,
+        home_score: capped.home_score,
+        away_score: capped.away_score,
         status: 'complete',
         is_forfeit: 0,
+        is_overtime: isOvertime !== undefined ? (isOvertime ? 1 : 0) : undefined,
         home_shots: homeShots != null ? homeShots : undefined,
         away_shots: awayShots != null ? awayShots : undefined,
         player_stats: { home_players: homePlayers, away_players: awayPlayers },
@@ -1074,14 +1223,17 @@ async function refreshGame(gameId) {
   try {
     const sid = SeasonSelector.getSelectedSeasonId();
     if (!sid) return;
-    const res = await fetch(`${API}/games?season_id=${sid}`);
+    const res = await fetch(`${API}/games?season_id=${sid}&_t=${Date.now()}`, {
+      headers: adminHeaders(),
+      cache: 'no-store',
+    });
     if (!res.ok) return;
     allGames = await res.json();
     const g = allGames.find(x => x.id === gameId);
     if (!g) return;
     const row = document.getElementById(`game-row-${gameId}`);
     if (row) {
-      row.cells[2].textContent = g.status === 'complete' ? `${g.home_score} – ${g.away_score}` : '–';
+      row.cells[2].innerHTML = formatGameScore(g);
       document.getElementById(`status-cell-${gameId}`).innerHTML = statusBadge(g.status, g.is_forfeit);
       const eaCell = document.getElementById(`ea-status-${gameId}`);
       if (eaCell) eaCell.innerHTML = g.ea_match_id
@@ -1158,10 +1310,14 @@ async function deleteGame(gameId, event) {
   // Wire up schedule filters
   document.getElementById('schedule-team-filter')?.addEventListener('change', e => {
     scheduleTeamFilter = e.target.value;
+    saveScheduleFilters();
     renderSchedule();
   });
-  document.getElementById('schedule-time-filter')?.addEventListener('change', e => {
+  const timeSel = document.getElementById('schedule-time-filter');
+  if (timeSel) timeSel.value = scheduleTimeFilter;
+  timeSel?.addEventListener('change', e => {
     scheduleTimeFilter = e.target.value;
+    saveScheduleFilters();
     renderSchedule();
   });
 

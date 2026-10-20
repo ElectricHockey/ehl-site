@@ -13,6 +13,16 @@
 
   const _API = () => (typeof API !== 'undefined' ? API : '/api');
 
+  function capScoreDifferential(h, a, maxDiff = 7) {
+    let home = Number(h);
+    let away = Number(a);
+    if (isNaN(home)) home = 0;
+    if (isNaN(away)) away = 0;
+    if (home - away > maxDiff) return { home_score: away + maxDiff, away_score: away };
+    if (away - home > maxDiff) return { home_score: home, away_score: home + maxDiff };
+    return { home_score: home, away_score: away };
+  }
+
   // ── Column definitions ─────────────────────────────────────────────────
   const GS_COLS = [
     { l:'OVR',  k:'overallRating',        w:42, mn:0 },
@@ -159,6 +169,7 @@
          </div>`
       : `<input type="hidden" id="gse-season" value="${g.season_id || ''}" />`;
 
+    const capped = capScoreDifferential(g.home_score, g.away_score);
     overlay.innerHTML = `<div style="background:#161b22;border:1px solid #30363d;border-radius:10px;max-width:1400px;margin:0 auto;padding:1.5rem;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
         <h3 style="margin:0;">✏️ Edit Game #${g.id} – ${g.home_team.name} vs ${g.away_team.name}</h3>
@@ -171,17 +182,25 @@
         </div>
         <div>
           <label style="display:block;color:#8b949e;font-size:0.75rem;margin-bottom:0.25rem;">${g.home_team.name} Score</label>
-          <input type="number" id="gse-home-score" value="${g.home_score}" min="0" style="${IS}width:60px;" />
+          <input type="number" id="gse-home-score" value="${capped.home_score}" min="0" style="${IS}width:60px;" />
         </div>
         <div>
           <label style="display:block;color:#8b949e;font-size:0.75rem;margin-bottom:0.25rem;">${g.away_team.name} Score</label>
-          <input type="number" id="gse-away-score" value="${g.away_score}" min="0" style="${IS}width:60px;" />
+          <input type="number" id="gse-away-score" value="${capped.away_score}" min="0" style="${IS}width:60px;" />
         </div>
         <div>
           <label style="display:block;color:#8b949e;font-size:0.75rem;margin-bottom:0.25rem;">Status</label>
           <select id="gse-status" style="${IS}">
             <option value="scheduled"${g.status === 'scheduled' ? ' selected' : ''}>Scheduled</option>
-            <option value="complete"${g.status === 'complete' ? ' selected' : ''}>Complete</option>
+            <option value="complete"${(g.status === 'complete' && !g.is_forfeit) ? ' selected' : ''}>Complete</option>
+            <option value="forfeit"${(g.status === 'forfeit' || g.is_forfeit) ? ' selected' : ''}>Forfeit</option>
+          </select>
+        </div>
+        <div id="gse-forfeit-wrap" style="display:${(g.status === 'forfeit' || g.is_forfeit) ? '' : 'none'};">
+          <label style="display:block;color:#8b949e;font-size:0.75rem;margin-bottom:0.25rem;">Forfeit Winner</label>
+          <select id="gse-forfeit-winner" style="${IS}">
+            <option value="home"${capped.home_score >= capped.away_score ? ' selected' : ''}>${g.home_team.name}</option>
+            <option value="away"${capped.away_score > capped.home_score ? ' selected' : ''}>${g.away_team.name}</option>
           </select>
         </div>
         ${seasonRow}
@@ -210,6 +229,20 @@
 
     document.body.appendChild(overlay);
     overlay.addEventListener('click', e => { if (e.target === overlay) closeGameStatsEditor(); });
+
+    const statusSel = document.getElementById('gse-status');
+    const winnerSel = document.getElementById('gse-forfeit-winner');
+    const homeInp = document.getElementById('gse-home-score');
+    const awayInp = document.getElementById('gse-away-score');
+    let scoreTouched = false;
+    homeInp.addEventListener('input', () => { scoreTouched = true; });
+    awayInp.addEventListener('input', () => { scoreTouched = true; });
+    winnerSel.addEventListener('change', () => { scoreTouched = false; });
+    statusSel.addEventListener('change', () => { scoreTouched = false; });
+    overlay._scoreTouched = () => scoreTouched;
+    statusSel.addEventListener('change', () => {
+      document.getElementById('gse-forfeit-wrap').style.display = statusSel.value === 'forfeit' ? '' : 'none';
+    });
   }
 
   // ── Public: switch home/away tab ─────────────────────────────────────────
@@ -256,11 +289,27 @@
     errEl.style.display = 'none';
 
     const seasonEl = document.getElementById('gse-season');
+    const statusVal = document.getElementById('gse-status').value;
+    const isForfeit = statusVal === 'forfeit' ? 1 : 0;
+    let homeScore = parseInt(document.getElementById('gse-home-score').value) || 0;
+    let awayScore = parseInt(document.getElementById('gse-away-score').value) || 0;
+    const ovl = document.getElementById('game-stats-overlay');
+    if (statusVal === 'forfeit' && !(ovl && ovl._scoreTouched && ovl._scoreTouched())) {
+      const w = document.getElementById('gse-forfeit-winner').value;
+      homeScore = w === 'home' ? 1 : 0;
+      awayScore = w === 'away' ? 1 : 0;
+    }
+    if (statusVal === 'complete') {
+      const capped = capScoreDifferential(homeScore, awayScore);
+      homeScore = capped.home_score;
+      awayScore = capped.away_score;
+    }
     const body = {
       date:        document.getElementById('gse-date').value,
-      home_score:  parseInt(document.getElementById('gse-home-score').value) || 0,
-      away_score:  parseInt(document.getElementById('gse-away-score').value) || 0,
-      status:      document.getElementById('gse-status').value,
+      home_score:  homeScore,
+      away_score:  awayScore,
+      status:      statusVal,
+      is_forfeit:  isForfeit,
       season_id:   seasonEl && seasonEl.value ? Number(seasonEl.value) : null,
       is_overtime: document.getElementById('gse-overtime').checked ? 1 : 0,
       player_stats: {

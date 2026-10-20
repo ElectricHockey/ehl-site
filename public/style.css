@@ -1273,6 +1273,19 @@ nav.league-nav-mode #notif-bell-wrap {
   width: 60px; height: 60px;
   border-radius: 50%;
 }
+.gs-pie-svg { border-radius: 0; overflow: visible; }
+.gs-slice { cursor: pointer; transition: transform 0.15s ease, filter 0.15s ease; }
+.gs-slice:hover { transform: translate(var(--dx), var(--dy)); filter: brightness(1.15) drop-shadow(0 1px 3px rgba(0,0,0,0.6)); }
+.gs-slice-label {
+  display: none; pointer-events: none;
+  font-size: 9px; font-weight: 700; text-anchor: middle; fill: #000;
+  stroke: rgba(255,255,255,0.9); stroke-width: 2.5px; paint-order: stroke;
+}
+.gs-pie-svg:has(.gs-s0:hover) .gs-l0,
+.gs-pie-svg:has(.gs-s1:hover) .gs-l1,
+.gs-pie-svg:has(.gs-s2:hover) .gs-l2,
+.gs-pie-svg:has(.gs-s3:hover) .gs-l3,
+.gs-pie-svg:has(.gs-s4:hover) .gs-l4 { display: block; }
 .gs-pie-title  { font-size: 10px; color: #3fb950; font-weight: 600; }
 .gs-pie-legend { display: flex; flex-wrap: wrap; gap: 3px; justify-content: center; font-size: 9px; color: #8b949e; }
 .gs-pie-item   { display: flex; align-items: center; gap: 2px; }
@@ -1608,6 +1621,40 @@ nav.league-nav-mode #notif-bell-wrap {
 .home-leader-team { color: #8b949e; font-size: 0.78rem; display: flex; align-items: center; gap: 0.2rem; }
 .home-leader-val { font-weight: 700; color: #3fb950; min-width: 2rem; text-align: right; }
 
+/* ── Homepage polish ────────────────────────────────────────── */
+.home-page { width: 100%; max-width: 1100px; }
+.home-page .home-league-header {
+  padding: 1.1rem 1.4rem;
+  border-left: 4px solid #58a6ff;
+}
+.home-page .home-league-logo { width: 44px; height: 44px; }
+.home-page .home-league-title { font-size: 1.5rem !important; letter-spacing: 0.01em; }
+.home-page .home-panels { gap: 1.25rem; }
+.home-page .home-panel { padding: 1.25rem 1.5rem; }
+.home-page .home-panel-header { font-size: 0.95rem; letter-spacing: 0.06em; text-transform: uppercase; }
+.home-page .home-panel-more { font-weight: 600; opacity: 0.9; }
+.home-page .home-standings-table th {
+  padding: 0.5rem 0.6rem; text-align: center; letter-spacing: 0.05em; text-transform: uppercase;
+}
+.home-page .home-standings-table th:first-child,
+.home-page .home-standings-table td:first-child { text-align: left; }
+.home-page .home-standings-table td { padding: 0.65rem 0.6rem; text-align: center; font-variant-numeric: tabular-nums; }
+.home-page .home-standings-table td:first-child { white-space: nowrap; font-weight: 600; }
+.home-page .home-standings-table tbody tr:hover { background: rgba(88, 166, 255, 0.07); }
+.home-page .home-leaders-grid { grid-template-columns: repeat(2, 1fr); gap: 1.5rem 2.5rem; }
+.home-page .home-leader-title { font-size: 0.78rem; padding-bottom: 0.5rem; margin-bottom: 0.25rem; }
+.home-page .home-leader-row { grid-template-columns: 1.4rem 1fr auto auto; padding: 0.55rem 0.25rem; }
+.home-page .home-leader-row:hover { background: rgba(88, 166, 255, 0.06); border-radius: 8px; }
+.home-leader-rank { color: #6e7b8c; font-size: 0.78rem; font-weight: 700; text-align: center; }
+.home-leader-row.first .home-leader-rank { color: #e3b341; }
+.home-leader-row.first .home-leader-name { font-weight: 700; }
+.home-leader-row.first .home-leader-val { color: #56d364; font-size: 0.95rem; }
+.home-leader-val { font-variant-numeric: tabular-nums; }
+@media (max-width: 700px) {
+  .home-page .home-leaders-grid { grid-template-columns: 1fr; }
+  .home-page .home-panel { padding: 1rem; }
+}
+
 /* ── Page-specific surface polish ───────────────────────────── */
 .records-page,
 .auth-card,
@@ -1916,9 +1963,12 @@ nav.league-nav-mode #notif-bell-wrap {
 
   nav.league-nav-mode .league-nav-dropdown,
   nav.league-nav-mode .nav-portal,
-  nav.league-nav-mode #nav-admin-link,
-  nav.league-nav-mode #notif-bell-wrap {
+  nav.league-nav-mode #nav-admin-link {
     display: none;
+  }
+  nav.league-nav-mode #notif-bell-wrap {
+    display: flex;
+    margin-left: 0.35rem;
   }
 
   .league-subnav {
