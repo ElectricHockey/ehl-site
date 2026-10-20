@@ -4,6 +4,9 @@ const API = '/api';
 let _teamSkaterData = [];
 let _teamGoalieData = [];
 let _teamColors = null;
+let _teamAwards = null;
+let _teamAwardsPromise = null;
+let _teamActiveTab = 'stats';
 let _teamId = null;
 let _teamSeasons = null;          // seasons this team has played in (fetched once)
 let _teamSelectedSeasonId = null; // currently selected season (null = all-time)
@@ -29,8 +32,8 @@ function teamRowAttrs(t) {
 }
 function formatToi(s) {
   if (!s) return '0:00';
-  const m = Math.floor(s / 60), sec = s % 60;
-  return `${m}:${String(sec).padStart(2,'0')}`;
+  const m = Math.floor(s / 60), sec = Math.round(s % 60);
+  return m + ':' + String(sec).padStart(2, '0');
 }
 function sortData(data, key, dir) {
   return [...data].sort((a, b) => {
@@ -49,14 +52,51 @@ function resultBadge(r) {
 }
 function computeOvr(p) {
   if (p.overall_rating && Number(p.overall_rating) > 0) return Number(p.overall_rating);
+  const isG = /goalie/i.test(p.position || '') || (p.position || '').toUpperCase() === 'G';
   const off = Number(p.offensive_rating) || 0;
   const def = Number(p.defensive_rating) || 0;
   const tpl = Number(p.team_play_rating) || 0;
   if (off > 0 || def > 0 || tpl > 0) {
     const isD = /defense/i.test(p.position || '') || /^[lr]d$/i.test(p.position || '');
-    const isG = /goalie/i.test(p.position || '') || (p.position || '').toUpperCase() === 'G';
     if (isG || isD) return Math.round((def * 2 + off + tpl * 1.5) / 4.5);
     return Math.round((off * 2 + def + tpl * 1.5) / 4.5);
+  }
+  if (isG) {
+    const sa = Number(p.shots_against) || 0;
+    if (sa > 0) {
+      const ga = Number(p.goals_against) || 0;
+      const sv = Number(p.saves) !== 0 ? Number(p.saves) : (sa - ga);
+      const svp = sv / sa;
+      const isWin = Number(p.goalie_wins) === 1 || Number(p.goalie_otw) === 1 || Number(p.wins) === 1;
+      const isShutout = (Number(p.shutouts) || 0) > 0 || (ga === 0 && sa > 0);
+      let ovr = 50.0 + (svp * 40.0) - Math.min(ga * 1.0, 10.0);
+      if (isShutout) ovr += 5.0;
+      if (isWin) ovr += 3.0;
+      return Math.max(50, Math.min(99, Math.round(ovr)));
+    }
+    return 75;
+  }
+  const goals = Number(p.goals) || 0;
+  const assists = Number(p.assists) || 0;
+  const pm = Number(p.plus_minus) || 0;
+  const shots = Number(p.shots) || 0;
+  const hits = Number(p.hits) || 0;
+  const bs = Number(p.blocked_shots) || 0;
+  const tka = Number(p.takeaways) || 0;
+  const gva = Number(p.giveaways) || 0;
+  const pim = Number(p.pim) || 0;
+  if (goals || assists || pm || shots || hits || bs || tka || gva || pim) {
+    const raw = 60
+      + Math.min(goals * 7, 21)
+      + Math.min(assists * 4, 14)
+      + Math.max(Math.min(pm * 3, 12), -12)
+      + Math.min(shots * 0.5, 5)
+      + Math.min(hits * 0.5, 5)
+      + Math.min(bs * 1.5, 6)
+      + Math.min(tka * 1.5, 6)
+      - Math.min(gva * 2, 8)
+      - Math.min(pim * 0.5, 5);
+    return Math.max(0, Math.min(99, Math.round(raw)));
   }
   return null;
 }
@@ -275,10 +315,17 @@ async function loadTeamPage() {
           return null;
         });
     }
-    const [statsRes, recordsData] = await Promise.all([
+    if (!_teamAwardsPromise) {
+      _teamAwardsPromise = fetch(`${API}/teams/${id}/awards`)
+        .then(r => r.ok ? r.json() : null)
+        .catch(() => { _teamAwardsPromise = null; return null; });
+    }
+    const [statsRes, recordsData, awardsData] = await Promise.all([
       fetch(url),
       _recordsPromise,
+      _teamAwardsPromise,
     ]);
+
     if (!statsRes.ok) {
       root.innerHTML = `<p class="error">${(await statsRes.json().catch(()=>({}))).error || 'Team not found.'}</p>`;
       return;
@@ -288,6 +335,7 @@ async function loadTeamPage() {
     _recordsData = recordsData;
     document.title = `${team.name} – EHL`;
 
+    _teamAwards = awardsData;
     _teamColors = team;
     _teamSkaterData = skaterStats.map(p => ({ ...p, _ovr: computeOvr(p) }));
     _teamGoalieData = goalieStats.map(p => ({ ...p, _ovr: computeOvr(p) }));
@@ -344,8 +392,16 @@ async function loadTeamPage() {
     // Staff role map by name
     const staffRoles = {};
     for (const s of staff) {
-      if (!staffRoles[s.username]) staffRoles[s.username] = [];
-      staffRoles[s.username].push(s.role);
+      if (s.username) {
+        if (!staffRoles[s.username]) staffRoles[s.username] = [];
+        if (!staffRoles[s.username].includes(s.role)) staffRoles[s.username].push(s.role);
+      }
+    }
+    for (const p of roster) {
+      if (p.role && p.name) {
+        if (!staffRoles[p.name]) staffRoles[p.name] = [];
+        if (!staffRoles[p.name].includes(p.role)) staffRoles[p.name].push(p.role);
+      }
     }
 
     function roleBadge(role) {
@@ -376,63 +432,39 @@ async function loadTeamPage() {
         </div>
       </div>`;
 
-    const excludedRosterNames = new Set(
-      [owner ? owner.username : null, ...gms.map(g => g.username)]
-        .filter(Boolean)
-        .map(normalizeName)
-    );
-    const rosterForDisplay = sorted.filter(p => !excludedRosterNames.has(normalizeName(p.name)));
+    const rosterForDisplay = sorted;
 
-    const groups = [
-      { label: 'Forward',  positions: ['C','LW','RW'] },
-      { label: 'Defender', positions: ['LD','RD'] },
-      { label: 'Goalie',   positions: ['G'] },
-    ];
-
-    html += `<h2 style="color:#58a6ff;margin-bottom:0.5rem;">Roster${rosterLimit ? ` <span style="font-size:0.8rem;color:#8b949e;font-weight:400;">(${rosterForDisplay.length}/${rosterLimit})</span>` : ''}</h2>`;
+    html += `<div id="team-stats-section">
+      <h2 style="color:#58a6ff;margin-bottom:0.5rem;">Roster${rosterLimit ? ` <span style="font-size:0.8rem;color:#8b949e;font-weight:400;">(${rosterForDisplay.length}/${rosterLimit})</span>` : ''}</h2>`;
 
     if (rosterForDisplay.length === 0) {
-      html += '<p class="no-stats">No rostered players.</p>';
+      html += '<p class="no-stats" style="margin-bottom:1.25rem;">No rostered players.</p>';
     } else {
-      for (const grp of groups) {
-        const grpPlayers = rosterForDisplay.filter(p => grp.positions.includes(p.position));
-        if (grpPlayers.length === 0) continue;
-
-        html += `<div style="margin-bottom:1.25rem;">
-          <div style="font-size:0.8rem;color:#8b949e;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;border-bottom:1px solid #21262d;padding-bottom:0.3rem;margin-bottom:0.5rem;">
-            ${grp.label}
-          </div>`;
-
-        for (const p of grpPlayers) {
-          const st = statsMap[p.name];
-          const ovr = st ? computeOvr(st) : null;
-          const roles = staffRoles[p.name] || [];
-          const badges = roles.map(roleBadge).join(' ');
-          const gp   = st ? (st.gp   || 0) : '–';
-          const pts  = st ? (st.points  !== undefined ? st.points  : '–') : '–';
-          const g    = st && st.goals   !== undefined ? st.goals   : '–';
-          const a    = st && st.assists !== undefined ? st.assists : '–';
-          const pm   = st && st.plus_minus !== undefined ? (st.plus_minus > 0 ? `+${st.plus_minus}` : st.plus_minus) : '–';
-          const gwg  = st && st.gwg !== undefined ? st.gwg : '–';
-
-          html += `<div style="display:flex;align-items:center;gap:0.6rem;padding:0.35rem 0.5rem;border-radius:6px;border:1px solid #21262d;margin-bottom:4px;background:#0d1117;">
-            <span style="font-size:0.72rem;color:#8b949e;min-width:22px;text-align:right;">${p.number != null && p.number !== '' ? '#' + p.number : ''}</span>
-            <a href="player.html?name=${encodeURIComponent(p.name)}" class="player-link" style="font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${p.name}</a>
-            ${p.position ? `<span style="font-size:0.68rem;background:#1f2d3d;color:#58a6ff;border-radius:4px;padding:0.1rem 0.35rem;border:1px solid rgba(56,139,253,0.2);">${p.position}</span>` : ''}
-            ${badges}
-            ${ovr ? ovrBadge(ovr) : ''}
-            <div style="display:flex;gap:0.5rem;align-items:center;font-size:0.78rem;color:#8b949e;flex-shrink:0;">
-              <span title="Games Played">GP <b style="color:#e6edf3;">${gp}</b></span>
-              <span title="Points">P <b style="color:#e6edf3;">${pts}</b></span>
-              <span title="Goals">G <b style="color:#e6edf3;">${g}</b></span>
-              <span title="Assists">A <b style="color:#e6edf3;">${a}</b></span>
-              ${pm !== '–' ? `<span title="Plus/Minus" style="color:${st.plus_minus > 0 ? '#3fb950' : st.plus_minus < 0 ? '#f85149' : '#8b949e'};">${pm}</span>` : ''}
-              ${gwg !== '–' ? `<span title="Game-Winning Goals">GWG <b style="color:#e6edf3;">${gwg}</b></span>` : ''}
-            </div>
-          </div>`;
+      html += `<div style="margin-bottom:1.25rem;">`;
+      for (const p of rosterForDisplay) {
+        const st = statsMap[p.name];
+        const isGoalie = (p.position || '').toUpperCase() === 'G' || /goalie/i.test(p.position || '');
+        const ovr = st ? computeOvr(st) : (p.overall_rating ? Number(p.overall_rating) : null);
+        const roles = staffRoles[p.name] || (p.role ? [p.role] : []);
+        const badges = roles.map(roleBadge).filter(Boolean).join(' ');
+        let pRec = '';
+        if (st) {
+          const w = isGoalie ? ((st.goalie_wins || 0) + (st.goalie_otw || 0)) : (st.player_wins || 0);
+          const l = isGoalie ? (st.goalie_losses || 0) : (st.player_losses || 0);
+          const otl = isGoalie ? (st.goalie_otl || 0) : (st.player_otl || 0);
+          pRec = `${w}-${l}-${otl}`;
         }
-        html += `</div>`;
+
+        html += `<div style="display:flex;align-items:center;gap:0.6rem;padding:0.35rem 0.5rem;border-radius:6px;border:1px solid #21262d;margin-bottom:4px;background:#0d1117;">
+          <span style="font-size:0.72rem;color:#8b949e;min-width:22px;text-align:right;">${p.number != null && p.number !== '' ? '#' + p.number : ''}</span>
+          <a href="player.html?name=${encodeURIComponent(p.name)}" class="player-link" style="font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${p.name}</a>
+          ${p.position ? `<span style="font-size:0.68rem;background:#1f2d3d;color:#58a6ff;border-radius:4px;padding:0.1rem 0.35rem;border:1px solid rgba(56,139,253,0.2);">${p.position}</span>` : ''}
+          ${badges}
+          ${ovr ? ovrBadge(ovr) : ''}
+          ${pRec ? `<span style="font-size:0.75rem;color:#8b949e;font-weight:600;margin-left:0.1rem;">${pRec}</span>` : ''}
+        </div>`;
       }
+      html += `</div>`;
     }
 
     // ── Season stats tabs ──
@@ -459,6 +491,15 @@ async function loadTeamPage() {
           <div id="records-panel">${renderRecordsTable(_recordsData.career, 'career')}</div>
         </div>`;
     }
+
+    html += `</div>`;
+
+    // ── Awards Panel ──
+    html += `
+      <div id="team-awards-panel" style="display:${_teamActiveTab === 'awards' ? 'block' : 'none'};margin-top:1.5rem;">
+        <h2 style="color:#58a6ff;margin-bottom:0.75rem;">Awards</h2>
+        <div id="team-awards-root">${renderTeamAwards()}</div>
+      </div>`;
 
     html += `</div><!-- end left -->
 
@@ -553,10 +594,10 @@ function renderTeamSeasonSelector() {
     return `<option value="${v}" ${sel(v)}>${s.name}${s.is_active ? ' ★' : ''}</option>`;
   }).join('');
 
-  container.innerHTML = `<div class="league-tabs-row"><div class="league-tab-season">
+  container.innerHTML = `<div class="league-tabs-row" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;"><div class="league-tab-season">
     <label for="team-season-select" style="color:#8b949e;font-size:0.85rem;white-space:nowrap;">Season:</label>
     <select id="team-season-select">${allTimeOpts}${opts}</select>
-  </div></div>`;
+  </div><div style="display:flex;gap:0.5rem;align-items:center;"><button class="lt-tab${_teamActiveTab === 'stats' ? ' lt-tab-active' : ''}" onclick="switchTeamTab('stats')">Stats</button><button class="lt-tab${_teamActiveTab === 'awards' ? ' lt-tab-active' : ''}" onclick="switchTeamTab('awards')">🏆 Awards</button></div></div>`;
 
   document.getElementById('team-season-select').addEventListener('change', function() {
     const val = this.value;
@@ -572,6 +613,68 @@ function renderTeamSeasonSelector() {
     }
     loadTeamPage();
   });
+}
+
+// ── Team awards renderer ───────────────────────────────────────────
+function renderTeamAwards() {
+  if (!_teamAwards) return '<p style="color:#8b949e;padding:1rem 0;">Loading awards…</p>';
+  const { playerAwards = [], teamAwards = [] } = _teamAwards;
+  if (playerAwards.length === 0 && teamAwards.length === 0)
+    return '<p style="color:#8b949e;padding:1.5rem 0;">No awards on file for this team.</p>';
+
+  // Group all awards by season
+  const bySeason = {};
+  for (const a of teamAwards) {
+    const k = a.season_id;
+    if (!bySeason[k]) bySeason[k] = { season_name: a.season_name, sort_order: a.sort_order, items: [] };
+    bySeason[k].items.push({ type: 'team', ...a });
+  }
+  for (const a of playerAwards) {
+    const k = a.season_id;
+    if (!bySeason[k]) bySeason[k] = { season_name: a.season_name, sort_order: a.sort_order, items: [] };
+    bySeason[k].items.push({ type: 'player', ...a });
+  }
+
+  const seasons = Object.values(bySeason).sort((a, b) => a.sort_order - b.sort_order);
+
+  return seasons.map(s => {
+    const itemsHtml = s.items.map(a => {
+      const img = a.award_image_url
+        ? `<img src="${a.award_image_url}" style="width:36px;height:36px;object-fit:contain;border-radius:4px;background:#21262d;flex-shrink:0;" alt="" />`
+        : `<div style="width:36px;height:36px;flex-shrink:0;background:#21262d;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:1.2rem;">${a.type === 'team' ? '🏆' : '🥇'}</div>`;
+      const playerLink = a.type === 'player' && a.player_name
+        ? `<div style="font-size:0.74rem;"><a href="player.html?name=${encodeURIComponent(a.player_name)}" style="color:#58a6ff;text-decoration:none;">${a.player_name}</a></div>`
+        : '';
+      const notes = a.notes ? `<div style="font-size:0.74rem;color:#8b949e;">${a.notes}</div>` : '';
+      return `<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:0.6rem 0.8rem;display:flex;align-items:center;gap:0.6rem;min-width:160px;max-width:240px;">
+        ${img}
+        <div>
+          <div style="font-weight:700;font-size:0.85rem;color:#e6edf3;line-height:1.2;">${a.award_name}</div>
+          ${playerLink}
+          ${notes}
+        </div>
+      </div>`;
+    }).join('');
+    return `<h3 style="font-size:0.88rem;text-transform:uppercase;letter-spacing:0.08em;color:#8b949e;margin:1.25rem 0 0.6rem;">${s.season_name}</h3>
+    <div style="display:flex;flex-wrap:wrap;gap:0.75rem;">${itemsHtml}</div>`;
+  }).join('');
+}
+
+// ── Stats / Awards tab switcher ───────────────────────────────────────
+function switchTeamTab(tab) {
+  _teamActiveTab = tab;
+  const awardsPanel = document.getElementById('team-awards-panel');
+  const statsSection = document.getElementById('team-stats-section');
+  const awardsRoot = document.getElementById('team-awards-root');
+  if (awardsPanel) awardsPanel.style.display = tab === 'awards' ? 'block' : 'none';
+  if (statsSection) statsSection.style.display = tab === 'stats' ? '' : 'none';
+  // Update tab button active states
+  document.querySelectorAll('.lt-tab').forEach(b => {
+    const isStats = b.textContent.trim() === 'Stats';
+    const isAwards = b.textContent.includes('Awards');
+    b.classList.toggle('lt-tab-active', (tab === 'stats' && isStats) || (tab === 'awards' && isAwards));
+  });
+  if (tab === 'awards' && awardsRoot) awardsRoot.innerHTML = renderTeamAwards();
 }
 
 // Stats tab switcher

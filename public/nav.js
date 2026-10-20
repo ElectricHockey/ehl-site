@@ -86,6 +86,13 @@ document.addEventListener('click', e => {
   if (portalLink) nav.insertBefore(navCarousel, portalLink);
   else nav.appendChild(navCarousel);
 
+  // Keep notification bell positioned immediately after nav carousel
+  const bellWrap = document.getElementById('notif-bell-wrap');
+  if (bellWrap && navCarousel.nextSibling !== bellWrap) {
+    if (navCarousel.nextSibling) nav.insertBefore(bellWrap, navCarousel.nextSibling);
+    else nav.appendChild(bellWrap);
+  }
+
   // Load games into nav carousel
   (async () => {
     try {
@@ -112,15 +119,24 @@ document.addEventListener('click', e => {
 
       const track = navCarousel.querySelector('.nav-carousel-track');
       track.innerHTML = all.map(g => {
-        const isFinal = g.status === 'complete';
+        const isFinal = g.status === 'complete' || g.status === 'forfeit';
         const hl = g.home_logo ? `<img src="${g.home_logo}" class="nc-logo" alt="" decoding="async" />` : '<span class="nc-logo-ph"></span>';
         const al = g.away_logo ? `<img src="${g.away_logo}" class="nc-logo" alt="" decoding="async" />` : '<span class="nc-logo-ph"></span>';
-        const ot = g.is_overtime ? '<sup class="nc-ot">OT</sup>' : '';
+        let badgeHtml;
+        if (g.status === 'forfeit' || g.is_forfeit) {
+          badgeHtml = '<span class="nc-badge" style="color:#f85149;">FORFEIT</span>';
+        } else if (isFinal) {
+          badgeHtml = g.is_overtime
+            ? '<span class="nc-badge">FINAL <span class="nc-ot" style="color:#e3b341;font-weight:700;margin-left:0.15rem;">OT</span></span>'
+            : '<span class="nc-badge">FINAL</span>';
+        } else {
+          badgeHtml = '<span class="nc-badge">UPCOMING</span>';
+        }
         return `<a href="game.html?id=${g.id}" class="nc-card${isFinal ? '' : ' nc-card-upcoming'}">
-          <span class="nc-badge">${isFinal ? 'FINAL' : 'UPCOMING'}</span>
+          ${badgeHtml}
           <div class="nc-row">
             ${hl}<span class="nc-name">${g.home_team_name}</span>
-            <span class="nc-score">${isFinal ? `${g.home_score}${ot} – ${g.away_score}` : 'vs'}</span>
+            <span class="nc-score">${isFinal ? `${g.home_score} – ${g.away_score}` : 'vs'}</span>
             <span class="nc-name nc-name-r">${g.away_team_name}</span>${al}
           </div>
         </a>`;

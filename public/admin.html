@@ -296,6 +296,30 @@
       <!-- ── Players tab ────────────────────────────────── -->
       <div id="admin-tab-players" class="admin-section">
         <h2>Players</h2>
+        <div class="form-section" style="margin-bottom:1.5rem;">
+          <h3 style="margin-bottom:0.75rem;">🔀 Merge Players</h3>
+          <p style="color:#8b949e;font-size:0.85rem;margin-bottom:0.75rem;">
+            Merge one player into another. All game stats and historical stats from the source player will be combined with the target player. The source player record will be removed.
+          </p>
+          <div style="display:flex;gap:1rem;align-items:flex-end;flex-wrap:wrap;">
+            <div class="form-group" style="margin-bottom:0;">
+              <label for="merge-player-source" style="font-size:0.85rem;">Source (will be merged away)</label>
+              <input type="search" id="merge-player-source-search" placeholder="Search players…" autocomplete="off" style="display:block;width:100%;margin-bottom:0.3rem;background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.35rem 0.6rem;box-sizing:border-box;" />
+              <select id="merge-player-source" style="background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.35rem 0.6rem;min-width:200px;">
+                <option value="">— Select source player —</option>
+              </select>
+            </div>
+            <span style="color:#8b949e;font-size:1.2rem;padding-bottom:0.3rem;">→</span>
+            <div class="form-group" style="margin-bottom:0;">
+              <label for="merge-player-target" style="font-size:0.85rem;">Target (will keep)</label>
+              <input type="search" id="merge-player-target-search" placeholder="Search players…" autocomplete="off" style="display:block;width:100%;margin-bottom:0.3rem;background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.35rem 0.6rem;box-sizing:border-box;" />
+              <select id="merge-player-target" style="background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.35rem 0.6rem;min-width:200px;">
+                <option value="">— Select target player —</option>
+              </select>
+            </div>
+            <button class="btn-danger" onclick="mergePlayers()" style="white-space:nowrap;">Merge Players</button>
+          </div>
+        </div>
         <div class="form-section">
           <form id="player-form">
             <div class="form-group"><label for="player-name">Name</label><input type="text" id="player-name" placeholder="Player name" required /></div>
@@ -311,28 +335,6 @@
             <thead><tr><th>ID</th><th>#</th><th>Name</th><th>Position</th><th>Team</th><th>Discord</th><th>Actions</th></tr></thead>
             <tbody></tbody>
           </table>
-        </div>
-        <div class="form-section" style="margin-top:1.5rem;border-top:1px solid #30363d;padding-top:1rem;">
-          <h3 style="margin-bottom:0.75rem;">🔀 Merge Players</h3>
-          <p style="color:#8b949e;font-size:0.85rem;margin-bottom:0.75rem;">
-            Merge one player into another. All game stats and historical stats from the source player will be combined with the target player. The source player record will be removed.
-          </p>
-          <div style="display:flex;gap:1rem;align-items:flex-end;flex-wrap:wrap;">
-            <div class="form-group" style="margin-bottom:0;">
-              <label for="merge-player-source" style="font-size:0.85rem;">Source (will be merged away)</label>
-              <select id="merge-player-source" style="background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.35rem 0.6rem;min-width:200px;">
-                <option value="">— Select source player —</option>
-              </select>
-            </div>
-            <span style="color:#8b949e;font-size:1.2rem;padding-bottom:0.3rem;">→</span>
-            <div class="form-group" style="margin-bottom:0;">
-              <label for="merge-player-target" style="font-size:0.85rem;">Target (will keep)</label>
-              <select id="merge-player-target" style="background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.35rem 0.6rem;min-width:200px;">
-                <option value="">— Select target player —</option>
-              </select>
-            </div>
-            <button class="btn-danger" onclick="mergePlayers()" style="white-space:nowrap;">Merge Players</button>
-          </div>
         </div>
       </div>
 
@@ -361,6 +363,13 @@
                 <option value="10">10</option>
                 <option value="12">12</option>
                 <option value="16">16</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="po-seeding-format">Seeding Format</label>
+              <select id="po-seeding-format" style="min-width:240px;">
+                <option value="nhl_wildcard">🏒 NHL Wild Card (Div Winners vs Wildcards, #2 vs #3)</option>
+                <option value="standard">Standard (1 vs 8, 2 vs 7, etc.)</option>
               </select>
             </div>
             <div class="form-group">
@@ -490,6 +499,66 @@
 
       <!-- ── Import tab ────────────────────────────────────── -->
       <div id="admin-tab-import" class="admin-section">
+        <!-- ── Schedule Spreadsheet Import ─────────────────────── -->
+        <h2 style="margin-bottom:0.5rem;">📅 Import Schedule (.xlsx / .csv)</h2>
+        <p style="color:#8b949e;font-size:0.9rem;max-width:680px;margin-bottom:1.25rem;">
+          Upload a schedule spreadsheet (such as <code>schedule.xlsx</code>) to import all games with dates, times,
+          home/away teams, completed scores, overtime, forfeits, and scheduled matchups into a specific season.
+        </p>
+
+        <div class="form-section" style="max-width:580px;margin-bottom:1.5rem;">
+          <h3 style="font-size:1rem;margin-bottom:0.75rem;">Season Selection</h3>
+          <div class="form-group" style="flex-direction:column;margin-bottom:0.75rem;">
+            <label for="xl-season-select">Import into season <span style="color:#f85149;">*</span></label>
+            <select id="xl-season-select" onchange="toggleXlNewSeasonFields()"
+              style="background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.4rem 0.7rem;font-size:0.9rem;max-width:360px;">
+              <option value="">– Create new season –</option>
+            </select>
+          </div>
+          <div id="xl-new-season-fields" style="display:none;">
+            <div class="form-group" style="flex-direction:column;margin-bottom:0.75rem;">
+              <label for="xl-season-name">New season name <span style="color:#f85149;">*</span></label>
+              <input type="text" id="xl-season-name" placeholder="e.g. Season 11"
+                style="background:#21262d;border:1px solid #30363d;border-radius:6px;padding:0.4rem 0.7rem;color:#e6edf3;font-size:0.9rem;max-width:360px;" />
+            </div>
+            <div class="form-group" style="flex-direction:column;flex:1;min-width:140px;margin-bottom:0.75rem;">
+              <label for="xl-league-type">League type</label>
+              <select id="xl-league-type"
+                style="background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.4rem 0.7rem;font-size:0.9rem;max-width:200px;">
+                <option value="">– unset –</option>
+                <option value="threes">3's (Threes)</option>
+                <option value="sixes">6's (Sixes)</option>
+              </select>
+            </div>
+          </div>
+
+          <h3 style="font-size:1rem;margin-bottom:0.75rem;">Schedule File</h3>
+          <div style="display:flex;gap:0.75rem;align-items:center;flex-wrap:wrap;margin-bottom:0.75rem;">
+            <input type="file" id="xl-import-file" accept=".xlsx,.xls,.csv"
+              style="flex:1;min-width:200px;background:#21262d;border:1px solid #30363d;border-radius:6px;padding:0.35rem 0.6rem;color:#e6edf3;font-size:0.88rem;" />
+            <button class="btn btn-primary" onclick="runExcelImport()">📅 Import Schedule</button>
+          </div>
+          <p style="color:#8b949e;font-size:0.8rem;margin-top:0;">
+            Upload an Excel (.xlsx / .xls) or CSV schedule file. Maximum 20 MB.
+          </p>
+
+          <details style="margin-top:0.5rem;">
+            <summary style="cursor:pointer;color:#58a6ff;font-size:0.85rem;">Advanced: Link with MyStatsOnline League ID</summary>
+            <div style="margin-top:0.5rem;">
+              <label for="xl-league-id" style="font-size:0.85rem;color:#8b949e;">MSO League ID (optional):</label>
+              <input type="text" id="xl-league-id" placeholder="e.g. 73879"
+                style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:0.35rem 0.6rem;color:#e6edf3;font-size:0.85rem;max-width:180px;margin-left:0.5rem;" />
+              <p style="color:#8b949e;font-size:0.78rem;margin:0.25rem 0 0;">
+                If your file contains an IDGame column, entering a League ID will also scrape detailed player stats.
+              </p>
+            </div>
+          </details>
+        </div>
+
+        <div id="xl-import-status" style="display:none;padding:0.75rem 1rem;border-radius:6px;font-size:0.88rem;max-width:580px;margin-bottom:1.75rem;white-space:pre-wrap;"></div>
+
+        <hr style="border:0;border-top:1px solid #30363d;margin:2rem 0;">
+
         <!-- ── MSO Scraper JSON Import ─────────────────────────── -->
         <h2 style="margin-bottom:0.5rem;">Import MSO Scraper JSON</h2>
         <p style="color:#8b949e;font-size:0.9rem;max-width:680px;margin-bottom:1.25rem;">
@@ -755,8 +824,8 @@
           <!-- Set new winner -->
           <div>
             <div style="font-size:0.82rem;color:#8b949e;margin-bottom:0.4rem;" id="award-set-label">Add Player</div>
-            <div id="award-calder-note" style="display:none;background:#2d1b00;border:1px solid #9e6a03;border-radius:6px;padding:0.4rem 0.7rem;font-size:0.8rem;color:#e3b341;margin-bottom:0.6rem;">
-              Only players with fewer than <span id="award-calder-threshold"></span> career games in this league (before this season) are shown below.
+            <div id="award-calder-note" style="display:none;background:#1b2432;border:1px solid #388bfd;border-radius:6px;padding:0.4rem 0.7rem;font-size:0.8rem;color:#58a6ff;margin-bottom:0.6rem;">
+              ℹ️ Rookie guideline: fewer than <span id="award-calder-threshold"></span> prior career games in this league. Eligible rookies are tagged with (Rookie).
             </div>
             <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:flex-end;">
               <div style="flex:1;min-width:180px;">

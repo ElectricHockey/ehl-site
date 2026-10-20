@@ -1,6 +1,6 @@
 // notifications.js – injected on every page
-// Shows a bell icon in the top-right of the nav when the player has pending signing offers.
-// Requires nav.js to already have set up the <nav> element.
+// Shows a bell icon in the top-right of the nav to the right of the nav carousel.
+// Always visible on all pages.
 
 (function () {
   const API = '/api';
@@ -19,14 +19,28 @@
       <button id="notif-bell-btn" aria-label="Notifications" title="Signing offers">
         🔔<span id="notif-badge" style="display:none;"></span>
       </button>
-      <div id="notif-dropdown" role="menu" aria-label="Signing offers"></div>`;
-    nav.appendChild(wrap);
+      <div id="notif-dropdown" role="menu" aria-label="Signing offers">
+        <p class="notif-empty">No notifications.</p>
+      </div>`;
 
-    document.getElementById('notif-bell-btn').addEventListener('click', e => {
-      e.stopPropagation();
-      const dd = document.getElementById('notif-dropdown');
-      dd.classList.toggle('open');
-    });
+    const navCarousel = nav.querySelector('.nav-carousel-wrap');
+    const portalLink = nav.querySelector('.nav-portal');
+    if (navCarousel && navCarousel.nextSibling) {
+      nav.insertBefore(wrap, navCarousel.nextSibling);
+    } else if (portalLink) {
+      nav.insertBefore(wrap, portalLink);
+    } else {
+      nav.appendChild(wrap);
+    }
+
+    const bellBtn = wrap.querySelector('#notif-bell-btn');
+    if (bellBtn) {
+      bellBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        const dd = document.getElementById('notif-dropdown');
+        if (dd) dd.classList.toggle('open');
+      });
+    }
     document.addEventListener('click', e => {
       if (!e.target.closest('#notif-bell-wrap')) {
         const dd = document.getElementById('notif-dropdown');
@@ -36,9 +50,9 @@
   }
 
   async function loadOffers() {
+    injectBell();
     const token = getToken();
     if (!token) return;
-    injectBell();
     try {
       const res = await fetch(`${API}/players/offers`, { headers: { 'X-Player-Token': token } });
       if (!res.ok) return;
@@ -52,7 +66,7 @@
     const dd    = document.getElementById('notif-dropdown');
     if (!badge || !dd) return;
 
-    if (offers.length === 0) {
+    if (!Array.isArray(offers) || offers.length === 0) {
       badge.style.display = 'none';
       dd.innerHTML = '<p class="notif-empty">No notifications.</p>';
       return;
@@ -106,6 +120,7 @@
   async function refreshOffers() {
     if (pollTimer) clearTimeout(pollTimer);
     pollTimer = null;
+    injectBell();
     if (document.hidden || !getToken()) return;
     await loadOffers();
     pollTimer = setTimeout(refreshOffers, 30000);
@@ -120,5 +135,9 @@
     }
   });
 
-  refreshOffers();
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', refreshOffers);
+  } else {
+    refreshOffers();
+  }
 })();

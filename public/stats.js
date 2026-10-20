@@ -13,17 +13,54 @@ function pct3(v) {
 function fmtPct(v) { return v !== null && v !== undefined ? Number(v).toFixed(1) + '%' : '–'; }
 
 // Compute a single OVR — prefer server-computed overall_rating, fall back to
-// position-weighted sub-ratings, then return null
+// position-weighted sub-ratings, then stat-based fallback
 function computeOvr(p) {
   if (p.overall_rating && Number(p.overall_rating) > 0) return Number(p.overall_rating);
+  const isG = /goalie/i.test(p.position || '') || (p.position || '').toUpperCase() === 'G';
   const off = Number(p.offensive_rating) || 0;
   const def = Number(p.defensive_rating) || 0;
   const tpl = Number(p.team_play_rating) || 0;
   if (off > 0 || def > 0 || tpl > 0) {
     const isD = /defense/i.test(p.position || '') || /^[lr]d$/i.test(p.position || '');
-    const isG = /goalie/i.test(p.position || '') || (p.position || '').toUpperCase() === 'G';
     if (isG || isD) return Math.round((def * 2 + off + tpl * 1.5) / 4.5);
     return Math.round((off * 2 + def + tpl * 1.5) / 4.5);
+  }
+  if (isG) {
+    const sa = Number(p.shots_against) || 0;
+    if (sa > 0) {
+      const ga = Number(p.goals_against) || 0;
+      const sv = Number(p.saves) !== 0 ? Number(p.saves) : (sa - ga);
+      const svp = sv / sa;
+      const isWin = Number(p.goalie_wins) === 1 || Number(p.goalie_otw) === 1 || Number(p.wins) === 1;
+      const isShutout = (Number(p.shutouts) || 0) > 0 || (ga === 0 && sa > 0);
+      let ovr = 50.0 + (svp * 40.0) - Math.min(ga * 1.0, 10.0);
+      if (isShutout) ovr += 5.0;
+      if (isWin) ovr += 3.0;
+      return Math.max(50, Math.min(99, Math.round(ovr)));
+    }
+    return 75;
+  }
+  const goals = Number(p.goals) || 0;
+  const assists = Number(p.assists) || 0;
+  const pm = Number(p.plus_minus) || 0;
+  const shots = Number(p.shots) || 0;
+  const hits = Number(p.hits) || 0;
+  const bs = Number(p.blocked_shots) || 0;
+  const tka = Number(p.takeaways) || 0;
+  const gva = Number(p.giveaways) || 0;
+  const pim = Number(p.pim) || 0;
+  if (goals || assists || pm || shots || hits || bs || tka || gva || pim) {
+    const raw = 60
+      + Math.min(goals * 7, 21)
+      + Math.min(assists * 4, 14)
+      + Math.max(Math.min(pm * 3, 12), -12)
+      + Math.min(shots * 0.5, 5)
+      + Math.min(hits * 0.5, 5)
+      + Math.min(bs * 1.5, 6)
+      + Math.min(tka * 1.5, 6)
+      - Math.min(gva * 2, 8)
+      - Math.min(pim * 0.5, 5);
+    return Math.max(0, Math.min(99, Math.round(raw)));
   }
   return null;
 }
@@ -47,8 +84,37 @@ function ovrStyle(v) {
 
 function formatToi(s) {
   if (!s) return '0:00';
-  const m = Math.floor(s / 60), sec = s % 60;
-  return `${m}:${String(sec).padStart(2,'0')}`;
+  const m = Math.floor(s / 60), sec = Math.round(s % 60);
+  return m + ':' + String(sec).padStart(2, '0');
+}
+
+// Fallback for environments where `position: sticky` on table cells is unreliable.
+// Keeps rank + player columns pinned while horizontally scrolling stats tables.
+function enableStickyColumnsFallback(scrollWrap) {
+  if (!scrollWrap) return;
+  const table = scrollWrap.querySelector('table');
+  if (!table) return;
+
+  const col1 = table.querySelectorAll('tr > :nth-child(1)');
+  const col2 = table.querySelectorAll('tr > :nth-child(2)');
+  if (!col1.length || !col2.length) return;
+
+  const apply = () => {
+    const x = Math.round(scrollWrap.scrollLeft || 0);
+    col1.forEach(cell => {
+      cell.style.position = 'relative';
+      cell.style.zIndex = cell.tagName === 'TH' ? '8' : '6';
+      cell.style.transform = `translateX(${x}px)`;
+    });
+    col2.forEach(cell => {
+      cell.style.position = 'relative';
+      cell.style.zIndex = cell.tagName === 'TH' ? '7' : '5';
+      cell.style.transform = `translateX(${x}px)`;
+    });
+  };
+
+  scrollWrap.addEventListener('scroll', apply, { passive: true });
+  apply();
 }
 
 // Fallback for environments where `position: sticky` on table cells is unreliable.

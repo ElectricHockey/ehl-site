@@ -39,10 +39,15 @@ function fmt1(v) {
   return v !== null && v !== undefined ? Number(v).toFixed(1) : '–';
 }
 
+function formatClock(s) {
+  if (!s) { return '0:00'; }
+  const m = Math.floor(s / 60), sec = Math.round(s % 60);
+  return m + ':' + String(sec).padStart(2, '0');
+}
 function formatToi(s) {
   if (!s) return '0:00';
-  const m = Math.floor(s / 60), sec = s % 60;
-  return `${m}:${String(sec).padStart(2, '0')}`;
+  const m = Math.floor(s / 60), sec = Math.round(s % 60);
+  return m + ':' + String(sec).padStart(2, '0');
 }
 
 function computeOvr(p) {
@@ -50,14 +55,52 @@ function computeOvr(p) {
   // auto-calculated from sub-ratings or stats when not explicitly entered).
   if (p.overall_rating && Number(p.overall_rating) > 0) return Number(p.overall_rating);
   // Position-weighted average of EA sub-ratings when all three are present
+  const isG = /goalie/i.test(p.position || '') || (p.position || '').toUpperCase() === 'G';
   const off = Number(p.offensive_rating) || 0;
   const def = Number(p.defensive_rating) || 0;
   const tpl = Number(p.team_play_rating) || 0;
   if (off > 0 || def > 0 || tpl > 0) {
     const isD = /defense/i.test(p.position || '') || /^[lr]d$/i.test(p.position || '');
-    const isG = /goalie/i.test(p.position || '') || (p.position || '').toUpperCase() === 'G';
     if (isG || isD) return Math.round((def * 2 + off + tpl * 1.5) / 4.5);
     return Math.round((off * 2 + def + tpl * 1.5) / 4.5);
+  }
+  // Stat-based fallback
+  if (isG) {
+    const sa = Number(p.shots_against) || 0;
+    if (sa > 0) {
+      const ga = Number(p.goals_against) || 0;
+      const sv = Number(p.saves) !== 0 ? Number(p.saves) : (sa - ga);
+      const svp = sv / sa;
+      const isWin = Number(p.goalie_wins) === 1 || Number(p.goalie_otw) === 1 || Number(p.wins) === 1;
+      const isShutout = (Number(p.shutouts) || 0) > 0 || (ga === 0 && sa > 0);
+      let ovr = 50.0 + (svp * 40.0) - Math.min(ga * 1.0, 10.0);
+      if (isShutout) ovr += 5.0;
+      if (isWin) ovr += 3.0;
+      return Math.max(50, Math.min(99, Math.round(ovr)));
+    }
+    return 75;
+  }
+  const goals = Number(p.goals) || 0;
+  const assists = Number(p.assists) || 0;
+  const pm = Number(p.plus_minus) || 0;
+  const shots = Number(p.shots) || 0;
+  const hits = Number(p.hits) || 0;
+  const bs = Number(p.blocked_shots) || 0;
+  const tka = Number(p.takeaways) || 0;
+  const gva = Number(p.giveaways) || 0;
+  const pim = Number(p.pim) || 0;
+  if (goals || assists || pm || shots || hits || bs || tka || gva || pim) {
+    const raw = 60
+      + Math.min(goals * 7, 21)
+      + Math.min(assists * 4, 14)
+      + Math.max(Math.min(pm * 3, 12), -12)
+      + Math.min(shots * 0.5, 5)
+      + Math.min(hits * 0.5, 5)
+      + Math.min(bs * 1.5, 6)
+      + Math.min(tka * 1.5, 6)
+      - Math.min(gva * 2, 8)
+      - Math.min(pim * 0.5, 5);
+    return Math.max(0, Math.min(99, Math.round(raw)));
   }
   return null;
 }
@@ -121,7 +164,7 @@ const SKATER_COLS = [
   { key: 'pass_attempts',   label: 'PA',   tip: 'Pass Attempts',                           fmt: p => p.pass_attempts || 0 },
   { key: 'pass_pct_calc',   label: 'PC%',  tip: 'Pass Completion %',                       fmt: p => p.pass_pct_calc != null ? fmt1(p.pass_pct_calc) + '%' : '–' },
   { key: 'hat_tricks',      label: 'HT',   tip: 'Hat Tricks',                              fmt: p => p.hat_tricks || 0 },
-  { key: 'apt',             label: 'APT',  tip: 'Avg. Puck Possession (sec/game)',         fmt: p => formatToi(p.apt) },
+  { key: 'apt',             label: 'APT',  tip: 'Avg. Puck Possession (sec/game)',         fmt: p => formatClock(p.apt) },
   { key: 'toi',             label: 'TOI',  tip: 'Time on Ice',                             fmt: p => formatToi(p.toi) },
   // ── Support ──────────────────────────────────────────────────────────────
   { key: 'goal_support',    label: 'GS',   tip: 'Goal Support – avg team goals scored per game while playing', fmt: p => p.goal_support != null ? Number(p.goal_support).toFixed(2) : '–' },

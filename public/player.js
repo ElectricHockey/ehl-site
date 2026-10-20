@@ -23,10 +23,15 @@ function getPreferredLeagueType() {
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
+function formatClock(s) {
+  if (!s) { return '0:00'; }
+  const m = Math.floor(s / 60), sec = Math.round(s % 60);
+  return m + ':' + String(sec).padStart(2, '0');
+}
 function formatToi(s) {
   if (!s) return '0:00';
-  const m = Math.floor(s / 60), sec = s % 60;
-  return `${m}:${String(sec).padStart(2, '0')}`;
+  const m = Math.floor(s / 60), sec = Math.round(s % 60);
+  return m + ':' + String(sec).padStart(2, '0');
 }
 function fmt1(v) { return v !== null && v !== undefined ? Number(v).toFixed(1) : '–'; }
 function pct3(v) {
@@ -51,10 +56,16 @@ function computeOvr(p) {
     const sa = Number(p.shots_against) || 0;
     if (sa > 0) {
       const ga = Number(p.goals_against) || 0;
-      const raw = 60 + ((sa - ga) / sa * 100 - 88) * 3 + (ga === 0 ? 8 : 0);
-      return Math.max(0, Math.min(99, Math.round(raw)));
+      const sv = Number(p.saves) !== 0 ? Number(p.saves) : (sa - ga);
+      const svp = sv / sa;
+      const isWin = Number(p.goalie_wins) === 1 || Number(p.goalie_otw) === 1 || Number(p.wins) === 1;
+      const isShutout = (Number(p.shutouts) || 0) > 0 || (ga === 0 && sa > 0);
+      let ovr = 50.0 + (svp * 40.0) - Math.min(ga * 1.0, 10.0);
+      if (isShutout) ovr += 5.0;
+      if (isWin) ovr += 3.0;
+      return Math.max(50, Math.min(99, Math.round(ovr)));
     }
-    return null;
+    return 75;
   }
   const goals = Number(p.goals) || 0;
   const assists = Number(p.assists) || 0;
@@ -65,7 +76,7 @@ function computeOvr(p) {
   const tka = Number(p.takeaways) || 0;
   const gva = Number(p.giveaways) || 0;
   const pim = Number(p.pim) || 0;
-  if (goals || assists || shots || hits || bs || tka) {
+  if (goals || assists || pm || shots || hits || bs || tka || gva || pim) {
     const raw = 60
       + Math.min(goals * 7, 21)
       + Math.min(assists * 4, 14)
@@ -254,50 +265,56 @@ function goalieThead() {
   </tr></thead>`;
 }
 
+function cleanSeasonName(name) {
+  if (!name) return 'No Season';
+  return name.replace(/\s*playoffs?$/i, '').trim() || name;
+}
+
+function getSeasonSortVal(seasonName, sortOrder, seasonId) {
+  const match = (seasonName || '').match(/\d+/);
+  if (match) return parseInt(match[0], 10);
+  if (sortOrder != null && sortOrder !== 0) return -sortOrder * 100;
+  return seasonId || 0;
+}
+
 function renderCareerTable(seasonTeamStats, isGoalie) {
   if (!seasonTeamStats.length) return '<p style="color:#8b949e;">No stats recorded yet.</p>';
 
-  // Group rows by (season_id, is_playoff) — each combination becomes one visual block
-  const blocks = [];
-  const blockMap = {};
+  // Group rows by canonical season name so regular season and playoffs stay together under one season banner
+  const seasonGroups = [];
+  const seasonMap = {};
+
   for (const r of seasonTeamStats) {
-    const ip = r.is_playoff ? 1 : 0;
-    const key = `${r.season_id ?? 'none'}_${ip}`;
-    if (!blockMap[key]) {
-      blockMap[key] = {
-        season_id: r.season_id, season_name: r.season_name, is_playoff: ip,
-        _sort_order: r._sort_order ?? r.season_id ?? 0, rows: [],
+    const sName = cleanSeasonName(r.season_name);
+    const key = (r.season_id ? `s_${r.season_id}` : sName.toLowerCase());
+    const isPl = !!(r.is_playoff || (r.season_name && /playoffs?$/i.test(r.season_name)));
+
+    let grp = seasonMap[key] || seasonMap[sName.toLowerCase()];
+    if (!grp) {
+      grp = {
+        season_id: r.season_id,
+        season_name: sName,
+        _sort_val: getSeasonSortVal(sName, r._sort_order, r.season_id),
+        regularRows: [],
+        playoffRows: [],
       };
-      blocks.push(blockMap[key]);
+      seasonMap[key] = grp;
+      seasonMap[sName.toLowerCase()] = grp;
+      seasonGroups.push(grp);
     }
-    blockMap[key].rows.push(r);
+
+    if (isPl) {
+      grp.playoffRows.push(r);
+    } else {
+      grp.regularRows.push(r);
+    }
   }
 
-  // Reorder blocks to match admin panel order:
-  // regular seasons sorted oldest-first, each playoff block directly before its regular season.
-  function sortBlocksWithPlayoffs(blks) {
-    const regular = blks.filter(b => !b.is_playoff);
-    const playoff  = blks.filter(b =>  b.is_playoff);
-    regular.sort((a, b) => (a._sort_order || 0) - (b._sort_order || 0));
-    const used = new Set();
-    const result = [];
-    for (const s of regular) {
-      const pl = playoff.find(p =>
-        !used.has(p) && (
-          p.season_id === s.season_id ||
-          p.season_name === `${s.season_name} Playoffs`
-        )
-      );
-      if (pl) { result.push(pl); used.add(pl); }
-      result.push(s);
-    }
-    for (const p of playoff) { if (!used.has(p)) result.push(p); }
-    return result;
-  }
-  const orderedBlocks = sortBlocksWithPlayoffs(blocks);
+  // Sort seasons oldest first (ascending season number / sort order)
+  seasonGroups.sort((a, b) => a._sort_val - b._sort_val);
 
-  const regularRows = seasonTeamStats.filter(r => !r.is_playoff);
-  const playoffRows = seasonTeamStats.filter(r => r.is_playoff);
+  const regularRows = seasonTeamStats.filter(r => !r.is_playoff && !/playoffs?$/i.test(r.season_name || ''));
+  const playoffRows = seasonTeamStats.filter(r => r.is_playoff || /playoffs?$/i.test(r.season_name || ''));
   const hasPlayoffs = playoffRows.length > 0;
 
   const thead = isGoalie ? goalieThead() : skaterThead();
@@ -306,23 +323,31 @@ function renderCareerTable(seasonTeamStats, isGoalie) {
   let html = `<div style="overflow-x:auto;max-width:100%;"><table class="season-stats-table">
     ${thead}<tbody>`;
 
-  for (const block of orderedBlocks) {
-    const { season_name, is_playoff, rows } = block;
+  for (const group of seasonGroups) {
+    const { season_name, regularRows: rRows, playoffRows: pRows } = group;
 
-    if (is_playoff) {
-      html += `<tr><td colspan="99" style="background:#0d1117;color:#f0883e;font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;padding:0.35rem 0.5rem;">🏆 ${season_name} – Playoffs</td></tr>`;
-    } else {
-      html += `<tr><td colspan="99" style="background:#0d1117;color:#8b949e;font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;padding:0.35rem 0.5rem;">📅 ${season_name}</td></tr>`;
+    // Main season header (clean season name, e.g. "📅 Season 6")
+    html += `<tr class="season-header-row"><td colspan="99" style="background:linear-gradient(90deg,#1b2432 0%,#161b22 100%);color:#f0f6fc;font-size:0.88rem;font-weight:800;text-transform:uppercase;letter-spacing:0.08em;padding:0.55rem 0.75rem;border-left:4px solid #58a6ff;border-top:1px solid #30363d;border-bottom:1px solid #30363d;">📅 ${season_name}</td></tr>`;
+
+    // Regular season rows
+    for (const r of rRows) html += rowFn(r);
+    if (rRows.length > 1) {
+      const regTot = isGoalie ? sumGoalieRows(rRows) : sumSkaterRows(rRows);
+      regTot.team_name = 'Season Total';
+      regTot.team_logo = null;
+      html += rowFn(regTot, 'season-total-row');
     }
 
-    for (const r of rows) html += rowFn(r);
-
-    // Block total (only if player was on multiple teams within this block)
-    if (rows.length > 1) {
-      const blockTot = isGoalie ? sumGoalieRows(rows) : sumSkaterRows(rows);
-      blockTot.team_name = is_playoff ? 'Playoff Total' : 'Season Total';
-      blockTot.team_logo = null;
-      html += rowFn(blockTot, 'season-total-row');
+    // Playoff rows (placed directly below regular season stats under compact playoffs sub-header)
+    if (pRows.length > 0) {
+      html += `<tr class="playoffs-header-row"><td colspan="99" style="background:#181512;color:#f0883e;font-size:0.78rem;font-weight:700;letter-spacing:0.06em;padding:0.35rem 0.75rem;border-left:3px solid #f0883e;border-top:1px solid #28211b;border-bottom:1px solid #28211b;">🏆 Playoffs</td></tr>`;
+      for (const r of pRows) html += rowFn(r);
+      if (pRows.length > 1) {
+        const plTot = isGoalie ? sumGoalieRows(pRows) : sumSkaterRows(pRows);
+        plTot.team_name = 'Playoff Total';
+        plTot.team_logo = null;
+        html += rowFn(plTot, 'season-total-row');
+      }
     }
   }
 
@@ -409,7 +434,7 @@ function renderLastGames(lastGames, name, isGoalie) {
         <td>${g.pass_attempts || 0}</td><td>${g.pass_completions || 0}</td><td>${pass_pct}</td>
         <td>${g.saucer_passes || 0}</td>
         <td>${g.hat_tricks || 0}</td>
-        <td>${formatToi(g.possession_secs)}</td>
+        <td>${formatClock(g.possession_secs)}</td>
         <td>${formatToi(g.toi)}</td>
         <td>${g.goal_support ?? 0}</td>
       </tr>`;
@@ -528,7 +553,7 @@ function renderPlayerRecords(holdings, leagueType) {
 function renderLeagueSections(seasonTeamStats, lastGames, isGoalie, holdings, preferredLt, playerAwards) {
   const selectedLt = LT_TABS.some(t => t.key === preferredLt) ? preferredLt : LT_THREES;
   const filteredStats = seasonTeamStats.filter(r => (r.league_type || '') === selectedLt);
-  const filteredGames = lastGames.filter(g => (g.league_type || '') === selectedLt);
+  const filteredGames = lastGames.filter(g => (g.league_type || '') === selectedLt && ((g.position === 'G') === !!isGoalie));
   const statsContent = filteredStats.length || filteredGames.length
     ? `
       <h2 class="section-heading" style="margin-top:0.75rem;">🕐 Last 5 Games</h2>
@@ -677,17 +702,27 @@ async function loadPlayer() {
       : null;
     const pmStr = totalPM === null ? null : (totalPM >= 0 ? `+${totalPM}` : String(totalPM));
 
-    const statBoxes = isGoalie
-      ? [
-          { label: 'GP',  value: totalGP },
-          { label: 'W',   value: totalWins },
-          { label: 'SV%', value: careerSvp ?? '–' },
-        ]
-      : [
-          { label: 'GP',  value: totalGP },
-          { label: 'PTS', value: totalPts },
-          { label: '+/–', value: pmStr },
-        ];
+    const ltRows = rows => (rows || []).filter(r => (r.league_type || '') === preferredLt);
+    const sumBoxes = (goalie) => {
+      const rows = ltRows(goalie ? goalieStats : skaterStats);
+      if (!rows.length) {
+        return goalie
+          ? [{ label: 'GP', value: 0 }, { label: 'W', value: 0 }, { label: 'SV%', value: '–' }]
+          : [{ label: 'GP', value: 0 }, { label: 'PTS', value: 0 }, { label: '+/–', value: '+0' }];
+      }
+      if (goalie) {
+        const c = sumGoalieRows(rows);
+        const sv = c.shots_against > 0 ? (c.saves / c.shots_against).toFixed(3).replace(/^0(?=\.)/, '') : '–';
+        return [{ label: 'GP', value: c.gp ?? 0 }, { label: 'W', value: c.goalie_wins ?? 0 }, { label: 'SV%', value: sv }];
+      }
+      const c = sumSkaterRows(rows);
+      const pm = c.plus_minus ?? 0;
+      return [{ label: 'GP', value: c.gp ?? 0 }, { label: 'PTS', value: c.points ?? 0 }, { label: '+/–', value: pm >= 0 ? `+${pm}` : String(pm) }];
+    };
+    const heroBoxes = { skater: sumBoxes(false), goalie: sumBoxes(true) };
+    const heroBoxesHtml = goalie => heroBoxes[goalie ? 'goalie' : 'skater']
+      .map(s => `<div class="phl-stat-box"><div class="phl-stat-label">${s.label}</div><div class="phl-stat-val">${s.value ?? '–'}</div></div>`).join('');
+    const heroGoalieDefault = isGoalie && (goalieStats || []).length > 0;
 
     // Hero colors from team
     const c1 = player?.color1 || '#1c2128';
@@ -755,7 +790,7 @@ async function loadPlayer() {
           <div class="phl-hero-team">${displayTeam?.team_name || 'Free Agent'}</div>
         </div>
         <div class="phl-hero-stats">
-          ${statBoxes.map(s => `<div class="phl-stat-box"><div class="phl-stat-label">${s.label}</div><div class="phl-stat-val">${s.value ?? '–'}</div></div>`).join('')}
+          ${heroBoxesHtml(heroGoalieDefault)}
         </div>
       </div>
 
@@ -790,6 +825,8 @@ async function loadPlayer() {
         root.querySelectorAll('[id^="sg-panel-"]').forEach(p => { p.style.display = 'none'; });
         const panel = root.querySelector(`#sg-panel-${sg}`);
         if (panel) panel.style.display = '';
+        const heroEl = root.querySelector('.phl-hero-stats');
+        if (heroEl) heroEl.innerHTML = heroBoxesHtml(sg === 'goalie');
       });
     });
 

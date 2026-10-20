@@ -540,6 +540,22 @@ async function loadSeasons() {
       allRegular.map(s => `<option value="${s.id}">${s.name} (${typeLabel(s.league_type)})${s.is_active ? ' ★' : ''}</option>`).join('');
   }
 
+  // Populate Schedule (Excel/CSV) import season dropdown
+  const xlSeasonSelect = document.getElementById('xl-season-select');
+  if (xlSeasonSelect) {
+    const prev = xlSeasonSelect.value;
+    const allRegular = allSeasons.filter(s => !s.is_playoff);
+    xlSeasonSelect.innerHTML = '<option value="">– Create new season –</option>' +
+      allRegular.map(s => `<option value="${s.id}">${s.name} (${typeLabel(s.league_type)})${s.is_active ? ' ★' : ''}</option>`).join('');
+    if (prev && allRegular.some(s => String(s.id) === String(prev))) {
+      xlSeasonSelect.value = prev;
+    } else {
+      const active = allRegular.find(s => s.is_active);
+      if (active) xlSeasonSelect.value = String(active.id);
+    }
+    toggleXlNewSeasonFields();
+  }
+
   // Populate the "Copy from season" dropdown in the create form
   const copyFromSel = document.getElementById('season-copy-from');
   if (copyFromSel) {
@@ -604,19 +620,19 @@ async function deleteSeason(id, isPlayoff) {
 
 async function managePlayoffLines(seasonId, seasonName) {
   const overlay = document.createElement('div');
-  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:999;display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:2rem 1rem;';
+  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.75);z-index:999;display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:2rem 1rem;';
   overlay.innerHTML = `
     <div style="background:#161b22;border:1px solid #30363d;border-radius:10px;padding:1.5rem 2rem;min-width:480px;max-width:680px;width:100%;margin:auto;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;">
-        <h3 style="margin:0;color:#e6edf3;">Playoff Lines — ${seasonName}</h3>
+        <h3 style="margin:0;color:#e6edf3;">Playoff Lines &amp; Wildcard Format — ${seasonName}</h3>
         <button id="_pl-close" style="background:none;border:none;color:#8b949e;font-size:1.2rem;cursor:pointer;">✕</button>
       </div>
       <p style="color:#8b949e;font-size:0.82rem;margin-bottom:1rem;">
-        Set the playoff cutoff line for the standings. Leave blank to remove. These settings allow clinching to work without a playoff bracket.
+        Configure playoff qualification and cutoff lines for the standings. Clinching works automatically during the season.
       </p>
       <div id="_pl-body"><p style="color:#8b949e;">Loading…</p></div>
       <div style="display:flex;gap:0.5rem;margin-top:1.25rem;">
-        <button id="_pl-save" style="flex:1;padding:0.5rem;background:#238636;border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:0.9rem;">Save</button>
+        <button id="_pl-save" style="flex:1;padding:0.5rem;background:#238636;border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:0.9rem;">Save Settings</button>
         <button id="_pl-cancel" style="flex:1;padding:0.5rem;background:#21262d;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;cursor:pointer;font-size:0.9rem;">Cancel</button>
       </div>
     </div>`;
@@ -628,7 +644,7 @@ async function managePlayoffLines(seasonId, seasonName) {
   overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
 
   // Load existing cutoffs
-  let existing = { league_cutoff: null, cutoffs: [] };
+  let existing = { league_cutoff: null, is_wildcard_mode: false, wildcard_div_cutoff: 3, wildcard_conf_cutoff: 2, cutoffs: [] };
   try {
     const r = await fetch(`${API}/seasons/${seasonId}/cutoffs`, { headers: adminHeaders() });
     if (r.ok) existing = await r.json();
@@ -644,8 +660,12 @@ async function managePlayoffLines(seasonId, seasonName) {
   const conferences = [...new Set(teamConfs.map(t => t.conference).filter(Boolean))].sort();
   const divisions   = [...new Set(teamConfs.map(t => t.division).filter(Boolean))].sort();
 
+  const isWc = existing.is_wildcard_mode || (conferences.length >= 2 && divisions.length >= 2);
+  const divCutInit = existing.wildcard_div_cutoff ?? 3;
+  const confWcInit = existing.wildcard_conf_cutoff ?? 2;
+
   const getCut = (scope, name) => {
-    const row = existing.cutoffs.find(c => c.scope === scope && c.scope_name === name);
+    const row = (existing.cutoffs || []).find(c => c.scope === scope && c.scope_name === name);
     return row ? row.cutoff : '';
   };
 
@@ -671,44 +691,133 @@ async function managePlayoffLines(seasonId, seasonName) {
       </td>
     </tr>`).join('');
 
-  document.getElementById('_pl-body').innerHTML = `
-    <table style="width:100%;border-collapse:collapse;">
-      <tbody>
-        <tr>
-          <td style="padding:0.5rem 0.5rem;font-weight:600;color:#e6edf3;">🏒 League (overall top N)</td>
-          <td style="padding:0.5rem 0.5rem;">
-            <input type="number" min="1" id="_pl-league-cutoff" value="${existing.league_cutoff ?? ''}"
-              placeholder="e.g. 8"
-              style="width:80px;background:#0d1117;border:1px solid #30363d;color:#e6edf3;border-radius:4px;padding:0.25rem 0.4rem;font-size:0.83rem;" />
-            <span style="color:#8b949e;font-size:0.78rem;margin-left:0.5rem;">teams qualify</span>
-          </td>
-        </tr>
-        ${conferences.length > 0 ? `
-        <tr><td colspan="2" style="padding-top:1rem;font-weight:600;color:#58a6ff;font-size:0.85rem;">Per Conference</td></tr>
-        ${confRows}` : ''}
-        ${divisions.length > 0 ? `
-        <tr><td colspan="2" style="padding-top:1rem;font-weight:600;color:#3fb950;font-size:0.85rem;">Per Division</td></tr>
-        ${divRows}` : ''}
-      </tbody>
-    </table>
-    <p style="color:#8b949e;font-size:0.78rem;margin-top:0.75rem;">
-      Priority: Division cutoff &gt; Conference cutoff &gt; League cutoff. Leave blank to not draw a line for that scope.
-    </p>`;
+  const bodyEl = document.getElementById('_pl-body');
+  bodyEl.innerHTML = `
+    <!-- Mode switch -->
+    <div style="display:flex;gap:1.5rem;margin-bottom:1.25rem;padding:0.75rem;background:#0d1117;border:1px solid #30363d;border-radius:6px;">
+      <label style="color:#e6edf3;font-size:0.88rem;cursor:pointer;display:flex;align-items:center;gap:0.4rem;">
+        <input type="radio" name="_pl_mode" value="wildcard" ${isWc ? 'checked' : ''} />
+        🏒 <strong>NHL Wild Card Format</strong>
+      </label>
+      <label style="color:#e6edf3;font-size:0.88rem;cursor:pointer;display:flex;align-items:center;gap:0.4rem;">
+        <input type="radio" name="_pl_mode" value="standard" ${!isWc ? 'checked' : ''} />
+        📊 <strong>Custom / Standard Cutoffs</strong>
+      </label>
+    </div>
+
+    <!-- NHL Wildcard Section -->
+    <div id="_pl-wc-panel" style="${isWc ? '' : 'display:none;'}">
+      <div style="background:#161b22;border:1px solid #30363d;border-radius:6px;padding:1rem;margin-bottom:1rem;">
+        <h4 style="margin:0 0 0.75rem 0;color:#58a6ff;font-size:0.95rem;">NHL Wild Card Rules</h4>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:0.75rem;">
+          <div>
+            <label style="display:block;font-size:0.82rem;color:#8b949e;margin-bottom:0.3rem;">Top teams per division qualifying:</label>
+            <input type="number" id="_pl-wc-div-cut" min="1" max="10" value="${divCutInit}"
+              style="width:80px;background:#0d1117;border:1px solid #30363d;color:#e6edf3;border-radius:4px;padding:0.3rem 0.5rem;" />
+            <span style="font-size:0.8rem;color:#8b949e;margin-left:0.4rem;">(default: 3)</span>
+          </div>
+          <div>
+            <label style="display:block;font-size:0.82rem;color:#8b949e;margin-bottom:0.3rem;">Wildcard teams per conference:</label>
+            <input type="number" id="_pl-wc-conf-cut" min="1" max="10" value="${confWcInit}"
+              style="width:80px;background:#0d1117;border:1px solid #30363d;color:#e6edf3;border-radius:4px;padding:0.3rem 0.5rem;" />
+            <span style="font-size:0.8rem;color:#8b949e;margin-left:0.4rem;">(default: 2)</span>
+          </div>
+        </div>
+        <div id="_pl-wc-summary" style="background:#0d1117;padding:0.75rem;border-radius:6px;font-size:0.82rem;color:#c9d1d9;line-height:1.45;border-left:3px solid #a371f7;">
+        </div>
+      </div>
+    </div>
+
+    <!-- Standard Cutoffs Section -->
+    <div id="_pl-std-panel" style="${!isWc ? '' : 'display:none;'}">
+      <table style="width:100%;border-collapse:collapse;">
+        <tbody>
+          <tr>
+            <td style="padding:0.5rem 0.5rem;font-weight:600;color:#e6edf3;">🏒 League (overall top N)</td>
+            <td style="padding:0.5rem 0.5rem;">
+              <input type="number" min="1" id="_pl-league-cutoff" value="${existing.league_cutoff ?? ''}"
+                placeholder="e.g. 8"
+                style="width:80px;background:#0d1117;border:1px solid #30363d;color:#e6edf3;border-radius:4px;padding:0.25rem 0.4rem;font-size:0.83rem;" />
+              <span style="color:#8b949e;font-size:0.78rem;margin-left:0.5rem;">teams qualify</span>
+            </td>
+          </tr>
+          ${conferences.length > 0 ? `
+          <tr><td colspan="2" style="padding-top:1rem;font-weight:600;color:#58a6ff;font-size:0.85rem;">Per Conference</td></tr>
+          ${confRows}` : ''}
+          ${divisions.length > 0 ? `
+          <tr><td colspan="2" style="padding-top:1rem;font-weight:600;color:#3fb950;font-size:0.85rem;">Per Division</td></tr>
+          ${divRows}` : ''}
+        </tbody>
+      </table>
+      <p style="color:#8b949e;font-size:0.78rem;margin-top:0.75rem;">
+        Priority: Division cutoff &gt; Conference cutoff &gt; League cutoff. Leave blank to not draw a line for that scope.
+      </p>
+    </div>`;
+
+  const updateSummary = () => {
+    const dVal = Number(document.getElementById('_pl-wc-div-cut').value) || 3;
+    const wVal = Number(document.getElementById('_pl-wc-conf-cut').value) || 2;
+    const numConfs = conferences.length || 2;
+    const numDivsPerConf = Math.max(1, Math.round((divisions.length || 4) / numConfs));
+    const perConf = (numDivsPerConf * dVal) + wVal;
+    const total = numConfs * perConf;
+    const sumEl = document.getElementById('_pl-wc-summary');
+    if (sumEl) {
+      sumEl.innerHTML = `
+        <strong>• Standings:</strong> Top <strong>${dVal}</strong> in each division qualify automatically. Top <strong>${wVal}</strong> remaining teams in each conference qualify as Wildcards (marked with <strong>– W</strong>).<br/>
+        <strong>• Playoff Matchups:</strong> Top division winner in each conference plays the lowest wildcard (WC${wVal}), the other division winner plays WC1, and division seeds #2 vs #3 play each other.<br/>
+        <strong>• Total qualifiers:</strong> ${numConfs} conferences × ${perConf} teams = <strong>${total} total playoff teams</strong>.
+      `;
+    }
+  };
+
+  overlay.querySelectorAll('input[name="_pl_mode"]').forEach(radio => {
+    radio.addEventListener('change', () => {
+      const isWcMode = radio.value === 'wildcard';
+      document.getElementById('_pl-wc-panel').style.display = isWcMode ? '' : 'none';
+      document.getElementById('_pl-std-panel').style.display = isWcMode ? 'none' : '';
+    });
+  });
+
+  document.getElementById('_pl-wc-div-cut').addEventListener('input', updateSummary);
+  document.getElementById('_pl-wc-conf-cut').addEventListener('input', updateSummary);
+  updateSummary();
 
   document.getElementById('_pl-save').addEventListener('click', async () => {
-    const leagueVal = document.getElementById('_pl-league-cutoff').value.trim();
-    const league_cutoff = leagueVal === '' ? null : Number(leagueVal);
-    const cutoffInputs = overlay.querySelectorAll('input[data-scope]');
-    const cutoffs = [];
-    cutoffInputs.forEach(inp => {
-      const val = inp.value.trim();
-      if (val !== '') cutoffs.push({ scope: inp.dataset.scope, scope_name: inp.dataset.name, cutoff: Number(val) });
-    });
-    const r = await fetch(`${API}/seasons/${seasonId}/cutoffs`, {
-      method: 'POST', headers: adminJsonHeaders(),
-      body: JSON.stringify({ league_cutoff, cutoffs }),
-    });
-    if (!r.ok) { alert('Failed to save playoff lines'); return; }
+    const isWcMode = overlay.querySelector('input[name="_pl_mode"]:checked').value === 'wildcard';
+    if (isWcMode) {
+      const dVal = Number(document.getElementById('_pl-wc-div-cut').value) || 3;
+      const wVal = Number(document.getElementById('_pl-wc-conf-cut').value) || 2;
+      const numConfs = conferences.length || 2;
+      const numDivsPerConf = Math.max(1, Math.round((divisions.length || 4) / numConfs));
+      const perConf = (numDivsPerConf * dVal) + wVal;
+      const total = numConfs * perConf;
+
+      const r = await fetch(`${API}/seasons/${seasonId}/cutoffs`, {
+        method: 'POST', headers: adminJsonHeaders(),
+        body: JSON.stringify({
+          is_wildcard_mode: true,
+          wildcard_div_cutoff: dVal,
+          wildcard_conf_cutoff: wVal,
+          league_cutoff: total,
+        }),
+      });
+      if (!r.ok) { alert('Failed to save playoff lines'); return; }
+    } else {
+      const leagueVal = document.getElementById('_pl-league-cutoff').value.trim();
+      const league_cutoff = leagueVal === '' ? null : Number(leagueVal);
+      const cutoffInputs = overlay.querySelectorAll('#_pl-std-panel input[data-scope]');
+      const cutoffs = [];
+      cutoffInputs.forEach(inp => {
+        const val = inp.value.trim();
+        if (val !== '') cutoffs.push({ scope: inp.dataset.scope, scope_name: inp.dataset.name, cutoff: Number(val) });
+      });
+      const r = await fetch(`${API}/seasons/${seasonId}/cutoffs`, {
+        method: 'POST', headers: adminJsonHeaders(),
+        body: JSON.stringify({ is_wildcard_mode: false, league_cutoff, cutoffs }),
+      });
+      if (!r.ok) { alert('Failed to save playoff lines'); return; }
+    }
     close();
   });
 }
@@ -828,7 +937,9 @@ async function loadTeams() {
     } catch { /* ignore */ }
   }
   // Filter teams table display by selected league; if a season is selected, show only that season's teams.
-  const teams = allTeams.filter(t => (!t.league_type || t.league_type === adminLeagueFilter) && (!seasonTeamIds || seasonTeamIds.has(Number(t.id))));
+  const teams = seasonTeamIds
+    ? allTeams.filter(t => seasonTeamIds.has(Number(t.id)))
+    : allTeams.filter(t => !t.league_type || t.league_type === adminLeagueFilter);
   const tbody = document.querySelector('#teams-table tbody');
   const seasonAddControls = document.getElementById('season-team-add-controls');
   const seasonAddSelect = document.getElementById('season-team-add-select');
@@ -860,9 +971,8 @@ async function loadTeams() {
       </tr>`).join('');
 
   if (seasonAddControls && seasonAddSelect) {
-    const leagueTeams = allTeams.filter(t => !t.league_type || t.league_type === adminLeagueFilter);
     const addableTeams = adminSeasonFilter
-      ? leagueTeams.filter(t => !seasonTeamIds || !seasonTeamIds.has(Number(t.id)))
+      ? allTeams.filter(t => !seasonTeamIds || !seasonTeamIds.has(Number(t.id)))
       : [];
     seasonAddControls.style.display = adminSeasonFilter ? 'flex' : 'none';
     seasonAddSelect.innerHTML = '<option value="">— Select team —</option>' +
@@ -876,18 +986,19 @@ async function loadTeams() {
   // Game home/away and roster dropdowns: filter by current league and selected season
   const leagueTeams = allTeams.filter(t => !t.league_type || t.league_type === adminLeagueFilter);
   const dropdownTeams = seasonTeamIds
-    ? leagueTeams.filter(t => seasonTeamIds.has(Number(t.id)))
+    ? allTeams.filter(t => seasonTeamIds.has(Number(t.id)))
     : leagueTeams;
   const gOpts = '<option value="">Select team</option>' + dropdownTeams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
   const gameHomeSel = document.getElementById('game-home');
   const gameAwaySel = document.getElementById('game-away');
   if (gameHomeSel) gameHomeSel.innerHTML = gOpts;
   if (gameAwaySel) gameAwaySel.innerHTML = gOpts;
-  // Roster tab team selector
+  // Roster tab team selector: only teams active in the selected season
   const rSel = document.getElementById('roster-team-select');
   const rPrev = rSel.value;
   rSel.innerHTML = '<option value="">— Select a team —</option>' + dropdownTeams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
   if (rPrev && dropdownTeams.find(t => String(t.id) === rPrev)) rSel.value = rPrev;
+  else if (rPrev && typeof loadRoster === 'function') loadRoster();
 
   // Merge teams dropdowns: show ALL teams
   const mergeOpts = '<option value="">— Select team —</option>' + allTeams.map(t => `<option value="${t.id}">${t.name}${t.league_type ? ' (' + ltLabel(t.league_type) + ')' : ''}</option>`).join('');
@@ -1344,14 +1455,65 @@ document.getElementById('player-form').addEventListener('submit', async e => {
   const number = document.getElementById('player-number').value || null;
   const discord = document.getElementById('player-discord').value.trim() || null;
   const discord_id = document.getElementById('player-discord-id').value.trim() || null;
-  await fetch(`${API}/players`, { method: 'POST', headers: adminJsonHeaders(), body: JSON.stringify({ name, position, number, discord, discord_id }) });
-  e.target.reset(); await loadTeams(); await loadPlayers();
+  if (!name) return;
+
+  // Duplicate names are detected by the server (err.duplicate) and confirmed below
+  const merge = false;
+
+  try {
+    const res = await fetch(`${API}/players`, {
+      method: 'POST',
+      headers: adminJsonHeaders(),
+      body: JSON.stringify({ name, position, number, discord, discord_id, merge }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      if (err.duplicate) {
+        const doMerge = confirm(`A player with the name "${err.existing_name || name}" already exists.\n\nDo you want to merge with the existing player?\n\nClick OK to merge, or Cancel to abort.`);
+        if (doMerge) {
+          const mRes = await fetch(`${API}/players`, {
+            method: 'POST',
+            headers: adminJsonHeaders(),
+            body: JSON.stringify({ name, position, number, discord, discord_id, merge: true }),
+          });
+          if (!mRes.ok) {
+            const merr = await mRes.json().catch(() => ({}));
+            alert(merr.error || 'Failed to merge player');
+            return;
+          }
+        } else {
+          return;
+        }
+      } else {
+        alert(err.error || 'Failed to add player');
+        return;
+      }
+    }
+    e.target.reset();
+    _addMergeOption(name);
+    Promise.allSettled([loadTeams(), loadPlayers(), loadRegPlayers()]);
+  } catch (err) {
+    alert('Error adding player: ' + err.message);
+  }
 });
 
 async function deletePlayer(id) {
   if (!confirm('Delete this player?')) return;
-  await fetch(`${API}/players/${id}`, { method: 'DELETE', headers: adminHeaders() });
-  await loadPlayers();
+  try {
+    const res = await fetch(`${API}/players/${id}`, { method: 'DELETE', headers: adminHeaders() });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      alert(err.error || 'Failed to delete player');
+      return;
+    }
+    await loadPlayers();
+    await loadTeams();
+    await loadRegPlayers();
+    await refreshMergeDropdowns();
+    if (typeof loadRoster === 'function') await loadRoster();
+  } catch (err) {
+    alert('Error deleting player: ' + err.message);
+  }
 }
 
 async function refreshMergeDropdowns() {
@@ -1361,12 +1523,39 @@ async function refreshMergeDropdowns() {
     names = r.ok ? await r.json() : null;
   } catch (_) { names = null; }
   if (!Array.isArray(names)) return;
-  const opts = '<option value="">— Select player —</option>' + names.map(n => `<option value="${escAttr(n)}">${escAttr(n)}</option>`).join('');
-  const mpSrc = document.getElementById('merge-player-source');
-  const mpTgt = document.getElementById('merge-player-target');
-  if (mpSrc) mpSrc.innerHTML = opts;
-  if (mpTgt) mpTgt.innerHTML = opts;
+  _mergeNames = names.slice().sort((a, b) => a.localeCompare(b));
+  _renderMergeOptions('merge-player-source');
+  _renderMergeOptions('merge-player-target');
 }
+
+let _mergeNames = [];
+
+function _renderMergeOptions(selectId) {
+  const sel = document.getElementById(selectId);
+  if (!sel) return;
+  const search = document.getElementById(selectId + '-search');
+  const q = (search ? search.value : '').trim().toLowerCase();
+  const keep = sel.value;
+  const list = _mergeNames.filter(n => !q || n.toLowerCase().includes(q) || n === keep);
+  sel.innerHTML = '<option value="">— Select player —</option>' +
+    list.map(n => `<option value="${escAttr(n)}"${n === keep ? ' selected' : ''}>${escAttr(n)}</option>`).join('');
+  if (q) {
+    const matches = list.filter(n => n.toLowerCase().includes(q));
+    if (matches.length === 1) sel.value = matches[0];
+  }
+}
+
+function _addMergeOption(name) {
+  if (!_mergeNames.some(n => n.toLowerCase() === name.toLowerCase())) _mergeNames.push(name);
+  _mergeNames.sort((a, b) => a.localeCompare(b));
+  _renderMergeOptions('merge-player-source');
+  _renderMergeOptions('merge-player-target');
+}
+
+['merge-player-source', 'merge-player-target'].forEach(id => {
+  const s = document.getElementById(id + '-search');
+  if (s) s.addEventListener('input', () => _renderMergeOptions(id));
+});
 
 async function mergePlayers() {
   const sourceName = document.getElementById('merge-player-source').value;
@@ -1381,8 +1570,14 @@ async function mergePlayers() {
       body: JSON.stringify({ source_name: sourceName, target_name: targetName }),
     });
     if (!res.ok) { const e = await res.json().catch(() => ({})); alert(e.error || 'Failed to merge players'); return; }
+    _mergeNames = _mergeNames.filter(n => n !== sourceName);
+    ['merge-player-source', 'merge-player-target'].forEach(id => {
+      const s = document.getElementById(id + '-search'); if (s) s.value = '';
+      const sel = document.getElementById(id); if (sel) sel.value = '';
+      _renderMergeOptions(id);
+    });
+    Promise.allSettled([loadTeams(), loadPlayers()]);
     alert(`Successfully merged "${sourceName}" into "${targetName}".`);
-    await loadTeams(); await loadPlayers(); await refreshMergeDropdowns();
   } catch (err) { alert('Error merging players: ' + err.message); }
 }
 
@@ -1610,12 +1805,33 @@ async function savePlayerEdit() {
     });
     if (!res.ok) {
       const e = await res.json().catch(() => ({}));
-      errEl.textContent = e.error || 'Failed to save';
-      errEl.style.display = '';
-      return;
+      if (e.duplicate) {
+        const doMerge = confirm(`A player with the name "${e.existing_name || name}" already exists.\n\nDo you want to merge this player into "${e.existing_name || name}"?\n\nClick OK to merge, or Cancel to abort.`);
+        if (doMerge) {
+          const mRes = await fetch(`${API}/players/${id}`, {
+            method: 'PATCH', headers: adminJsonHeaders(),
+            body: JSON.stringify({ name, position: position || null, number: number ? Number(number) : null, discord: discord || null, discord_id: discordId, user_id, merge: true }),
+          });
+          if (!mRes.ok) {
+            const me = await mRes.json().catch(() => ({}));
+            errEl.textContent = me.error || 'Failed to merge player';
+            errEl.style.display = '';
+            return;
+          }
+        } else {
+          return;
+        }
+      } else {
+        errEl.textContent = e.error || 'Failed to save';
+        errEl.style.display = '';
+        return;
+      }
     }
     closeEditModal();
     await loadPlayers();
+    await loadTeams();
+    await loadRegPlayers();
+    await refreshMergeDropdowns();
   } else {
     const username = document.getElementById('ep-username').value.trim();
     const platform = document.getElementById('ep-platform').value;
@@ -1635,6 +1851,7 @@ async function savePlayerEdit() {
     _regUsersCache = null; // Invalidate cache so dropdown refreshes on next open
     await loadRegPlayers();
     await loadPlayers();
+    await refreshMergeDropdowns();
   }
 }
 
@@ -1834,6 +2051,25 @@ async function deletePlayoff(playoffId) {
   else { const e = await res.json(); alert(e.error || 'Failed to delete'); }
 }
 
+document.getElementById('po-season').addEventListener('change', async e => {
+  const sId = e.target.value;
+  if (!sId) return;
+  try {
+    const r = await fetch(`${API}/seasons/${sId}/cutoffs`, { headers: adminHeaders() });
+    if (r.ok) {
+      const d = await r.json();
+      if (d.is_wildcard_mode) {
+        const fmtSelect = document.getElementById('po-seeding-format');
+        if (fmtSelect) fmtSelect.value = 'nhl_wildcard';
+        if (d.league_cutoff) {
+          const opt = document.querySelector(`#po-qualify option[value="${d.league_cutoff}"]`);
+          if (opt) document.getElementById('po-qualify').value = d.league_cutoff;
+        }
+      }
+    }
+  } catch { /* ignore */ }
+});
+
 document.getElementById('playoff-form').addEventListener('submit', async e => {
   e.preventDefault();
   const season_id    = document.getElementById('po-season').value;
@@ -1841,6 +2077,7 @@ document.getElementById('playoff-form').addEventListener('submit', async e => {
   const min_games_played = Number(document.getElementById('po-min-gp').value);
   const series_length = Number(document.getElementById('po-series-length').value);
   const series_start_date = document.getElementById('po-start-date').value;
+  const seeding_format = document.getElementById('po-seeding-format') ? document.getElementById('po-seeding-format').value : 'standard';
 
   if (!season_id) { alert('Please select a season.'); return; }
   if (!series_start_date) { alert('Please select a Round 1 start date.'); return; }
@@ -1848,7 +2085,14 @@ document.getElementById('playoff-form').addEventListener('submit', async e => {
   const res = await fetch(`${API}/playoffs`, {
     method: 'POST',
     headers: adminJsonHeaders(),
-    body: JSON.stringify({ season_id: Number(season_id), teams_qualify, min_games_played, series_length, series_start_date }),
+    body: JSON.stringify({
+      season_id: Number(season_id),
+      teams_qualify,
+      min_games_played,
+      series_length,
+      series_start_date,
+      seeding_format
+    }),
   });
   if (res.ok) {
     e.target.reset();
@@ -2088,10 +2332,21 @@ function toggleMsoNewSeasonFields() {
     fields.style.display = sel.value ? 'none' : '';
   }
 }
+
+function toggleXlNewSeasonFields() {
+  const sel = document.getElementById('xl-season-select');
+  const fields = document.getElementById('xl-new-season-fields');
+  if (sel && fields) {
+    fields.style.display = sel.value ? 'none' : '';
+  }
+}
+
 // Wire up the toggle when the select changes
 document.addEventListener('DOMContentLoaded', () => {
   const sel = document.getElementById('mso-season-select');
   if (sel) sel.addEventListener('change', toggleMsoNewSeasonFields);
+  const xlSel = document.getElementById('xl-season-select');
+  if (xlSel) xlSel.addEventListener('change', toggleXlNewSeasonFields);
 
   // Delegated click handler for the "Conf/Div" buttons in the seasons list
   const seasonsList = document.getElementById('seasons-list');
@@ -2227,17 +2482,19 @@ function showXlImportStatus(msg, ok) {
 }
 
 async function runExcelImport() {
-  const fileInput   = document.getElementById('xl-import-file');
-  const seasonName  = (document.getElementById('xl-season-name')  || {}).value || '';
-  const leagueType  = (document.getElementById('xl-league-type')  || {}).value || '';
-  const leagueId    = (document.getElementById('xl-league-id')    || {}).value || '';
+  const fileInput    = document.getElementById('xl-import-file');
+  const seasonSelect = document.getElementById('xl-season-select');
+  const existingSeasonId = seasonSelect ? seasonSelect.value : '';
+  const seasonName   = (document.getElementById('xl-season-name')  || {}).value || '';
+  const leagueType   = (document.getElementById('xl-league-type')  || {}).value || '';
+  const leagueId     = (document.getElementById('xl-league-id')    || {}).value || '';
 
   if (!fileInput || !fileInput.files.length) {
-    showXlImportStatus('❌ Please select an Excel file first.', false);
+    showXlImportStatus('❌ Please select an Excel (.xlsx / .xls) or CSV file first.', false);
     return;
   }
-  if (!seasonName.trim()) {
-    showXlImportStatus('❌ Please enter a Season name.', false);
+  if (!existingSeasonId && !seasonName.trim()) {
+    showXlImportStatus('❌ Please select an existing season or enter a new season name.', false);
     return;
   }
   const file = fileInput.files[0];
@@ -2246,13 +2503,19 @@ async function runExcelImport() {
     return;
   }
 
-  showXlImportStatus('⏳ Uploading and processing… this may take a minute while player stats are fetched from mystatsonline.', true);
+  showXlImportStatus('⏳ Uploading and processing schedule…', true);
 
   const fd = new FormData();
   fd.append('file', file);
-  fd.append('season_name', seasonName.trim());
-  fd.append('league_type', leagueType);
-  fd.append('league_id',   leagueId.trim());
+  if (existingSeasonId) {
+    fd.append('season_id', existingSeasonId);
+  } else {
+    fd.append('season_name', seasonName.trim());
+    fd.append('league_type', leagueType);
+  }
+  if (leagueId.trim()) {
+    fd.append('league_id', leagueId.trim());
+  }
 
   try {
     const token = getAdminToken();
@@ -2265,16 +2528,23 @@ async function runExcelImport() {
     if (res.ok && json.ok) {
       const s = json.summary || {};
       const MAX_DISPLAYED_ERRORS = 10;
-      let msg = `✅ Excel import complete!\n` +
+      let msg = `✅ Schedule import complete!\n` +
         `Season: ${s.season || seasonName}\n` +
-        `Teams created: ${s.teams_created}\n` +
-        `Games created: ${s.games_created}  |  Skipped (duplicate): ${s.games_skipped}\n` +
-        `Games with stats fetched: ${s.stats_fetched}  |  Stats skipped/failed: ${s.stats_skipped}`;
+        `Total games in file: ${s.total_games_in_file ?? '–'}\n` +
+        `Games created: ${s.games_created}  |  Updated: ${s.games_updated ?? 0}  |  Skipped: ${s.games_skipped}\n` +
+        `Teams created: ${s.teams_created}${s.created_team_names && s.created_team_names.length ? ` (${s.created_team_names.join(', ')})` : ''}`;
+      if (s.stats_fetched > 0) {
+        msg += `\nGames with stats fetched: ${s.stats_fetched}  |  Stats skipped: ${s.stats_skipped}`;
+      }
       if (s.errors && s.errors.length) {
         msg += `\n\nErrors (${s.errors.length}):\n` + s.errors.slice(0, MAX_DISPLAYED_ERRORS).join('\n');
         if (s.errors.length > MAX_DISPLAYED_ERRORS) msg += `\n…and ${s.errors.length - MAX_DISPLAYED_ERRORS} more`;
       }
       showXlImportStatus(msg, true);
+      // Reload seasons in case a new season or teams were added
+      if (!existingSeasonId && typeof loadSeasons === 'function') {
+        await loadSeasons();
+      }
     } else {
       showXlImportStatus(`❌ Import failed: ${json.error || res.status}`, false);
     }
@@ -2405,6 +2675,30 @@ let awardsTabData = {
   selectedPlayerName: null,
 };
 
+async function preloadAwardsPlayerData(seasonId) {
+  if (!seasonId) return;
+  try {
+    const [pRes, ldRes, calderRes] = await Promise.all([
+      fetch(`${API}/players?type=${adminLeagueFilter}`, { headers: adminHeaders() }).catch(() => ({ ok: false })),
+      fetch(`${API}/stats/leaders?season_id=${seasonId}`, { headers: adminHeaders() }).catch(() => ({ ok: false })),
+      fetch(`${API}/admin/awards/season/${seasonId}/calder-eligible`, { headers: adminHeaders() }).catch(() => ({ ok: false })),
+    ]);
+    const allPlayers = (pRes && pRes.ok) ? await pRes.json().catch(() => []) : [];
+    const names = new Set((allPlayers || []).map(p => p.name).filter(Boolean));
+    if (ldRes && ldRes.ok) {
+      const ld = await ldRes.json().catch(() => ({}));
+      (ld.skaters || []).forEach(s => names.add(s.name));
+      (ld.goalies || []).forEach(s => names.add(s.name));
+    }
+    awardsTabData.allPlayers = [...names].filter(Boolean).sort((a, b) => a.localeCompare(b));
+
+    if (calderRes && calderRes.ok) {
+      const data = await calderRes.json().catch(() => ({ eligible: [] }));
+      awardsTabData.calderEligible = (data.eligible || []).map(e => e.player_name);
+    }
+  } catch { /* ignore */ }
+}
+
 async function loadAwardsTab() {
   const seasonId = adminSeasonFilter;
   awardsTabData.currentSeasonId = seasonId;
@@ -2435,6 +2729,9 @@ async function loadAwardsTab() {
   const seasonName = seasonSel ? (seasonSel.options[seasonSel.selectedIndex]?.text || `Season ${seasonId}`) : `Season ${seasonId}`;
   const seasonLabel = document.getElementById('awards-season-label');
   if (seasonLabel) seasonLabel.textContent = `Showing awards for: ${seasonName}`;
+
+  // Start preloading players and calder eligible in background immediately
+  preloadAwardsPlayerData(seasonId);
 
   try {
     const teamsUrl = seasonId
@@ -2518,7 +2815,7 @@ function renderAwardsGrid() {
 
     const imgHtml = def.image_url
       ? `<img src="${escAttr(def.image_url)}" class="award-card-img" alt="" />`
-      : `<div class="award-card-img-ph">??</div>`;
+      : `<div class="award-card-img-ph">🏆</div>`;
 
     const autoBadge = def.is_auto
       ? `<span class="award-card-auto">Auto</span>`
@@ -2538,8 +2835,8 @@ function renderAwardsGrid() {
   }).join('');
 }
 
-async function openAwardModal(awardKey) {
-  const def = awardsTabData.awardDefs.find(d => d.key === awardKey);
+function openAwardModal(awardKey) {
+  const def = (awardsTabData.awardDefs || []).find(d => d.key === awardKey);
   if (!def) return;
   awardsTabData.currentAwardKey = awardKey;
   awardsTabData.currentAwardName = def.name;
@@ -2556,6 +2853,10 @@ async function openAwardModal(awardKey) {
   const winnersLabel = document.getElementById('award-winners-label');
   const searchInput = document.getElementById('award-player-search');
   const teamSection = document.getElementById('award-team-section');
+  const previewImg = document.getElementById('award-edit-preview');
+  const msgEl = document.getElementById('award-winner-msg');
+  const editMsg = document.getElementById('award-edit-msg');
+  const listEl = document.getElementById('award-player-list');
 
   const TEAM_AWARDS = ['champion', 'presidents_trophy'];
   const isTeamAward = TEAM_AWARDS.includes(awardKey);
@@ -2564,7 +2865,6 @@ async function openAwardModal(awardKey) {
   if (descEl) descEl.textContent = def.description;
   if (editNameEl) editNameEl.value = def.name;
   if (editDescEl) editDescEl.value = def.description || '';
-  const previewImg = document.getElementById('award-edit-preview');
   if (previewImg) {
     previewImg.src = def.image_url || '';
     previewImg.style.display = def.image_url ? 'block' : 'none';
@@ -2598,53 +2898,24 @@ async function openAwardModal(awardKey) {
   // Hide/show Calder note
   const isCalder = awardKey === 'calder';
   if (calderNote) calderNote.style.display = isCalder ? '' : 'none';
-  if (calderThreshold) calderThreshold.textContent = awardsTabData.settings.calder_max_prior_gp;
-
-  // Fetch Calder eligible players if needed
-  if (isCalder && awardsTabData.currentSeasonId) {
-    try {
-      const r = await fetch(`${API}/admin/awards/season/${awardsTabData.currentSeasonId}/calder-eligible`, { headers: adminHeaders() });
-      if (r.ok) {
-        const data = await r.json();
-        awardsTabData.calderEligible = data.eligible.map(e => e.player_name);
-      }
-    } catch { awardsTabData.calderEligible = []; }
-  } else {
-    awardsTabData.calderEligible = null; // null = all players
-  }
-
-  // Fetch player list for this season
-  try {
-    const r = await fetch(`${API}/players?type=${adminLeagueFilter}`, { headers: adminHeaders() });
-    const allPlayers = r.ok ? await r.json() : [];
-    awardsTabData.allPlayers = allPlayers.map(p => p.name).filter(Boolean);
-    // Also include players who appeared in this season's stats (may not be in current roster)
-    if (awardsTabData.currentSeasonId) {
-      try {
-        const gr = await fetch(`${API}/stats/leaders?season_id=${awardsTabData.currentSeasonId}`, { headers: adminHeaders() });
-        if (gr.ok) {
-          const ld = await gr.json();
-          const names = new Set(awardsTabData.allPlayers);
-          (ld.skaters || []).forEach(s => names.add(s.name));
-          (ld.goalies || []).forEach(s => names.add(s.name));
-          awardsTabData.allPlayers = [...names].filter(Boolean).sort((a,b) => a.localeCompare(b));
-        }
-      } catch { /* ok */ }
-    }
-  } catch { awardsTabData.allPlayers = []; }
+  if (calderThreshold) calderThreshold.textContent = awardsTabData.settings?.calder_max_prior_gp || 6;
 
   // Render current player winners
   renderAwardModalWinners();
 
-  // Reset search
+  // Reset search and messages
   if (searchInput) { searchInput.value = ''; }
-  const listEl = document.getElementById('award-player-list');
   if (listEl) listEl.style.display = 'none';
-
-  const msgEl = document.getElementById('award-winner-msg');
   if (msgEl) { msgEl.style.display = 'none'; msgEl.textContent = ''; }
+  if (editMsg) { editMsg.style.display = 'none'; editMsg.textContent = ''; }
 
+  // POP UP MODAL IMMEDIATELY
   if (overlay) overlay.style.display = 'flex';
+
+  // If players or calder list haven't finished loading yet, fetch in background
+  if ((!awardsTabData.allPlayers || awardsTabData.allPlayers.length === 0) || (isCalder && !awardsTabData.calderEligible)) {
+    preloadAwardsPlayerData(awardsTabData.currentSeasonId);
+  }
 }
 
 function renderAwardTeamCurrent() {
@@ -2662,8 +2933,26 @@ function renderAwardTeamCurrent() {
   container.innerHTML = `
     <div style="display:flex;align-items:center;gap:0.5rem;padding:0.3rem 0;border-bottom:1px solid #21262d;">
       <span style="flex:1;font-weight:700;color:#f0a500;font-size:1rem;">${logoHtml}🏆 ${escAttr(teamAward.team_name)}</span>
-      <button onclick="removeAwardTeam()" style="background:#4b1f1f;color:#f85149;border:1px solid #f85149;border-radius:4px;padding:0.1rem 0.4rem;font-size:0.76rem;cursor:pointer;">✕</button>
+      <button onclick="syncAwardTeamRoster()" class="btn-secondary" style="font-size:0.76rem;padding:0.2rem 0.5rem;" title="Re-sync roster and GP requirements">🔄 Sync Roster</button>
+      <button onclick="removeAwardTeam()" style="background:#4b1f1f;color:#f85149;border:1px solid #f85149;border-radius:4px;padding:0.1rem 0.4rem;font-size:0.76rem;cursor:pointer;" title="Remove Team">✕</button>
     </div>`;
+}
+
+async function syncAwardTeamRoster() {
+  const awardKey = awardsTabData.currentAwardKey;
+  if (!awardKey || !awardsTabData.currentSeasonId) return;
+  const res = await fetch(`${API}/admin/awards/season/${awardsTabData.currentSeasonId}/team/sync-roster`, {
+    method: 'POST',
+    headers: { ...adminJsonHeaders() },
+    body: JSON.stringify({ award_key: awardKey }),
+  });
+  if (!res.ok) { const e = await res.json().catch(()=>({})); _awardWinnerMsg(e.error || 'Failed to sync roster', true); return; }
+  const data = await res.json().catch(() => ({}));
+  await _refreshSeasonWinners();
+  renderAwardModalWinners();
+  renderAwardsGrid();
+  const count = data.awarded_players ? data.awarded_players.length : 0;
+  _awardWinnerMsg(`Synced roster: ${count} eligible player${count === 1 ? '' : 's'} awarded.`, false);
 }
 
 async function saveAwardTeam() {
@@ -2679,11 +2968,14 @@ async function saveAwardTeam() {
     body: JSON.stringify({ award_key: awardKey, team_id: Number(teamId) }),
   });
   if (!res.ok) { const e = await res.json().catch(()=>({})); _awardWinnerMsg(e.error || 'Failed to set team', true); return; }
+  const data = await res.json().catch(() => ({}));
 
   await _refreshSeasonWinners();
   renderAwardTeamCurrent();
+  renderAwardModalWinners();
   renderAwardsGrid();
-  _awardWinnerMsg('Team set!', false);
+  const count = data.awarded_players ? data.awarded_players.length : 0;
+  _awardWinnerMsg(`Team set! Auto-awarded ${count} eligible roster player${count === 1 ? '' : 's'}.`, false);
 }
 
 async function removeAwardTeam() {
@@ -2724,21 +3016,22 @@ function filterAwardPlayerSearch(query) {
   const q = query.trim().toLowerCase();
   if (!q) { listEl.style.display = 'none'; return; }
 
-  let pool = awardsTabData.allPlayers;
-  if (awardsTabData.calderEligible !== null) {
-    pool = awardsTabData.calderEligible;
-  }
-
+  const pool = awardsTabData.allPlayers || [];
   const matches = pool.filter(n => n.toLowerCase().includes(q)).slice(0, 15);
   if (matches.length === 0) { listEl.style.display = 'none'; return; }
 
-  listEl.innerHTML = matches.map(n => `
-    <div onclick="selectAwardPlayer('${escAttr(n)}')"
+  const isCalder = awardsTabData.currentAwardKey === 'calder';
+  const eligibleSet = new Set(awardsTabData.calderEligible || []);
+
+  listEl.innerHTML = matches.map(n => {
+    const isRookie = isCalder && eligibleSet.has(n);
+    const badge = isRookie ? ' <span style="color:#e3b341;font-size:0.75rem;font-weight:600;">(Rookie)</span>' : '';
+    return `<div onclick="selectAwardPlayer('${escAttr(n)}')"
       style="padding:0.35rem 0.75rem;cursor:pointer;font-size:0.88rem;color:#e6edf3;border-bottom:1px solid #30363d;"
       onmouseenter="this.style.background='#21262d'" onmouseleave="this.style.background=''">
-      ${escAttr(n)}
-    </div>
-  `).join('');
+      ${escAttr(n)}${badge}
+    </div>`;
+  }).join('');
   listEl.style.display = 'block';
 }
 
@@ -2755,14 +3048,6 @@ async function addAwardWinner() {
     || document.getElementById('award-player-search')?.value?.trim();
   if (!playerName) { _awardWinnerMsg('Enter a player name', true); return; }
   if (!awardsTabData.currentAwardKey || !awardsTabData.currentSeasonId) return;
-
-  // For Calder, verify eligibility
-  if (awardsTabData.currentAwardKey === 'calder' && awardsTabData.calderEligible !== null) {
-    if (!awardsTabData.calderEligible.includes(playerName)) {
-      _awardWinnerMsg(`${playerName} is not eligible for the Calder (too many prior games)`, true);
-      return;
-    }
-  }
 
   const res = await fetch(`${API}/admin/awards/season/${awardsTabData.currentSeasonId}`, {
     method: 'POST',

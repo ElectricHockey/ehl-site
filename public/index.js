@@ -104,8 +104,7 @@ async function loadMiniStandings(seasonId, rootId) {
           <td style="color:${stkColor};font-weight:600;">${t.streak || '—'}</td>
         </tr>`;
       }).join('')}</tbody>
-    </table></div>
-    <div style="margin-top:0.6rem;text-align:right;"><a href="standings.html" style="font-size:0.82rem;color:#58a6ff;">Full Standings →</a></div>`;
+    </table></div>`;
   } catch {
     root.innerHTML = '<p style="color:#8b949e;font-size:0.88rem;">Could not load standings.</p>';
   }
@@ -113,10 +112,11 @@ async function loadMiniStandings(seasonId, rootId) {
 
 // ── Stats Leaders ───────────────────────────────────────────────────────────
 
-function leaderRow(p, stat, fmtFn) {
+function leaderRow(p, stat, fmtFn, rank) {
   const logo = p.team_logo ? `<img src="${p.team_logo}" style="width:14px;height:14px;object-fit:contain;vertical-align:middle;margin-right:0.25rem;border-radius:2px;" />` : '';
   const val = fmtFn ? fmtFn(p[stat]) : (p[stat] ?? 0);
-  return `<div class="home-leader-row">
+  return `<div class="home-leader-row${rank === 1 ? ' first' : ''}">
+    <span class="home-leader-rank">${rank || ''}</span>
     <span class="home-leader-name"><a href="player.html?name=${encodeURIComponent(p.name)}" style="color:#e6edf3;text-decoration:none;">${p.name}</a></span>
     <span class="home-leader-team">${logo}</span>
     <span class="home-leader-val">${val}</span>
@@ -150,16 +150,15 @@ async function loadStatsLeaders(seasonId, rootId) {
       const assists = topBy(skaters, 'assists');
       sections.push(`<div class="home-leader-section">
         <div class="home-leader-title">🏒 Points Leaders</div>
-        ${pts.map(p => leaderRow(p, 'points')).join('')}
-        <div style="text-align:right;margin-top:0.4rem;"><a href="stats.html" style="font-size:0.78rem;color:#58a6ff;">All Stats →</a></div>
+        ${pts.map((p, i) => leaderRow(p, 'points', null, i + 1)).join('')}
       </div>`);
       sections.push(`<div class="home-leader-section">
         <div class="home-leader-title">Goals Leaders</div>
-        ${goals.map(p => leaderRow(p, 'goals')).join('')}
+        ${goals.map((p, i) => leaderRow(p, 'goals', null, i + 1)).join('')}
       </div>`);
       sections.push(`<div class="home-leader-section">
         <div class="home-leader-title">🎯 Assists Leaders</div>
-        ${assists.map(p => leaderRow(p, 'assists')).join('')}
+        ${assists.map((p, i) => leaderRow(p, 'assists', null, i + 1)).join('')}
       </div>`);
     }
 
@@ -171,13 +170,12 @@ async function loadStatsLeaders(seasonId, rootId) {
       if (svp.length) {
         sections.push(`<div class="home-leader-section">
           <div class="home-leader-title">🧤 Save % Leaders</div>
-          ${svp.map(p => leaderRow(p, 'save_pct', pct3)).join('')}
+          ${svp.map((p, i) => leaderRow(p, 'save_pct', pct3, i + 1)).join('')}
         </div>`);
       }
     }
 
-    root.innerHTML = `<div class="home-leaders-grid">${sections.join('')}</div>
-      <div style="margin-top:0.6rem;text-align:right;"><a href="stats.html" style="font-size:0.82rem;color:#58a6ff;">Full Stats →</a></div>`;
+    root.innerHTML = `<div class="home-leaders-grid">${sections.join('')}</div>`;
   } catch {
     root.innerHTML = '<p style="color:#8b949e;font-size:0.88rem;">Could not load stats.</p>';
   }

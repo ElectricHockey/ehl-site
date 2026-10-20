@@ -41,7 +41,7 @@ async function loadGame() {
 
   try {
     const [statsRes, adminFlag] = await Promise.all([
-      fetch(`${API}/games/${id}/stats`),
+      fetch(`${API}/games/${id}/stats?_t=${Date.now()}`, { cache: 'no-store' }),
       hasAdminSession(),
     ]);
     if (!statsRes.ok) {
@@ -58,7 +58,7 @@ async function loadGame() {
       : '';
     const homeWin = game.home_score > game.away_score;
     const awayWin = game.away_score > game.home_score;
-    const finalLabel = `<div style="text-align:center;font-size:0.78rem;font-weight:700;letter-spacing:0.1em;color:#8b949e;text-transform:uppercase;margin-top:0.3rem;">FINAL${game.is_overtime ? ' – OT' : ''}</div>`;
+    const finalLabel = `<div style="text-align:center;font-size:0.78rem;font-weight:700;letter-spacing:0.1em;color:#8b949e;text-transform:uppercase;margin-top:0.3rem;">${game.is_forfeit || game.status === 'forfeit' ? 'FORFEIT' : 'FINAL'}${game.is_overtime ? ' – OT' : ''}</div>`;
     const homeRgb = hexToRgbStr(game.home_team && game.home_team.color1) || '88,100,116';
     const awayRgb = hexToRgbStr(game.away_team && game.away_team.color1) || '88,100,116';
     const gameHeaderStyle = `background-image:linear-gradient(90deg, rgba(${homeRgb},0.30) 0%, rgba(${homeRgb},0.30) 42%, rgba(${homeRgb},0.24) 48%, rgba(${awayRgb},0.24) 52%, rgba(${awayRgb},0.30) 58%, rgba(${awayRgb},0.30) 100%);`;
