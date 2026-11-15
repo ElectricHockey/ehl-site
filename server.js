@@ -78,7 +78,7 @@ async function uploadToStorage(buffer, filename, contentType) {
   // Fallback: save to local public/uploads
   const uploadsDir = path.join(__dirname, 'public', 'uploads');
   if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
-  fs.writeFileSync(path.join(uploadsDir, filename), buffer);
+  fs.writeFileSync(path.join(uploadsDir, path.basename(filename)), buffer);
   return `/uploads/${filename}`;
 }
 
