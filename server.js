@@ -13,6 +13,11 @@ const compression = require('compression');
 const { promisify } = require('util');
 const db = require('./db');
 const EA_STATS_MAP = require('./ea-stats-map');
+const eaPenaltyShotStats = require('./public/ea-penalty-shot');
+const GameRating = require('./public/game-rating');
+const { swapSeasonTeam, TeamSwapError } = require('./season-team-swap');
+const { buildSeriesGameSlots, normalizeSlots } = require('./playoff-schedule');
+const { pairWinners } = require('./public/playoff-seeding');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -787,8 +792,8 @@ app.get('/api/seasons', async (req, res) => {
   }
   const disabledFilter = isAdmin ? '' : 'AND (s.is_disabled IS NULL OR s.is_disabled = 0)';
   const seasons = type
-    ? await db.prepare(`SELECT s.*, p.season_id AS parent_season_id FROM seasons s LEFT JOIN playoffs p ON s.id = p.playoff_season_id WHERE s.league_type = ? ${disabledFilter} ORDER BY s.sort_order ASC, s.id ASC`).all(type)
-    : await db.prepare(`SELECT s.*, p.season_id AS parent_season_id FROM seasons s LEFT JOIN playoffs p ON s.id = p.playoff_season_id WHERE 1=1 ${disabledFilter} ORDER BY s.sort_order ASC, s.id ASC`).all();
+    ? await db.prepare(`SELECT s.*, COALESCE(s.parent_season_id, p.season_id) AS parent_season_id FROM seasons s LEFT JOIN playoffs p ON s.id = p.playoff_season_id WHERE s.league_type = ? ${disabledFilter} ORDER BY s.sort_order ASC, s.id ASC`).all(type)
+    : await db.prepare(`SELECT s.*, COALESCE(s.parent_season_id, p.season_id) AS parent_season_id FROM seasons s LEFT JOIN playoffs p ON s.id = p.playoff_season_id WHERE 1=1 ${disabledFilter} ORDER BY s.sort_order ASC, s.id ASC`).all();
   res.json(seasons);
 });
 
@@ -915,50 +920,63 @@ app.delete('/api/seasons/:id', requireOwner, async (req, res) => {
   res.json({ deleted: true });
 });
 
-// POST /api/seasons/:id/reorder – move season up or down in the list
+// POST /api/seasons/:id/reorder – move a regular season within the displayed league
 app.post('/api/seasons/:id/reorder', requireOwner, async (req, res) => {
-  const { direction } = req.body;
-  if (direction !== 'up' && direction !== 'down') {
-    return res.status(400).json({ error: 'direction must be "up" or "down"' });
+  const { direction, target_id, placement, league_type } = req.body;
+  const id = Number(req.params.id);
+  const targetId = Number(target_id);
+  const byDirection = direction === 'up' || direction === 'down';
+  const byTarget = Number.isSafeInteger(targetId) && targetId > 0 && (placement === 'before' || placement === 'after');
+  if (!Number.isSafeInteger(id) || id <= 0 || byDirection === byTarget ||
+      (league_type !== undefined && !['threes', 'sixes'].includes(league_type))) {
+    return res.status(400).json({ error: 'Invalid season reorder request' });
   }
-  const season = await db.prepare('SELECT * FROM seasons WHERE id = ?').get(req.params.id);
-  if (!season) return res.status(404).json({ error: 'Season not found' });
-
-  // Playoff seasons are display-only children of their parent regular season;
-  // they always appear directly above their parent in the list and cannot be
-  // reordered independently (doing so corrupts the regular-season sort_order).
-  if (season.is_playoff) {
-    return res.status(400).json({ error: 'Playoff seasons cannot be reordered directly. Move the parent regular season instead.' });
+  try {
+    let error = null;
+    await db.transaction(async tx => {
+      const all = await tx.prepare('SELECT id, sort_order, league_type, is_playoff FROM seasons ORDER BY sort_order ASC, id ASC FOR UPDATE').all();
+      const season = all.find(s => s.id === id);
+      if (!season) { error = { status: 404, message: 'Season not found' }; return; }
+      if (season.is_playoff) { error = { status: 400, message: 'Move the parent regular season instead of its playoffs.' }; return; }
+      const league = league_type || season.league_type || '';
+      const visible = all.filter(s => !s.is_playoff && (!league || !s.league_type || s.league_type === league));
+      const index = visible.findIndex(s => s.id === id);
+      if (index < 0) { error = { status: 400, message: 'Season is not in the selected league' }; return; }
+      let destination;
+      if (byDirection) {
+        destination = index + (direction === 'up' ? -1 : 1);
+        if (destination < 0 || destination >= visible.length) return;
+      } else {
+        const targetIndex = visible.findIndex(s => s.id === targetId);
+        if (targetIndex < 0) { error = { status: 400, message: 'Target season is not in the selected league' }; return; }
+        if (id === targetId) return;
+        destination = targetIndex + (placement === 'after' ? 1 : 0);
+        if (index < destination) destination--;
+      }
+      if (destination === index) return;
+      const reordered = visible.slice();
+      reordered.splice(destination, 0, reordered.splice(index, 1)[0]);
+      const orders = visible.map(s => s.sort_order);
+      const needsNormalization = orders.some(v => v == null) || new Set(orders).size !== orders.length;
+      if (needsNormalization) {
+        // Preserve the full existing order while assigning unique slots to legacy ties.
+        for (let i = 0; i < all.length; i++) {
+          await tx.prepare('UPDATE seasons SET sort_order = ? WHERE id = ?').run(i + 1, all[i].id);
+        }
+        for (let i = 0; i < visible.length; i++) orders[i] = all.indexOf(visible[i]) + 1;
+      }
+      for (let i = 0; i < reordered.length; i++) {
+        if (needsNormalization || reordered[i].sort_order !== orders[i]) {
+          await tx.prepare('UPDATE seasons SET sort_order = ? WHERE id = ?').run(orders[i], reordered[i].id);
+        }
+      }
+    });
+    if (error) return res.status(error.status).json({ error: error.message });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[season reorder]', err);
+    res.status(500).json({ error: 'Could not reorder seasons' });
   }
-
-  // Get only seasons of the same league_type so arrows move within the filtered view
-  const lt = season.league_type || '';
-  const all = lt
-    ? await db.prepare('SELECT id, sort_order FROM seasons WHERE league_type = ? ORDER BY sort_order ASC, id ASC').all(lt)
-    : await db.prepare('SELECT id, sort_order FROM seasons ORDER BY sort_order ASC, id ASC').all();
-  const idx = all.findIndex(s => s.id === Number(req.params.id));
-  if (idx < 0) return res.status(404).json({ error: 'Season not found in list' });
-
-  const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
-  if (swapIdx < 0 || swapIdx >= all.length) return res.json({ ok: true }); // already at boundary
-
-  // Swap sort_order values between the two seasons.
-  // If legacy data has identical sort_order values, assign distinct values so the swap
-  // produces a visible change: the moved season gets the neighbor's position,
-  // and the neighbor shifts to make room.
-  const myOrder = all[idx].sort_order;
-  const theirOrder = all[swapIdx].sort_order;
-  if (myOrder !== theirOrder) {
-    // Normal case: just swap the two sort_order values
-    await db.prepare('UPDATE seasons SET sort_order = ? WHERE id = ?').run(theirOrder, all[idx].id);
-    await db.prepare('UPDATE seasons SET sort_order = ? WHERE id = ?').run(myOrder, all[swapIdx].id);
-  } else {
-    // Legacy data: both have the same sort_order, so assign idx-based values
-    // Moving "up" means this item gets a lower sort_order
-    const baseOrder = myOrder;
-    await db.prepare('UPDATE seasons SET sort_order = ? WHERE id = ?').run(direction === 'up' ? baseOrder - 1 : baseOrder + 1, all[idx].id);
-  }
-  res.json({ ok: true });
 });
 
 // ── Site Logo ──────────────────────────────────────────────────────────────
@@ -1155,7 +1173,8 @@ app.get('/api/admin/player-names', requireAdmin, async (_req, res) => {
   const fromPlayers = (await db.prepare('SELECT DISTINCT name FROM players ORDER BY name').all()).map(r => r.name);
   const fromStats   = (await db.prepare('SELECT DISTINCT player_name AS name FROM game_player_stats ORDER BY player_name').all()).map(r => r.name);
   const fromHist    = (await db.prepare('SELECT DISTINCT player_name AS name FROM season_player_stats ORDER BY player_name').all()).map(r => r.name);
-  const all = [...new Set([...fromPlayers, ...fromStats, ...fromHist])].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  const all = [...new Set([...fromPlayers, ...fromStats, ...fromHist].filter(name => typeof name === 'string' && name.trim()))]
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
   res.json(all);
 });
 
@@ -1394,6 +1413,7 @@ function eaField(p, ehlCol) {
 }
 
 function mapEAPlayer(p) {
+  const penaltyShots = eaPenaltyShotStats(p);
   const nameRaw   = eaField(p, 'playerName');
   const goals     = Number(eaField(p, 'goals'))        || 0;
   const assists   = Number(eaField(p, 'assists'))       || 0;
@@ -1452,8 +1472,8 @@ function mapEAPlayer(p) {
     savesPct:            eaField(p, 'savesPct') != null ? parseFloat(eaField(p, 'savesPct')) : null,
     goalsAgainst:        Number(eaField(p, 'goalsAgainst'))        || 0,
     shotsAgainst:        Number(eaField(p, 'shotsAgainst'))        || 0,
-    penaltyShotAttempts: Number(eaField(p, 'penaltyShotAttempts')) || 0,
-    penaltyShotGa:       Number(eaField(p, 'penaltyShotGa'))       || 0,
+    penaltyShotAttempts: penaltyShots.attempts,
+    penaltyShotGa:       penaltyShots.goalsAgainst,
     breakawayShots:      Number(eaField(p, 'breakawayShots'))      || 0,
     breakawaySaves:      Number(eaField(p, 'breakawaySaves'))      || 0,
     desperationSaves:    Number(eaField(p, 'desperationSaves'))    || 0,
@@ -1463,35 +1483,16 @@ function mapEAPlayer(p) {
 
 // ── Shared stat SQL fragments ──────────────────────────────────────────────
 
+const ratingAggregate = isGoalie => {
+  const rating = GameRating.sqlExpression('gps', isGoalie);
+  return `ROUND(AVG(${rating}), 0) AS overall_rating, SUM(${rating}) AS overall_rating_sum, COUNT(${rating}) AS overall_rating_count`;
+};
+
 const SKATER_SELECT = `
   MAX(gps.player_name) AS name, MAX(gps.team_id) AS team_id, MAX(t.name) AS team_name, MAX(t.logo_url) AS team_logo,
   MAX(t.color1) AS team_color1, MAX(t.color2) AS team_color2, MAX(gps.position) AS position,
   COUNT(DISTINCT gps.game_id) AS gp,
-  ROUND(AVG(CASE WHEN gps.overall_rating > 0 THEN CAST(gps.overall_rating AS NUMERIC)
-               WHEN GREATEST(gps.offensive_rating, gps.defensive_rating, gps.team_play_rating) > 0
-                 THEN GREATEST(0.0, LEAST(99.0,
-                   CASE WHEN gps.position ILIKE '%defense%'
-                     THEN (CAST(gps.offensive_rating AS NUMERIC)
-                           + CAST(gps.defensive_rating AS NUMERIC) * 2.0
-                           + CAST(gps.team_play_rating AS NUMERIC) * 1.5) / 4.5
-                     ELSE (CAST(gps.offensive_rating AS NUMERIC) * 2.0
-                           + CAST(gps.defensive_rating AS NUMERIC)
-                           + CAST(gps.team_play_rating AS NUMERIC) * 1.5) / 4.5
-                   END
-                 ))
-               ELSE GREATEST(0.0, LEAST(99.0,
-                 60.0
-                 + LEAST(CAST(gps.goals AS NUMERIC) * 7.0, 21.0)
-                 + LEAST(CAST(gps.assists AS NUMERIC) * 4.0, 14.0)
-                 + GREATEST(LEAST(CAST(gps.plus_minus AS NUMERIC) * 3.0, 12.0), -12.0)
-                 + LEAST(CAST(gps.shots AS NUMERIC) * 0.5, 5.0)
-                 + LEAST(CAST(gps.hits AS NUMERIC) * 0.5, 5.0)
-                 + LEAST(CAST(gps.blocked_shots AS NUMERIC) * 1.5, 6.0)
-                 + LEAST(CAST(gps.takeaways AS NUMERIC) * 1.5, 6.0)
-                 - LEAST(CAST(gps.giveaways AS NUMERIC) * 2.0, 8.0)
-                 - LEAST(CAST(gps.pim AS NUMERIC) * 0.5, 5.0)
-               ))
-          END), 0) AS overall_rating,
+  ${ratingAggregate(false)},
   ROUND(AVG(NULLIF(gps.offensive_rating,0)),0)  AS offensive_rating,
   ROUND(AVG(NULLIF(gps.defensive_rating,0)),0)  AS defensive_rating,
   ROUND(AVG(NULLIF(gps.team_play_rating,0)),0)  AS team_play_rating,
@@ -1527,13 +1528,10 @@ const SKATER_SELECT = `
   SUM(gps.hat_tricks) AS hat_tricks,
   SUM(gps.saucer_passes) AS saucer_passes,
   SUM(gps.pk_clears) AS pk_clears,
-  SUM(CASE WHEN (gps.team_id = g.home_team_id AND g.home_score > g.away_score)
-             OR (gps.team_id = g.away_team_id AND g.away_score > g.home_score) THEN 1 ELSE 0 END) AS player_wins,
-  SUM(CASE WHEN ((gps.team_id = g.home_team_id AND g.home_score < g.away_score)
-              OR (gps.team_id = g.away_team_id AND g.away_score < g.home_score))
+  SUM(CASE WHEN gps.team_id = ${gameWinnerSql('g')} THEN 1 ELSE 0 END) AS player_wins,
+  SUM(CASE WHEN gps.team_id IN (g.home_team_id, g.away_team_id) AND gps.team_id <> ${gameWinnerSql('g')}
            AND (g.is_overtime IS NULL OR g.is_overtime = 0) THEN 1 ELSE 0 END) AS player_losses,
-  SUM(CASE WHEN ((gps.team_id = g.home_team_id AND g.home_score < g.away_score)
-              OR (gps.team_id = g.away_team_id AND g.away_score < g.home_score))
+  SUM(CASE WHEN gps.team_id IN (g.home_team_id, g.away_team_id) AND gps.team_id <> ${gameWinnerSql('g')}
            AND g.is_overtime = 1 THEN 1 ELSE 0 END) AS player_otl,
   ROUND(CAST(SUM(CASE WHEN gps.team_id = g.home_team_id THEN g.home_score ELSE g.away_score END) AS NUMERIC) / NULLIF(COUNT(DISTINCT gps.game_id), 0), 2) AS goal_support`;
 
@@ -1559,34 +1557,16 @@ const GOALIE_SELECT = `
   SUM(gps.breakaway_saves) AS breakaway_saves,
   SUM(gps.desperation_saves) AS desperation_saves,
   SUM(gps.poke_check_saves) AS poke_check_saves,
-  SUM(CASE WHEN (gps.team_id = g.home_team_id AND g.home_score > g.away_score)
-               OR (gps.team_id = g.away_team_id AND g.away_score > g.home_score) THEN 1 ELSE 0 END) AS goalie_wins,
-  SUM(CASE WHEN ((gps.team_id = g.home_team_id AND g.home_score < g.away_score)
-                OR (gps.team_id = g.away_team_id AND g.away_score < g.home_score))
+  SUM(CASE WHEN gps.team_id = ${gameWinnerSql('g')} THEN 1 ELSE 0 END) AS goalie_wins,
+  SUM(CASE WHEN gps.team_id IN (g.home_team_id, g.away_team_id) AND gps.team_id <> ${gameWinnerSql('g')}
                AND (g.is_overtime IS NULL OR g.is_overtime = 0) THEN 1 ELSE 0 END) AS goalie_losses,
   0 AS goalie_otw,
-  SUM(CASE WHEN ((gps.team_id = g.home_team_id AND g.home_score < g.away_score)
-                OR (gps.team_id = g.away_team_id AND g.away_score < g.home_score))
+  SUM(CASE WHEN gps.team_id IN (g.home_team_id, g.away_team_id) AND gps.team_id <> ${gameWinnerSql('g')}
                AND g.is_overtime = 1 THEN 1 ELSE 0 END) AS goalie_otl,
   CASE WHEN COUNT(DISTINCT gps.game_id) > 0
     THEN ROUND(CAST(SUM(gps.shots_against) AS NUMERIC)/COUNT(DISTINCT gps.game_id),1)
     ELSE NULL END AS shots_per_game,
-  ROUND(AVG(CASE WHEN gps.overall_rating > 0 THEN CAST(gps.overall_rating AS NUMERIC)
-               WHEN GREATEST(gps.defensive_rating, gps.offensive_rating, gps.team_play_rating) > 0
-                 THEN GREATEST(0.0, LEAST(99.0,
-                   (CAST(gps.defensive_rating AS NUMERIC) * 2.0
-                    + CAST(gps.offensive_rating AS NUMERIC)
-                    + CAST(gps.team_play_rating AS NUMERIC) * 1.5) / 4.5
-                 ))
-               WHEN gps.shots_against > 0 THEN GREATEST(50.0, LEAST(99.0,
-                 50.0
-                 + (CAST(gps.shots_against - gps.goals_against AS NUMERIC) / CAST(gps.shots_against AS NUMERIC) * 40.0)
-                 - LEAST(CAST(gps.goals_against AS NUMERIC) * 1.0, 10.0)
-                 + CASE WHEN gps.goals_against = 0 AND gps.shots_against > 0 THEN 5.0 ELSE 0.0 END
-                 + CASE WHEN gps.goalie_wins = 1 OR gps.goalie_otw = 1 THEN 3.0 ELSE 0.0 END
-               ))
-               ELSE 75.0
-          END), 0) AS overall_rating,
+  ${ratingAggregate(true)},
   ROUND(AVG(NULLIF(gps.offensive_rating,0)),0)  AS offensive_rating,
   ROUND(AVG(NULLIF(gps.defensive_rating,0)),0)  AS defensive_rating,
   ROUND(AVG(NULLIF(gps.team_play_rating,0)),0)  AS team_play_rating,
@@ -1598,6 +1578,7 @@ app.get('/api/teams/:id/stats', async (req, res) => {
 
   const seasonId = req.query.season_id ? Number(req.query.season_id) : null;
   const filterType = !seasonId && req.query.filter_type ? req.query.filter_type : null; // 'regular' | 'playoff'
+  const leagueType = ['threes', 'sixes'].includes(req.query.league_type) ? req.query.league_type : null;
 
   let sf, params, rp;
   if (seasonId) {
@@ -1617,6 +1598,11 @@ app.get('/api/teams/:id/stats', async (req, res) => {
     params = [req.params.id];
     rp = [req.params.id, req.params.id];
   }
+  if (leagueType && !seasonId) {
+    sf += ' AND g.season_id IN (SELECT id FROM seasons WHERE league_type = ?)';
+    params.push(leagueType);
+    rp.push(leagueType);
+  }
 
   // Fetch rostered players – only players officially assigned to the team's roster
   let rosterPromise;
@@ -1632,7 +1618,9 @@ app.get('/api/teams/:id/stats', async (req, res) => {
   } else {
     // If no season specified, try team's active season first, or fallback to current team_id on players
     rosterPromise = (async () => {
-      const activeSeason = await db.prepare('SELECT id FROM seasons WHERE is_active = 1 AND is_playoff = 0 LIMIT 1').get();
+      const activeSeason = leagueType
+        ? await db.prepare('SELECT id FROM seasons WHERE is_active = 1 AND is_playoff = 0 AND league_type = ? LIMIT 1').get(leagueType)
+        : await db.prepare('SELECT id FROM seasons WHERE is_active = 1 AND is_playoff = 0 LIMIT 1').get();
       if (activeSeason) {
         const activeRoster = await db.prepare(`
           SELECT p.id, p.name, p.position, p.number, p.user_id, sr.role, u.platform
@@ -1644,6 +1632,7 @@ app.get('/api/teams/:id/stats', async (req, res) => {
         `).all(req.params.id, activeSeason.id);
         if (activeRoster.length > 0) return activeRoster;
       }
+      if (leagueType && team.league_type && team.league_type !== leagueType) return [];
       return db.prepare(`
         SELECT p.id, p.name, p.position, p.number, p.user_id, u.platform
         FROM players p
@@ -1672,6 +1661,7 @@ app.get('/api/teams/:id/stats', async (req, res) => {
           p.name
       `).all(req.params.id, seasonId);
       if (seasonStaff.length > 0) return seasonStaff;
+      if (leagueType && team.league_type && team.league_type !== leagueType) return [];
       return db.prepare(`
         SELECT
           ts.role,
@@ -1689,7 +1679,9 @@ app.get('/api/teams/:id/stats', async (req, res) => {
     })();
   } else {
     staffPromise = (async () => {
-      const activeSeason = await db.prepare('SELECT id FROM seasons WHERE is_active = 1 AND is_playoff = 0 LIMIT 1').get();
+      const activeSeason = leagueType
+        ? await db.prepare('SELECT id FROM seasons WHERE is_active = 1 AND is_playoff = 0 AND league_type = ? LIMIT 1').get(leagueType)
+        : await db.prepare('SELECT id FROM seasons WHERE is_active = 1 AND is_playoff = 0 LIMIT 1').get();
       if (activeSeason) {
         const activeStaff = await db.prepare(`
           SELECT
@@ -1717,12 +1709,14 @@ app.get('/api/teams/:id/stats', async (req, res) => {
         JOIN players p ON p.id = sr.player_id
         LEFT JOIN users u ON p.user_id = u.id
         WHERE sr.team_id = ? AND sr.role IN ('owner', 'gm', 'captain')
+          ${leagueType ? 'AND sr.season_id IN (SELECT id FROM seasons WHERE league_type = ?)' : ''}
         ORDER BY sr.season_id DESC,
           CASE sr.role WHEN 'owner' THEN 0 WHEN 'gm' THEN 1 ELSE 2 END,
           p.name
-      `).all(req.params.id);
+      `).all(...(leagueType ? [req.params.id, leagueType] : [req.params.id]));
       if (latestStaff.length > 0) return latestStaff;
 
+      if (leagueType && team.league_type && team.league_type !== leagueType) return [];
       return db.prepare(`
         SELECT
           ts.role,
@@ -1755,7 +1749,7 @@ app.get('/api/teams/:id/stats', async (req, res) => {
       GROUP BY gps.player_name ORDER BY save_pct DESC
     `).all(...params),
     db.prepare(`
-      SELECT g.id, g.date, g.home_score, g.away_score, g.status, g.is_overtime, g.season_id,
+      SELECT g.id, g.date, g.home_score, g.away_score, g.status, g.is_overtime, g.is_forfeit, g.forfeit_winner, g.season_id,
         ht.id AS home_team_id, ht.name AS home_team_name, ht.logo_url AS home_logo,
         at.id AS away_team_id, at.name AS away_team_name, at.logo_url AS away_logo
       FROM games g JOIN teams ht ON g.home_team_id = ht.id JOIN teams at ON g.away_team_id = at.id
@@ -1765,13 +1759,14 @@ app.get('/api/teams/:id/stats', async (req, res) => {
     staffPromise,
     db.prepare(`
       SELECT
-        SUM(CASE WHEN (home_team_id=@id AND home_score>away_score) OR (away_team_id=@id AND away_score>home_score) THEN 1 ELSE 0 END) AS wins,
-        SUM(CASE WHEN (home_team_id=@id AND home_score<away_score AND is_overtime=0) OR (away_team_id=@id AND away_score<home_score AND is_overtime=0) THEN 1 ELSE 0 END) AS losses,
-        SUM(CASE WHEN (home_team_id=@id AND home_score<away_score AND is_overtime=1) OR (away_team_id=@id AND away_score<home_score AND is_overtime=1) THEN 1 ELSE 0 END) AS otl
+        SUM(CASE WHEN ${gameWinnerSql()} = @id THEN 1 ELSE 0 END) AS wins,
+        SUM(CASE WHEN ${gameWinnerSql()} <> @id AND is_overtime=0 THEN 1 ELSE 0 END) AS losses,
+        SUM(CASE WHEN ${gameWinnerSql()} <> @id AND is_overtime=1 THEN 1 ELSE 0 END) AS otl
       FROM games
       WHERE (home_team_id=@id OR away_team_id=@id) AND status IN ('complete','forfeit')
       ${seasonId ? 'AND season_id=@sid' : filterType === 'regular' ? "AND season_id IN (SELECT id FROM seasons WHERE is_playoff = 0)" : filterType === 'playoff' ? "AND season_id IN (SELECT id FROM seasons WHERE is_playoff = 1)" : ''}
-    `).get(seasonId ? { id: req.params.id, sid: seasonId } : { id: req.params.id }),
+      ${leagueType && !seasonId ? 'AND season_id IN (SELECT id FROM seasons WHERE league_type = @lt)' : ''}
+    `).get({ id: req.params.id, ...(seasonId ? { sid: seasonId } : {}), ...(leagueType && !seasonId ? { lt: leagueType } : {}) }),
     db.prepare(`
       SELECT so.id, so.created_at, u.username AS player_name,
         ft.id AS from_team_id, ft.name AS from_team_name, ft.logo_url AS from_team_logo,
@@ -1792,8 +1787,9 @@ app.get('/api/teams/:id/stats', async (req, res) => {
       JOIN teams ht ON g.home_team_id = ht.id
       JOIN teams at ON g.away_team_id = at.id
       WHERE (g.home_team_id = ? OR g.away_team_id = ?) AND g.status = 'scheduled'
+      ${seasonId ? 'AND g.season_id = ?' : leagueType ? 'AND g.season_id IN (SELECT id FROM seasons WHERE league_type = ?)' : ''}
       ORDER BY g.date ASC LIMIT 5
-    `).all(req.params.id, req.params.id),
+    `).all(...[req.params.id, req.params.id, ...(seasonId ? [seasonId] : leagueType ? [leagueType] : [])]),
   ]);
 
   res.json({ team, roster, skaterStats, goalieStats, recentGames, staff, record, transactions, upcoming });
@@ -1804,12 +1800,17 @@ app.get('/api/teams/:id/seasons', async (req, res) => {
   const team = await db.prepare('SELECT id FROM teams WHERE id = ?').get(req.params.id);
   if (!team) return res.status(404).json({ error: 'Team not found' });
   const seasons = await db.prepare(`
-    SELECT DISTINCT s.id, s.name, s.is_active, s.is_playoff, s.sort_order
-    FROM games g
-    JOIN seasons s ON g.season_id = s.id
-    WHERE g.home_team_id = ? OR g.away_team_id = ?
+    SELECT DISTINCT s.id, s.name, s.is_active, s.is_playoff, s.sort_order, s.league_type
+    FROM seasons s
+    WHERE s.id IN (
+      SELECT season_id FROM games WHERE home_team_id = ? OR away_team_id = ?
+      UNION SELECT season_id FROM season_team_conf WHERE team_id = ?
+      UNION SELECT season_id FROM season_rosters WHERE team_id = ?
+      UNION SELECT season_id FROM season_player_stats WHERE team_id = ?
+      UNION SELECT season_id FROM season_award_teams WHERE team_id = ?
+    )
     ORDER BY s.sort_order ASC, s.id ASC
-  `).all(req.params.id, req.params.id);
+  `).all(req.params.id, req.params.id, req.params.id, req.params.id, req.params.id, req.params.id);
   res.json(seasons);
 });
 
@@ -1817,6 +1818,7 @@ app.get('/api/teams/:id/seasons', async (req, res) => {
 
 app.get('/api/teams/:id/records', async (req, res) => {
   const id = req.params.id;
+  const leagueType = ['threes', 'sixes'].includes(req.query.league_type) ? req.query.league_type : null;
   const team = await db.prepare('SELECT id FROM teams WHERE id = ?').get(id);
   if (!team) return res.status(404).json({ error: 'Team not found' });
 
@@ -1832,15 +1834,16 @@ app.get('/api/teams/:id/records', async (req, res) => {
       FROM game_player_stats gps
       JOIN games g ON gps.game_id = g.id
       WHERE gps.team_id = ? AND ${where} AND g.status IN ('complete','forfeit')
+        ${leagueType ? 'AND g.season_id IN (SELECT id FROM seasons WHERE league_type = ?)' : ''}
       GROUP BY gps.player_name
       ORDER BY value ${orderDir}, gp DESC LIMIT 1
-    `).get(id);
+    `).get(...(leagueType ? [id, leagueType] : [id]));
   }
 
   async function singleSeasonRecord(col, agg, pos, orderDir, minGP) {
     const where = pos === 'G' ? "gps.position = 'G'" : "gps.position != 'G'";
     const having = minGP ? 'HAVING COUNT(DISTINCT gps.game_id) >= ?' : '';
-    const params = minGP ? [id, parseInt(minGP, 10)] : [id];
+    const params = [id, ...(leagueType ? [leagueType] : []), ...(minGP ? [parseInt(minGP, 10)] : [])];
     return await db.prepare(`
       SELECT gps.player_name AS name,
         g.season_id, MAX(COALESCE(s.name, 'No Season')) AS season_name,
@@ -1850,6 +1853,7 @@ app.get('/api/teams/:id/records', async (req, res) => {
       JOIN games g ON gps.game_id = g.id
       LEFT JOIN seasons s ON g.season_id = s.id
       WHERE gps.team_id = ? AND ${where} AND g.status IN ('complete','forfeit')
+        ${leagueType ? 'AND s.league_type = ?' : ''}
       GROUP BY gps.player_name, g.season_id ${having}
       ORDER BY value ${orderDir}, gp DESC LIMIT 1
     `).get(...params);
@@ -2447,18 +2451,18 @@ app.get('/api/players/profile/:name', async (req, res) => {
   // Current roster info + user account if linked
   const playerPromise = db.prepare(`
     SELECT p.id, p.name, p.position AS player_position, p.is_rostered, p.number,
-      t.id AS team_id, t.name AS team_name, t.logo_url AS team_logo, t.color1, t.color2,
+      t.id AS team_id, t.name AS team_name, t.logo_url AS team_logo, t.color1, t.color2, t.league_type AS team_league_type,
       u.platform, u.position AS user_position, u.discord
     FROM players p
     LEFT JOIN teams t ON p.team_id = t.id
     LEFT JOIN users u ON p.user_id = u.id
-    WHERE p.name = ? ORDER BY p.is_rostered DESC LIMIT 1
+    WHERE LOWER(BTRIM(p.name)) = LOWER(BTRIM(?)) ORDER BY p.is_rostered DESC LIMIT 1
   `).get(name);
 
   // Detect position from stats (majority position recorded in game logs)
   const positionPromise = db.prepare(`
     SELECT position, COUNT(*) AS cnt
-    FROM game_player_stats WHERE player_name = ?
+    FROM game_player_stats WHERE LOWER(BTRIM(player_name)) = LOWER(BTRIM(?))
     GROUP BY position ORDER BY cnt DESC LIMIT 1
   `).get(name);
 
@@ -2476,7 +2480,7 @@ app.get('/api/players/profile/:name', async (req, res) => {
       JOIN games g ON gps.game_id = g.id
       LEFT JOIN seasons s ON g.season_id = s.id
       LEFT JOIN seasons ps ON s.parent_season_id = ps.id
-      WHERE gps.player_name = ? AND gps.position = 'G' AND g.status IN ('complete','forfeit')
+      WHERE LOWER(BTRIM(gps.player_name)) = LOWER(BTRIM(?)) AND gps.position = 'G' AND g.status IN ('complete','forfeit')
       GROUP BY COALESCE(s.parent_season_id, g.season_id), gps.team_id, CASE WHEN g.playoff_series_id IS NOT NULL OR s.is_playoff = 1 OR s.parent_season_id IS NOT NULL THEN 1 ELSE 0 END
       ORDER BY MAX(COALESCE(ps.sort_order, s.sort_order, g.season_id)) DESC, CASE WHEN g.playoff_series_id IS NOT NULL OR s.is_playoff = 1 OR s.parent_season_id IS NOT NULL THEN 1 ELSE 0 END
     `).all(name);
@@ -2494,13 +2498,13 @@ app.get('/api/players/profile/:name', async (req, res) => {
       JOIN games g ON gps.game_id = g.id
       LEFT JOIN seasons s ON g.season_id = s.id
       LEFT JOIN seasons ps ON s.parent_season_id = ps.id
-      WHERE gps.player_name = ? AND gps.position != 'G' AND g.status IN ('complete','forfeit')
+      WHERE LOWER(BTRIM(gps.player_name)) = LOWER(BTRIM(?)) AND gps.position != 'G' AND g.status IN ('complete','forfeit')
       GROUP BY COALESCE(s.parent_season_id, g.season_id), gps.team_id, CASE WHEN g.playoff_series_id IS NOT NULL OR s.is_playoff = 1 OR s.parent_season_id IS NOT NULL THEN 1 ELSE 0 END
       ORDER BY MAX(COALESCE(ps.sort_order, s.sort_order, g.season_id)) DESC, CASE WHEN g.playoff_series_id IS NOT NULL OR s.is_playoff = 1 OR s.parent_season_id IS NOT NULL THEN 1 ELSE 0 END
     `).all(name);
 
-  // Last 5 games
-    const lastGamesPromise = db.prepare(`
+  // Game log
+  const lastGamesPromise = db.prepare(`
     SELECT g.id AS game_id, g.date, g.home_score, g.away_score, g.is_overtime,
       ht.id AS home_team_id, ht.name AS home_team_name, ht.logo_url AS home_logo,
       at.id AS away_team_id, at.name AS away_team_name, at.logo_url AS away_logo,
@@ -2521,15 +2525,19 @@ app.get('/api/players/profile/:name', async (req, res) => {
       gps.overall_rating,
       CASE WHEN gps.team_id = g.home_team_id THEN g.home_score ELSE g.away_score END AS goal_support,
       COALESCE(ps.league_type, s.league_type, '') AS league_type,
+      COALESCE(ps.id, g.season_id) AS season_id,
+      COALESCE(ps.name, s.name, 'No Season') AS season_name,
+      COALESCE(ps.is_active, s.is_active, 0) AS season_is_active,
       CASE WHEN g.playoff_series_id IS NOT NULL OR s.is_playoff = 1 OR s.parent_season_id IS NOT NULL THEN 1 ELSE 0 END AS is_playoff
     FROM game_player_stats gps
     JOIN games g ON gps.game_id = g.id
     JOIN teams ht ON g.home_team_id = ht.id
     JOIN teams at ON g.away_team_id = at.id
     LEFT JOIN seasons s ON g.season_id = s.id
-    LEFT JOIN seasons ps ON s.parent_season_id = ps.id
-    WHERE gps.player_name = ? AND g.status IN ('complete','forfeit')
-    ORDER BY g.date DESC, g.id DESC LIMIT 5
+    LEFT JOIN LATERAL (SELECT season_id FROM playoffs WHERE playoff_season_id = s.id ORDER BY id DESC LIMIT 1) linked_playoff ON TRUE
+    LEFT JOIN seasons ps ON ps.id = COALESCE(s.parent_season_id, linked_playoff.season_id)
+    WHERE LOWER(BTRIM(gps.player_name)) = LOWER(BTRIM(?)) AND g.status IN ('complete','forfeit')
+    ORDER BY g.date DESC, g.id DESC
   `).all(name);
 
   // Historical season stats (from season_player_stats, for imported seasons)
@@ -2552,7 +2560,7 @@ app.get('/api/players/profile/:name', async (req, res) => {
     LEFT JOIN seasons s ON s.id = sps.season_id
     LEFT JOIN seasons ps ON s.parent_season_id = ps.id
     LEFT JOIN teams t ON t.id = sps.team_id
-    WHERE sps.player_name = ?
+    WHERE LOWER(BTRIM(sps.player_name)) = LOWER(BTRIM(?))
     ORDER BY COALESCE(ps.sort_order, s.sort_order, sps.season_id) DESC
   `).all(name);
 
@@ -2586,7 +2594,7 @@ app.get('/api/players/profile/:name', async (req, res) => {
     return res.status(404).json({ error: 'Player not found' });
   }
 
-  const seasonWhere = ['p.name = ?', 'sr.team_id IS NOT NULL'];
+  const seasonWhere = ['LOWER(BTRIM(p.name)) = LOWER(BTRIM(?))', 'sr.team_id IS NOT NULL'];
   const seasonParams = [name];
   if (seasonId) {
     seasonWhere.push('sr.season_id = ?');
@@ -2597,7 +2605,7 @@ app.get('/api/players/profile/:name', async (req, res) => {
     seasonParams.push(leagueType);
   }
 
-  const seasonProfileTeam = await db.prepare(`
+  const seasonProfileTeamPromise = db.prepare(`
     SELECT
       sr.season_id,
       s.name AS season_name,
@@ -2619,7 +2627,20 @@ app.get('/api/players/profile/:name', async (req, res) => {
     LIMIT 1
   `).get(...seasonParams);
 
-  res.json({ player: player || null, seasonProfileTeam: seasonProfileTeam || null, isGoalie, skaterStats, goalieStats, seasonTeamStats, lastGames });
+  const activeProfileTeamPromise = leagueType ? db.prepare(`
+    SELECT sr.season_id, s.name AS season_name, t.id AS team_id, t.name AS team_name,
+      t.logo_url AS team_logo, t.color1, t.color2
+    FROM season_rosters sr
+    JOIN players p ON p.id = sr.player_id
+    JOIN seasons s ON s.id = sr.season_id
+    JOIN teams t ON t.id = sr.team_id
+    WHERE LOWER(BTRIM(p.name)) = LOWER(BTRIM(?))
+      AND s.league_type = ? AND s.is_active = 1 AND COALESCE(s.is_playoff, 0) = 0
+    ORDER BY p.id DESC
+    LIMIT 1
+  `).get(name, leagueType) : Promise.resolve(null);
+  const [seasonProfileTeam, activeProfileTeam] = await Promise.all([seasonProfileTeamPromise, activeProfileTeamPromise]);
+  res.json({ player: player || null, seasonProfileTeam: seasonProfileTeam || null, activeProfileTeam: activeProfileTeam || null, isGoalie, skaterStats, goalieStats, seasonTeamStats, lastGames });
 });
 
 // List all registered users (for admin to pick an owner / for GMs to sign players)
@@ -2705,7 +2726,7 @@ app.post('/api/players', requireOwner, async (req, res) => {
         number = COALESCE(?, number),
         discord = COALESCE(?, discord),
         discord_id = COALESCE(?, discord_id),
-        is_rostered = CASE WHEN ? IS NOT NULL THEN 1 ELSE is_rostered END
+        is_rostered = CASE WHEN CAST(? AS INTEGER) IS NOT NULL THEN 1 ELSE is_rostered END
       WHERE id = ?
     `).run(team_id || null, position || null, number || null, discord || null, discord_id || null, team_id || null, existing.id);
     return res.json({ id: existing.id, name: existing.name, team_id: team_id || existing.team_id, position: position || existing.position, number: number || existing.number, discord: discord || existing.discord, discord_id: discord_id || existing.discord_id, merged: true });
@@ -2801,6 +2822,19 @@ app.patch('/api/players/:id', requireOwner, async (req, res) => {
 
 // ── Games ──────────────────────────────────────────────────────────────────
 
+function gameWinnerSide(game) {
+  if ((game.status === 'forfeit' || game.is_forfeit) && ['home', 'away'].includes(game.forfeit_winner)) return game.forfeit_winner;
+  return game.home_score > game.away_score ? 'home' : game.away_score > game.home_score ? 'away' : null;
+}
+
+function gameWinnerSql(alias = '') {
+  const p = alias ? `${alias}.` : '';
+  return `(CASE WHEN (${p}status = 'forfeit' OR COALESCE(${p}is_forfeit, 0) = 1) AND ${p}forfeit_winner = 'home' THEN ${p}home_team_id
+    WHEN (${p}status = 'forfeit' OR COALESCE(${p}is_forfeit, 0) = 1) AND ${p}forfeit_winner = 'away' THEN ${p}away_team_id
+    WHEN ${p}home_score > ${p}away_score THEN ${p}home_team_id
+    WHEN ${p}away_score > ${p}home_score THEN ${p}away_team_id ELSE NULL END)`;
+}
+
 function capScoreDifferential(homeScore, awayScore, maxDiff = 7) {
   let h = parseInt(homeScore, 10);
   let a = parseInt(awayScore, 10);
@@ -2824,7 +2858,8 @@ app.get('/api/games', async (req, res) => {
   const conditions = [];
   const params = [];
   if (seasonId) { conditions.push('g.season_id = ?'); params.push(seasonId); }
-  if (status)   { conditions.push('g.status = ?');    params.push(status); }
+  if (status === 'final') { conditions.push("g.status IN ('complete','forfeit')"); }
+  else if (status) { conditions.push('g.status = ?'); params.push(status); }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
   const limitClause = limit ? `LIMIT ${limit}` : '';
   const games = await db.prepare(`
@@ -2840,7 +2875,7 @@ app.get('/api/games', async (req, res) => {
     ${where} ORDER BY g.date ${order}, g.id ${order} ${limitClause}
   `).all(...params);
   for (const g of games) {
-    if (g.home_score != null && g.away_score != null && (g.status === 'complete' || g.status === 'forfeit')) {
+    if (g.home_score != null && g.away_score != null && g.status === 'complete' && !g.is_forfeit) {
       const capped = capScoreDifferential(g.home_score, g.away_score);
       g.home_score = capped.home_score;
       g.away_score = capped.away_score;
@@ -2850,24 +2885,56 @@ app.get('/api/games', async (req, res) => {
 });
 
 app.post('/api/games', requireAdmin, async (req, res) => {
-  const { home_team_id, away_team_id, home_score, away_score, date, season_id, status, is_overtime, is_forfeit, playoff_series_id, game_time } = req.body;
+  const { home_team_id, away_team_id, home_score, away_score, date, season_id, status, is_overtime, is_forfeit, playoff_series_id, game_time, forfeit_winner } = req.body;
   if (!home_team_id || !away_team_id || !date) return res.status(400).json({ error: 'home_team_id, away_team_id, and date are required' });
   const gameStatus = (status === 'complete' || status === 'forfeit') ? status : 'scheduled';
   const ot = is_overtime ? 1 : 0;
   const forfeit = is_forfeit !== undefined ? (is_forfeit ? 1 : 0) : (gameStatus === 'forfeit' ? 1 : 0);
-  const psi = playoff_series_id ? Number(playoff_series_id) : null;
+  if (forfeit_winner != null && (!['home', 'away'].includes(forfeit_winner) || !(gameStatus === 'forfeit' || forfeit))) {
+    return res.status(400).json({ error: 'forfeit_winner must be home or away for a forfeit game' });
+  }
+  let psi = playoff_series_id ? Number(playoff_series_id) : null;
   const gt = parseGameTime(game_time);
   let hScore = parseInt(home_score, 10) || 0;
   let aScore = parseInt(away_score, 10) || 0;
-  if (gameStatus === 'complete' || gameStatus === 'forfeit') {
+  if (gameStatus === 'complete' && !forfeit) {
     const capped = capScoreDifferential(hScore, aScore);
     hScore = capped.home_score;
     aScore = capped.away_score;
   }
+
+  // Playoff season: attach to the open series between these two teams
+  if (!psi && season_id) {
+    const seasonRow = await db.prepare('SELECT is_playoff FROM seasons WHERE id = ?').get(season_id);
+    if (seasonRow && seasonRow.is_playoff) {
+      const ser = await db.prepare(`
+        SELECT ps.id FROM playoff_series ps JOIN playoffs pl ON ps.playoff_id = pl.id
+        WHERE pl.playoff_season_id = ? AND ps.winner_id IS NULL
+          AND ((ps.high_seed_id = ? AND ps.low_seed_id = ?) OR (ps.high_seed_id = ? AND ps.low_seed_id = ?))
+        ORDER BY ps.round_number DESC LIMIT 1
+      `).get(season_id, home_team_id, away_team_id, away_team_id, home_team_id);
+      if (ser) psi = ser.id;
+    }
+  }
+
+  // A result for a series fills the next unplayed slot so games stay in the order entered
+  if (psi && gameStatus !== 'scheduled') {
+    const slot = await db.prepare(
+      "SELECT id FROM games WHERE playoff_series_id = ? AND status = 'scheduled' ORDER BY date, game_time, id LIMIT 1"
+    ).get(psi);
+    if (slot) {
+      await db.prepare(
+        'UPDATE games SET home_team_id = ?, away_team_id = ?, home_score = ?, away_score = ?, date = ?, status = ?, is_overtime = ?, is_forfeit = ?, game_time = COALESCE(?, game_time), forfeit_winner = ? WHERE id = ?'
+      ).run(home_team_id, away_team_id, hScore, aScore, date, gameStatus, ot, forfeit, gt, forfeit_winner || null, slot.id);
+      await recomputeSeriesWins(psi);
+      return res.status(201).json({ id: slot.id, home_team_id, away_team_id, home_score: hScore, away_score: aScore, date, status: gameStatus, season_id: season_id || null, is_overtime: ot, is_forfeit: forfeit, playoff_series_id: psi, game_time: gt, forfeit_winner: forfeit_winner || null });
+    }
+  }
   const result = await db.prepare(
-    'INSERT INTO games (home_team_id, away_team_id, home_score, away_score, date, status, season_id, is_overtime, is_forfeit, playoff_series_id, game_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(home_team_id, away_team_id, hScore, aScore, date, gameStatus, season_id || null, ot, forfeit, psi, gt);
-  res.status(201).json({ id: result.lastInsertRowid, home_team_id, away_team_id, home_score: hScore, away_score: aScore, date, status: gameStatus, season_id: season_id || null, is_overtime: ot, is_forfeit: forfeit, playoff_series_id: psi, game_time: gt });
+    'INSERT INTO games (home_team_id, away_team_id, home_score, away_score, date, status, season_id, is_overtime, is_forfeit, playoff_series_id, game_time, forfeit_winner) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(home_team_id, away_team_id, hScore, aScore, date, gameStatus, season_id || null, ot, forfeit, psi, gt, forfeit_winner || null);
+  if (psi && gameStatus !== 'scheduled') await recomputeSeriesWins(psi);
+  res.status(201).json({ id: result.lastInsertRowid, home_team_id, away_team_id, home_score: hScore, away_score: aScore, date, status: gameStatus, season_id: season_id || null, is_overtime: ot, is_forfeit: forfeit, playoff_series_id: psi, game_time: gt, forfeit_winner: forfeit_winner || null });
 });
 
 app.delete('/api/games/:id', requireAdmin, async (req, res) => {
@@ -2878,137 +2945,164 @@ app.delete('/api/games/:id', requireAdmin, async (req, res) => {
 });
 
 app.patch('/api/games/:id', requireAdmin, async (req, res) => {
-  const game = await db.prepare('SELECT * FROM games WHERE id = ?').get(req.params.id);
-  if (!game) return res.status(404).json({ error: 'Game not found' });
-  let home_score = game.home_score, away_score = game.away_score;
-  const ea_match_id = req.body.ea_match_id !== undefined ? req.body.ea_match_id : game.ea_match_id;
-  const status = req.body.status !== undefined ? req.body.status : game.status;
-  const season_id = req.body.season_id !== undefined ? req.body.season_id : game.season_id;
-  const is_overtime = req.body.is_overtime !== undefined ? (req.body.is_overtime ? 1 : 0) : (game.is_overtime || 0);
-  const is_forfeit  = req.body.is_forfeit  !== undefined ? (req.body.is_forfeit  ? 1 : 0) : (status === 'forfeit' ? 1 : (game.is_forfeit  || 0));
-  const date = req.body.date !== undefined ? req.body.date : game.date;
-  const game_time = req.body.game_time !== undefined ? parseGameTime(req.body.game_time) : game.game_time;
-  const home_shots = req.body.home_shots !== undefined ? (req.body.home_shots != null ? parseInt(req.body.home_shots, 10) : null) : (game.home_shots ?? null);
-  const away_shots = req.body.away_shots !== undefined ? (req.body.away_shots != null ? parseInt(req.body.away_shots, 10) : null) : (game.away_shots ?? null);
-  if (req.body.home_score !== undefined) {
-    home_score = parseInt(req.body.home_score, 10);
-    if (isNaN(home_score) || home_score < 0 || home_score > 99) return res.status(400).json({ error: 'home_score must be 0–99' });
-  }
-  if (req.body.away_score !== undefined) {
-    away_score = parseInt(req.body.away_score, 10);
-    if (isNaN(away_score) || away_score < 0 || away_score > 99) return res.status(400).json({ error: 'away_score must be 0–99' });
-  }
-  if (status === 'complete') {
-    // Final score can never be lower than the goals credited to that team's players
-    let homeGoals = 0, awayGoals = 0;
-    if (req.body.player_stats) {
-      const sum = (l) => (l || []).reduce((n, p) => n + (Number(p.goals) || 0), 0);
-      homeGoals = sum(req.body.player_stats.home_players);
-      awayGoals = sum(req.body.player_stats.away_players);
-    } else {
-      const rows = await db.prepare('SELECT team_id, COALESCE(SUM(goals),0) AS g FROM game_player_stats WHERE game_id = ? GROUP BY team_id').all(req.params.id);
-      for (const r of rows) {
-        if (r.team_id === game.home_team_id) homeGoals = Number(r.g) || 0;
-        else if (r.team_id === game.away_team_id) awayGoals = Number(r.g) || 0;
+  if (req.body.player_stats) {
+    for (const players of [req.body.player_stats.home_players, req.body.player_stats.away_players]) {
+      if (players !== undefined && !Array.isArray(players)) return res.status(400).json({ error: 'Player stats must be a list' });
+      const seen = new Set();
+      for (const p of players || []) {
+        const name = typeof p?.name === 'string' ? p.name.trim().toLowerCase() : '';
+        if (!name) return res.status(400).json({ error: 'Player name is required' });
+        const key = `${name}:${String(p.position || '').toUpperCase() === 'G' ? 'goalie' : 'skater'}`;
+        if (seen.has(key)) return res.status(400).json({ error: `Duplicate game stats for ${p.name}` });
+        seen.add(key);
       }
     }
-    if (ea_match_id && req.body.player_stats && homeGoals + awayGoals > 0) {
-      // EA team scores are sometimes wrong (e.g. 3-0 defaults); player goals are authoritative
-      home_score = homeGoals;
-      away_score = awayGoals;
-    } else {
-      home_score = Math.max(home_score, homeGoals);
-      away_score = Math.max(away_score, awayGoals);
-    }
   }
-  if (status === 'complete' || status === 'forfeit') {
-    const capped = capScoreDifferential(home_score, away_score);
-    home_score = capped.home_score;
-    away_score = capped.away_score;
-  }
-  await db.prepare('UPDATE games SET home_score=?, away_score=?, ea_match_id=?, status=?, season_id=?, is_overtime=?, is_forfeit=?, date=?, game_time=?, home_shots=?, away_shots=? WHERE id=?')
-    .run(home_score, away_score, ea_match_id, status, season_id, is_overtime, is_forfeit, date, game_time, home_shots, away_shots, req.params.id);
-
-  // Auto-update the playoff series bracket whenever a playoff game is completed or updated
-  const effectiveSeries = req.body.playoff_series_id !== undefined
-    ? (req.body.playoff_series_id ? Number(req.body.playoff_series_id) : null)
-    : game.playoff_series_id;
-  if (effectiveSeries && (status === 'complete' || status === 'forfeit')) {
-    await recomputeSeriesWins(effectiveSeries);
-  }
-
-  if (req.body.player_stats) {
-    const { home_players, away_players } = req.body.player_stats;
-    await db.prepare('DELETE FROM game_player_stats WHERE game_id = ?').run(req.params.id);
-    const ins = await db.prepare(`INSERT INTO game_player_stats
-      (game_id,team_id,player_name,position,
-       overall_rating,offensive_rating,defensive_rating,team_play_rating,
-       goals,assists,shots,shot_attempts,hits,plus_minus,pim,blocked_shots,takeaways,giveaways,
-       possession_secs,pass_attempts,pass_completions,pass_pct,
-       faceoff_wins,faceoff_losses,pp_goals,sh_goals,gwg,penalties_drawn,
-       deflections,interceptions,hat_tricks,toi,
-       saves,save_pct,goals_against,shots_against,
-       goalie_wins,goalie_losses,goalie_otw,goalie_otl,
-       shutouts,penalty_shot_attempts,penalty_shot_ga,breakaway_shots,breakaway_saves,
-       saucer_passes,pk_clears,desperation_saves,poke_check_saves)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-    `);
-    // Goalie W/L/OTW/OTL/SO are derived from the game outcome, not the EA API
-    const homeWon = home_score > away_score;
-    const awayWon = away_score > home_score;
-    const insertResults = [];
-    const saveList = async (players, teamId, teamWon) => {
-      for (const p of (players || [])) {
-        await ensurePlayerRecord(p.name, p.position);
-        const isGoalie = (p.position || '').toUpperCase() === 'G';
-        let goalieWins = 0, goalieLosses = 0, goalieOtw = 0, goalieOtl = 0, shutouts = 0;
-        if (isGoalie) {
-          shutouts = (p.goalsAgainst || 0) === 0 ? 1 : 0;
-          if (teamWon) {
-            if (is_overtime) { goalieOtw = 1; } else { goalieWins = 1; }
-          } else {
-            if (is_overtime) { goalieOtl = 1; } else { goalieLosses = 1; }
+  let effectiveSeries = null, status;
+  try {
+    await db.transaction(async tx => {
+      const game = await tx.prepare('SELECT * FROM games WHERE id = ? FOR UPDATE').get(req.params.id);
+      if (!game) { const err = new Error('Game not found'); err.status = 404; throw err; }
+      let home_score = game.home_score, away_score = game.away_score;
+      const ea_match_id = req.body.ea_match_id !== undefined ? req.body.ea_match_id : game.ea_match_id;
+      status = req.body.status !== undefined ? req.body.status : game.status;
+      const season_id = req.body.season_id !== undefined ? req.body.season_id : game.season_id;
+      const is_overtime = req.body.is_overtime !== undefined ? (req.body.is_overtime ? 1 : 0) : (game.is_overtime || 0);
+      const is_forfeit  = req.body.is_forfeit !== undefined ? (req.body.is_forfeit ? 1 : 0) : (status === 'forfeit' ? 1 : (req.body.status !== undefined ? 0 : (game.is_forfeit || 0)));
+      const isForfeitGame = status === 'forfeit' || is_forfeit === 1;
+      let forfeit_winner = isForfeitGame ? (req.body.forfeit_winner !== undefined ? req.body.forfeit_winner : ((game.status === 'forfeit' || game.is_forfeit) ? game.forfeit_winner : null)) : null;
+      if (forfeit_winner != null && !['home', 'away'].includes(forfeit_winner)) {
+        const err = new Error('forfeit_winner must be home or away'); err.status = 400; throw err;
+      }
+      const date = req.body.date !== undefined ? req.body.date : game.date;
+      const game_time = req.body.game_time !== undefined ? parseGameTime(req.body.game_time) : game.game_time;
+      const home_shots = req.body.home_shots !== undefined ? (req.body.home_shots != null ? parseInt(req.body.home_shots, 10) : null) : (game.home_shots ?? null);
+      const away_shots = req.body.away_shots !== undefined ? (req.body.away_shots != null ? parseInt(req.body.away_shots, 10) : null) : (game.away_shots ?? null);
+      if (req.body.home_score !== undefined) {
+        home_score = parseInt(req.body.home_score, 10);
+        if (isNaN(home_score) || home_score < 0 || home_score > 99) { const err = new Error('home_score must be 0–99'); err.status = 400; throw err; }
+      }
+      if (req.body.away_score !== undefined) {
+        away_score = parseInt(req.body.away_score, 10);
+        if (isNaN(away_score) || away_score < 0 || away_score > 99) { const err = new Error('away_score must be 0–99'); err.status = 400; throw err; }
+      }
+      if (status === 'complete' && !isForfeitGame) {
+        // Final score can never be lower than the goals credited to that team's players
+        let homeGoals = 0, awayGoals = 0;
+        if (req.body.player_stats) {
+          const sum = (l) => (l || []).reduce((n, p) => n + (Number(p.goals) || 0), 0);
+          homeGoals = sum(req.body.player_stats.home_players);
+          awayGoals = sum(req.body.player_stats.away_players);
+        } else {
+          const rows = await tx.prepare('SELECT team_id, COALESCE(SUM(goals),0) AS g FROM game_player_stats WHERE game_id = ? GROUP BY team_id').all(req.params.id);
+          for (const r of rows) {
+            if (r.team_id === game.home_team_id) homeGoals = Number(r.g) || 0;
+            else if (r.team_id === game.away_team_id) awayGoals = Number(r.g) || 0;
           }
         }
-        const off = Number(p.offensiveRating) || 0;
-        const def = Number(p.defensiveRating) || 0;
-        const tpl = Number(p.teamPlayRating) || 0;
-        let ovr = Number(p.overallRating) || 0;
-        if (!ovr && (off > 0 || def > 0 || tpl > 0)) {
-          ovr = Math.round((off + def + tpl) / 3);
-        }
-        try {
-          const r = await ins.run(
-            req.params.id, teamId, p.name, p.position,
-            ovr, off, def, tpl,
-            p.goals||0, p.assists||0, p.shots||0, p.shotAttempts||0, p.hits||0, p.plusMinus||0, p.pim||0,
-            p.blockedShots||0, p.takeaways||0, p.giveaways||0,
-            p.possessionSecs||0, p.passAttempts||0, p.passCompletions||0, p.passPct||null,
-            p.faceoffWins||0, p.faceoffLosses||0,
-            p.ppGoals||0, p.shGoals||0, p.gwg||0, p.penaltiesDrawn||0,
-            p.deflections||0, p.interceptions||0, p.hatTricks||0, p.toi||0,
-            p.saves||0, p.savesPct||null, p.goalsAgainst||0, p.shotsAgainst||0,
-            goalieWins, goalieLosses, goalieOtw, goalieOtl,
-            shutouts, p.penaltyShotAttempts||0, p.penaltyShotGa||0,
-            p.breakawayShots||0, p.breakawaySaves||0,
-            p.saucerPasses||0, p.pkClears||0, p.desperationSaves||0, p.pokeCheckSaves||0
-          );
-          insertResults.push({ ok: true, changes: r.changes });
-        } catch (e) {
-          insertResults.push({ ok: false, err: e.message });
-          throw e;
+        if (ea_match_id && req.body.player_stats && homeGoals + awayGoals > 0) {
+          // EA team scores are sometimes wrong (e.g. 3-0 defaults); player goals are authoritative
+          home_score = homeGoals;
+          away_score = awayGoals;
+        } else {
+          home_score = Math.max(home_score, homeGoals);
+          away_score = Math.max(away_score, awayGoals);
         }
       }
-    };
-    try {
-      await saveList(home_players, game.home_team_id, homeWon);
-      await saveList(away_players, game.away_team_id, awayWon);
-    } catch (e) {
-      return res.status(500).json({ error: `Failed to save player stats: ${e.message}` });
-    }
+      if (status === 'complete' && !isForfeitGame) {
+        const capped = capScoreDifferential(home_score, away_score);
+        home_score = capped.home_score;
+        away_score = capped.away_score;
+      }
+      await tx.prepare('UPDATE games SET home_score=?, away_score=?, ea_match_id=?, status=?, season_id=?, is_overtime=?, is_forfeit=?, date=?, game_time=?, home_shots=?, away_shots=?, forfeit_winner=? WHERE id=?')
+        .run(home_score, away_score, ea_match_id, status, season_id, is_overtime, is_forfeit, date, game_time, home_shots, away_shots, forfeit_winner, req.params.id);
+
+      // Auto-update the playoff series bracket whenever a playoff game is completed or updated
+      if ((['complete', 'forfeit'].includes(status) || ['complete', 'forfeit'].includes(game.status)) &&
+          (status !== game.status || home_score !== game.home_score || away_score !== game.away_score ||
+           is_forfeit !== (game.is_forfeit || 0) || forfeit_winner !== (game.forfeit_winner || null))) {
+        effectiveSeries = game.playoff_series_id;
+      }
+      if (req.body.player_stats) {
+        const { home_players, away_players } = req.body.player_stats;
+        await tx.prepare('DELETE FROM game_player_stats WHERE game_id = ?').run(req.params.id);
+        const ins = tx.prepare(`INSERT INTO game_player_stats
+          (game_id,team_id,player_name,position,
+           overall_rating,offensive_rating,defensive_rating,team_play_rating,
+           goals,assists,shots,shot_attempts,hits,plus_minus,pim,blocked_shots,takeaways,giveaways,
+           possession_secs,pass_attempts,pass_completions,pass_pct,
+           faceoff_wins,faceoff_losses,pp_goals,sh_goals,gwg,penalties_drawn,
+           deflections,interceptions,hat_tricks,toi,
+           saves,save_pct,goals_against,shots_against,
+           goalie_wins,goalie_losses,goalie_otw,goalie_otl,
+           shutouts,penalty_shot_attempts,penalty_shot_ga,breakaway_shots,breakaway_saves,
+           saucer_passes,pk_clears,desperation_saves,poke_check_saves)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        `);
+        // Goalie W/L/OTW/OTL/SO are derived from the game outcome, not the EA API
+        const homeWon = isForfeitGame && forfeit_winner ? forfeit_winner === 'home' : home_score > away_score;
+        const awayWon = isForfeitGame && forfeit_winner ? forfeit_winner === 'away' : away_score > home_score;
+        const saveList = async (players, teamId, teamWon, teamLost) => {
+          for (const p of (players || [])) {
+            await ensurePlayerRecord(p.name, p.position);
+            const isGoalie = (p.position || '').toUpperCase() === 'G';
+            let goalieWins = 0, goalieLosses = 0, goalieOtw = 0, goalieOtl = 0, shutouts = 0;
+            if (isGoalie) {
+              shutouts = (p.goalsAgainst || 0) === 0 ? 1 : 0;
+              if (teamWon) {
+                if (is_overtime) { goalieOtw = 1; } else { goalieWins = 1; }
+              } else if (teamLost) {
+                if (is_overtime) { goalieOtl = 1; } else { goalieLosses = 1; }
+              }
+            }
+            const off = Number(p.offensiveRating) || 0;
+            const def = Number(p.defensiveRating) || 0;
+            const tpl = Number(p.teamPlayRating) || 0;
+            let ovr = Number(p.overallRating) || 0;
+            if (!ovr && (off > 0 || def > 0 || tpl > 0)) {
+              ovr = Math.round((off + def + tpl) / 3);
+            }
+            await ins.run(
+              req.params.id, teamId, p.name, p.position,
+              ovr, off, def, tpl,
+              p.goals||0, p.assists||0, p.shots||0, p.shotAttempts||0, p.hits||0, p.plusMinus||0, p.pim||0,
+              p.blockedShots||0, p.takeaways||0, p.giveaways||0,
+              p.possessionSecs||0, p.passAttempts||0, p.passCompletions||0, p.passPct||null,
+              p.faceoffWins||0, p.faceoffLosses||0,
+              p.ppGoals||0, p.shGoals||0, p.gwg||0, p.penaltiesDrawn||0,
+              p.deflections||0, p.interceptions||0, p.hatTricks||0, p.toi||0,
+              p.saves||0, p.savesPct||null, p.goalsAgainst||0, p.shotsAgainst||0,
+              goalieWins, goalieLosses, goalieOtw, goalieOtl,
+              shutouts, p.penaltyShotAttempts||0, p.penaltyShotGa||0,
+              p.breakawayShots||0, p.breakawaySaves||0,
+              p.saucerPasses||0, p.pkClears||0, p.desperationSaves||0, p.pokeCheckSaves||0
+            );
+          }
+        };
+        await saveList(home_players, game.home_team_id, homeWon, awayWon);
+        await saveList(away_players, game.away_team_id, awayWon, homeWon);
+      }
+      if (req.body.ea_match_id === null && !req.body.player_stats) {
+        await tx.prepare('DELETE FROM game_player_stats WHERE game_id = ?').run(req.params.id);
+      } else if (!req.body.player_stats && (isForfeitGame || game.status === 'forfeit' || game.is_forfeit)) {
+        const winner = isForfeitGame && forfeit_winner ? forfeit_winner : (home_score > away_score ? 'home' : away_score > home_score ? 'away' : null);
+        const winnerId = winner === 'home' ? game.home_team_id : winner === 'away' ? game.away_team_id : null;
+        const loserId = winner === 'home' ? game.away_team_id : winner === 'away' ? game.home_team_id : null;
+        await tx.prepare(`UPDATE game_player_stats SET
+            goalie_wins = CASE WHEN team_id = ? AND ? = 0 THEN 1 ELSE 0 END,
+            goalie_losses = CASE WHEN team_id = ? AND ? = 0 THEN 1 ELSE 0 END,
+            goalie_otw = CASE WHEN team_id = ? AND ? = 1 THEN 1 ELSE 0 END,
+            goalie_otl = CASE WHEN team_id = ? AND ? = 1 THEN 1 ELSE 0 END
+            WHERE game_id = ? AND UPPER(position) = 'G'`)
+          .run(winnerId, is_overtime, loserId, is_overtime, winnerId, is_overtime, loserId, is_overtime, req.params.id);
+      }
+    });
+  } catch (err) {
+    if (!err.status) console.error('[game update]', err);
+    return res.status(err.status || 500).json({ error: err.status ? err.message : `Failed to save game: ${err.message}` });
   }
-  if (req.body.ea_match_id === null && !req.body.player_stats) {
-    await db.prepare('DELETE FROM game_player_stats WHERE game_id = ?').run(req.params.id);
+  if (effectiveSeries) {
+    await recomputeSeriesWins(effectiveSeries);
   }
   res.json({ updated: true });
 });
@@ -3028,22 +3122,84 @@ app.get('/api/games/:id/stats', async (req, res) => {
     db.prepare('SELECT * FROM game_player_stats WHERE game_id = ? ORDER BY position, goals DESC').all(req.params.id),
   ]);
   if (!game) return res.status(404).json({ error: 'Game not found' });
-  const capped = (game.home_score != null && game.away_score != null && (game.status === 'complete' || game.status === 'forfeit'))
+  const capped = (game.home_score != null && game.away_score != null && game.status === 'complete' && !game.is_forfeit)
     ? capScoreDifferential(game.home_score, game.away_score)
     : { home_score: game.home_score, away_score: game.away_score };
+  let series = null;
+  if (game.playoff_series_id) {
+    const sGames = await db.prepare(
+      'SELECT g.id, g.home_team_id, g.away_team_id, g.home_score, g.away_score, g.status, g.is_forfeit, g.forfeit_winner, pl.series_length FROM games g JOIN playoff_series ps ON g.playoff_series_id = ps.id JOIN playoffs pl ON ps.playoff_id = pl.id WHERE g.playoff_series_id = ? ORDER BY g.date, g.game_time, g.id'
+    ).all(game.playoff_series_id);
+    const idx = sGames.findIndex(g => g.id === game.id);
+    if (idx >= 0) {
+      const abbr = async id => (await db.prepare('SELECT abbreviation, name FROM teams WHERE id = ?').get(id)) || {};
+      const wins = { [game.home_team_id]: 0, [game.away_team_id]: 0 };
+      sGames.slice(0, idx + 1).forEach(g => {
+        if (!['complete', 'forfeit'].includes(g.status)) return;
+        const w = gameWinnerSide(g);
+        if (w) wins[w === 'home' ? g.home_team_id : g.away_team_id]++;
+      });
+      const [ha, aa] = [await abbr(game.home_team_id), await abbr(game.away_team_id)];
+      const hw = wins[game.home_team_id], aw = wins[game.away_team_id];
+      const need = Math.ceil((sGames[0].series_length || 7) / 2);
+      const label = t => t.abbreviation || t.name;
+      let text;
+      if (hw === aw) text = `Series Tied ${hw}-${aw}`;
+      else {
+        const lead = hw > aw ? ha : aa, hi = Math.max(hw, aw), lo = Math.min(hw, aw);
+        text = `${label(lead)} ${hi >= need ? 'Wins' : 'Leads'} Series ${hi}-${lo}`;
+      }
+      series = { game_number: idx + 1, text };
+    }
+  }
   res.json({
     game: {
-      id: game.id, date: game.date, status: game.status, season_id: game.season_id, is_overtime: game.is_overtime,
+      series,
+      id: game.id, date: game.date, game_time: game.game_time || null, status: game.status, season_id: game.season_id, is_overtime: game.is_overtime,
       is_forfeit: game.is_forfeit || 0,
+      forfeit_winner: game.forfeit_winner || null,
       home_team: { id: game.home_team_id, name: game.home_team_name, logo_url: game.home_logo, color1: game.home_color1 || null, color2: game.home_color2 || null },
       away_team: { id: game.away_team_id, name: game.away_team_name, logo_url: game.away_logo, color1: game.away_color1 || null, color2: game.away_color2 || null },
-      home_score: capped.home_score, away_score: capped.away_score, ea_match_id: game.ea_match_id,
+      home_score: capped.home_score, away_score: capped.away_score,
+      raw_home_score: game.home_score, raw_away_score: game.away_score, ea_match_id: game.ea_match_id,
       home_shots: game.home_shots ?? null, away_shots: game.away_shots ?? null,
     },
     home_players: stats.filter(s => s.team_id === game.home_team_id),
     away_players: stats.filter(s => s.team_id === game.away_team_id),
     has_stats: stats.length > 0,
   });
+});
+
+// Rookie watch: players with at most 5 games in this league type before the season
+app.get('/api/stats/rookies', async (req, res) => {
+  const seasonId = Number(req.query.season_id);
+  if (!seasonId) return res.json({ names: [] });
+  const season = await db.prepare('SELECT * FROM seasons WHERE id = ?').get(seasonId);
+  if (!season) return res.json({ names: [] });
+  const leagueType = season.league_type || '';
+  const rows = await db.prepare(`
+    WITH season_players AS (
+      SELECT DISTINCT LOWER(BTRIM(gps.player_name)) AS player_name
+      FROM game_player_stats gps
+      JOIN games g ON gps.game_id = g.id
+      WHERE g.season_id = ? AND g.status IN ('complete','forfeit')
+    ),
+    prior_counts AS (
+      SELECT LOWER(BTRIM(gps2.player_name)) AS player_name, COUNT(DISTINCT gps2.game_id) AS prior_gp
+      FROM game_player_stats gps2
+      JOIN games g2 ON gps2.game_id = g2.id
+      LEFT JOIN seasons s2 ON g2.season_id = s2.id
+      WHERE g2.status IN ('complete','forfeit')
+        AND g2.season_id != ?
+        AND (s2.league_type = ? OR (? = '' AND (s2.league_type IS NULL OR s2.league_type = '')))
+      GROUP BY LOWER(BTRIM(gps2.player_name))
+    )
+    SELECT sp.player_name
+    FROM season_players sp
+    LEFT JOIN prior_counts pc ON sp.player_name = pc.player_name
+    WHERE COALESCE(pc.prior_gp, 0) <= 5
+  `).all(seasonId, seasonId, leagueType, leagueType);
+  res.json({ names: rows.map(r => r.player_name) });
 });
 
 // ── League stats leaders ───────────────────────────────────────────────────
@@ -3065,11 +3221,11 @@ app.get('/api/stats/leaders', async (req, res) => {
     // Season-scoped roster mapping: use season_rosters so profile/admin season
     // assignments drive team badges even when current roster is FA.
     rosterSub = `(
-      SELECT DISTINCT ON (p.name) p.name, sr.team_id, p.position
+      SELECT DISTINCT ON (LOWER(BTRIM(p.name))) p.name, sr.team_id, p.position
       FROM season_rosters sr
       JOIN players p ON p.id = sr.player_id
       WHERE sr.season_id = ? AND sr.team_id IS NOT NULL
-      ORDER BY p.name, (p.user_id IS NOT NULL) DESC, p.id DESC
+      ORDER BY LOWER(BTRIM(p.name)), (p.user_id IS NOT NULL) DESC, p.id DESC
     ) rp`;
     rosterParams.push(seasonId);
   } else if (leagueType) {
@@ -3091,47 +3247,23 @@ app.get('/api/stats/leaders', async (req, res) => {
   // Current-team subquery: pick the rostered player record per name (prefer user-linked row, then highest id)
   if (!rosterSub) {
     rosterSub = `(
-      SELECT DISTINCT ON (name) name, team_id, position FROM players
+      SELECT DISTINCT ON (LOWER(BTRIM(name))) name, team_id, position FROM players
       WHERE is_rostered = 1
-      ORDER BY name, (user_id IS NOT NULL) DESC, id DESC
+      ORDER BY LOWER(BTRIM(name)), (user_id IS NOT NULL) DESC, id DESC
     ) rp`;
   }
 
   const skatersPromise = db.prepare(`
     SELECT
-      gps.player_name AS name,
+      COALESCE(MAX(rp.name), MAX(BTRIM(gps.player_name))) AS name,
       MAX(rp.team_id) AS team_id,
       MAX(COALESCE(t.name, 'FA')) AS team_name,
       MAX(t.logo_url) AS team_logo,
       MAX(t.color1) AS team_color1,
       MAX(t.color2) AS team_color2,
-      COALESCE(MAX(rp.position), MAX(u.position), (SELECT gps2.position FROM game_player_stats gps2 WHERE gps2.player_name = gps.player_name AND gps2.position != 'G' GROUP BY gps2.position ORDER BY COUNT(*) DESC LIMIT 1)) AS position,
+      COALESCE(MAX(rp.position), MAX(u.position), MODE() WITHIN GROUP (ORDER BY gps.position)) AS position,
       COUNT(DISTINCT gps.game_id) AS gp,
-      ROUND(AVG(CASE WHEN gps.overall_rating > 0 THEN CAST(gps.overall_rating AS NUMERIC)
-                     WHEN GREATEST(gps.offensive_rating, gps.defensive_rating, gps.team_play_rating) > 0
-                       THEN GREATEST(0.0, LEAST(99.0,
-                         CASE WHEN gps.position ILIKE '%defense%'
-                           THEN (CAST(gps.offensive_rating AS NUMERIC)
-                                 + CAST(gps.defensive_rating AS NUMERIC) * 2.0
-                                 + CAST(gps.team_play_rating AS NUMERIC) * 1.5) / 4.5
-                           ELSE (CAST(gps.offensive_rating AS NUMERIC) * 2.0
-                                 + CAST(gps.defensive_rating AS NUMERIC)
-                                 + CAST(gps.team_play_rating AS NUMERIC) * 1.5) / 4.5
-                         END
-                       ))
-                     ELSE GREATEST(0.0, LEAST(99.0,
-                       60.0
-                       + LEAST(CAST(gps.goals AS NUMERIC) * 7.0, 21.0)
-                       + LEAST(CAST(gps.assists AS NUMERIC) * 4.0, 14.0)
-                       + GREATEST(LEAST(CAST(gps.plus_minus AS NUMERIC) * 3.0, 12.0), -12.0)
-                       + LEAST(CAST(gps.shots AS NUMERIC) * 0.5, 5.0)
-                       + LEAST(CAST(gps.hits AS NUMERIC) * 0.5, 5.0)
-                       + LEAST(CAST(gps.blocked_shots AS NUMERIC) * 1.5, 6.0)
-                       + LEAST(CAST(gps.takeaways AS NUMERIC) * 1.5, 6.0)
-                       - LEAST(CAST(gps.giveaways AS NUMERIC) * 2.0, 8.0)
-                       - LEAST(CAST(gps.pim AS NUMERIC) * 0.5, 5.0)
-                     ))
-                END), 0) AS overall_rating,
+      ${ratingAggregate(false)},
       ROUND(AVG(NULLIF(gps.offensive_rating,0)),0)  AS offensive_rating,
       ROUND(AVG(NULLIF(gps.defensive_rating,0)),0)  AS defensive_rating,
       ROUND(AVG(NULLIF(gps.team_play_rating,0)),0)  AS team_play_rating,
@@ -3167,13 +3299,10 @@ app.get('/api/stats/leaders', async (req, res) => {
       SUM(gps.hat_tricks) AS hat_tricks,
       SUM(gps.saucer_passes) AS saucer_passes,
       SUM(gps.pk_clears) AS pk_clears,
-      SUM(CASE WHEN (gps.team_id = g.home_team_id AND g.home_score > g.away_score)
-                 OR (gps.team_id = g.away_team_id AND g.away_score > g.home_score) THEN 1 ELSE 0 END) AS player_wins,
-      SUM(CASE WHEN ((gps.team_id = g.home_team_id AND g.home_score < g.away_score)
-                  OR (gps.team_id = g.away_team_id AND g.away_score < g.home_score))
+      SUM(CASE WHEN gps.team_id = ${gameWinnerSql('g')} THEN 1 ELSE 0 END) AS player_wins,
+      SUM(CASE WHEN gps.team_id IN (g.home_team_id, g.away_team_id) AND gps.team_id <> ${gameWinnerSql('g')}
                AND (g.is_overtime IS NULL OR g.is_overtime = 0) THEN 1 ELSE 0 END) AS player_losses,
-      SUM(CASE WHEN ((gps.team_id = g.home_team_id AND g.home_score < g.away_score)
-                  OR (gps.team_id = g.away_team_id AND g.away_score < g.home_score))
+      SUM(CASE WHEN gps.team_id IN (g.home_team_id, g.away_team_id) AND gps.team_id <> ${gameWinnerSql('g')}
                AND g.is_overtime = 1 THEN 1 ELSE 0 END) AS player_otl,
       ROUND(CAST(SUM(CASE WHEN gps.team_id = g.home_team_id THEN g.home_score ELSE g.away_score END) AS NUMERIC) / NULLIF(COUNT(DISTINCT gps.game_id), 0), 2) AS goal_support
     FROM game_player_stats gps
@@ -3181,14 +3310,16 @@ app.get('/api/stats/leaders', async (req, res) => {
     ${extraJoin}
     LEFT JOIN ${rosterSub} ON LOWER(BTRIM(rp.name)) = LOWER(BTRIM(gps.player_name))
     LEFT JOIN teams t ON t.id = rp.team_id
-    LEFT JOIN users u ON u.username = gps.player_name
+    LEFT JOIN LATERAL (
+      SELECT position FROM users WHERE LOWER(BTRIM(username)) = LOWER(BTRIM(gps.player_name)) ORDER BY id DESC LIMIT 1
+    ) u ON true
     WHERE gps.position != 'G' AND g.status IN ('complete','forfeit') ${sf}
-    GROUP BY gps.player_name ORDER BY points DESC, goals DESC
+    GROUP BY LOWER(BTRIM(gps.player_name)) ORDER BY points DESC, goals DESC
   `).all(...rosterParams, ...p);
 
   const goaliesPromise = db.prepare(`
     SELECT
-      gps.player_name AS name,
+      COALESCE(MAX(rp.name), MAX(BTRIM(gps.player_name))) AS name,
       MAX(rp.team_id) AS team_id,
       MAX(COALESCE(t.name, 'FA')) AS team_name,
       MAX(t.logo_url) AS team_logo,
@@ -3213,31 +3344,13 @@ app.get('/api/stats/leaders', async (req, res) => {
       SUM(gps.breakaway_saves) AS breakaway_saves,
       SUM(gps.desperation_saves) AS desperation_saves,
       SUM(gps.poke_check_saves) AS poke_check_saves,
-      SUM(CASE WHEN (gps.team_id = g.home_team_id AND g.home_score > g.away_score)
-                   OR (gps.team_id = g.away_team_id AND g.away_score > g.home_score) THEN 1 ELSE 0 END) AS goalie_wins,
-      SUM(CASE WHEN ((gps.team_id = g.home_team_id AND g.home_score < g.away_score)
-                    OR (gps.team_id = g.away_team_id AND g.away_score < g.home_score))
+      SUM(CASE WHEN gps.team_id = ${gameWinnerSql('g')} THEN 1 ELSE 0 END) AS goalie_wins,
+      SUM(CASE WHEN gps.team_id IN (g.home_team_id, g.away_team_id) AND gps.team_id <> ${gameWinnerSql('g')}
                    AND (g.is_overtime IS NULL OR g.is_overtime = 0) THEN 1 ELSE 0 END) AS goalie_losses,
       0 AS goalie_otw,
-      SUM(CASE WHEN ((gps.team_id = g.home_team_id AND g.home_score < g.away_score)
-                    OR (gps.team_id = g.away_team_id AND g.away_score < g.home_score))
+      SUM(CASE WHEN gps.team_id IN (g.home_team_id, g.away_team_id) AND gps.team_id <> ${gameWinnerSql('g')}
                    AND g.is_overtime = 1 THEN 1 ELSE 0 END) AS goalie_otl,
-      ROUND(AVG(CASE WHEN gps.overall_rating > 0 THEN CAST(gps.overall_rating AS NUMERIC)
-                     WHEN GREATEST(gps.defensive_rating, gps.offensive_rating, gps.team_play_rating) > 0
-                       THEN GREATEST(0.0, LEAST(99.0,
-                         (CAST(gps.defensive_rating AS NUMERIC) * 2.0
-                          + CAST(gps.offensive_rating AS NUMERIC)
-                          + CAST(gps.team_play_rating AS NUMERIC) * 1.5) / 4.5
-                       ))
-                     WHEN gps.shots_against > 0 THEN GREATEST(50.0, LEAST(99.0,
-                       50.0
-                       + (CAST(gps.shots_against - gps.goals_against AS NUMERIC) / CAST(gps.shots_against AS NUMERIC) * 40.0)
-                       - LEAST(CAST(gps.goals_against AS NUMERIC) * 1.0, 10.0)
-                       + CASE WHEN gps.goals_against = 0 AND gps.shots_against > 0 THEN 5.0 ELSE 0.0 END
-                       + CASE WHEN gps.goalie_wins = 1 OR gps.goalie_otw = 1 THEN 3.0 ELSE 0.0 END
-                     ))
-                     ELSE 75.0
-                END), 0) AS overall_rating,
+      ${ratingAggregate(true)},
       ROUND(AVG(NULLIF(gps.offensive_rating,0)),0)  AS offensive_rating,
       ROUND(AVG(NULLIF(gps.defensive_rating,0)),0)  AS defensive_rating,
       ROUND(AVG(NULLIF(gps.team_play_rating,0)),0)  AS team_play_rating,
@@ -3248,7 +3361,7 @@ app.get('/api/stats/leaders', async (req, res) => {
     LEFT JOIN ${rosterSub} ON LOWER(BTRIM(rp.name)) = LOWER(BTRIM(gps.player_name))
     LEFT JOIN teams t ON t.id = rp.team_id
     WHERE gps.position = 'G' AND g.status IN ('complete','forfeit') ${sf}
-    GROUP BY gps.player_name ORDER BY save_pct DESC
+    GROUP BY LOWER(BTRIM(gps.player_name)) ORDER BY save_pct DESC
   `).all(...rosterParams, ...p);
 
   const [skaters, goalies] = await Promise.all([skatersPromise, goaliesPromise]);
@@ -3386,7 +3499,7 @@ async function calcStandings(seasonId) {
   for (const g of games) {
     const home = stats[g.home_team_id], away = stats[g.away_team_id];
     if (!home || !away) continue;
-    const capped = capScoreDifferential(g.home_score, g.away_score);
+    const capped = g.status === 'forfeit' || g.is_forfeit ? { home_score: g.home_score, away_score: g.away_score } : capScoreDifferential(g.home_score, g.away_score);
     const hScore = capped.home_score;
     const aScore = capped.away_score;
     home.gp++; away.gp++;
@@ -3394,11 +3507,12 @@ async function calcStandings(seasonId) {
     away.gf += aScore; away.ga += hScore;
     const ot = !!g.is_overtime;
     ensureH2h(g.home_team_id); ensureH2h(g.away_team_id);
-    if (hScore > aScore) {
+    const winner = gameWinnerSide(g);
+    if (winner === 'home') {
       if (ot) { home.w++; home.otw++; home.pts += 2; home.home_w++; away.otl++; away.pts++; away.away_otl++; home._results.push('W'); away._results.push('OTL'); }
       else    { home.w++; home.pts += 2; home.home_w++; away.l++; away.away_l++; home._results.push('W'); away._results.push('L'); }
       h2h[g.home_team_id][g.away_team_id] = (h2h[g.home_team_id][g.away_team_id] || 0) + 1;
-    } else if (aScore > hScore) {
+    } else if (winner === 'away') {
       if (ot) { away.w++; away.otw++; away.pts += 2; away.away_w++; home.otl++; home.pts++; home.home_otl++; away._results.push('W'); home._results.push('OTL'); }
       else    { away.w++; away.pts += 2; away.away_w++; home.l++; home.home_l++; away._results.push('W'); home._results.push('L'); }
       h2h[g.away_team_id][g.home_team_id] = (h2h[g.away_team_id][g.home_team_id] || 0) + 1;
@@ -3769,13 +3883,33 @@ app.get('/api/seasons/:id/teams', requireAdmin, async (req, res) => {
       SELECT team_id FROM season_team_conf WHERE season_id = ?
       UNION
       SELECT team_id FROM season_rosters WHERE season_id = ?
+      UNION
+      SELECT team_id FROM season_player_stats WHERE season_id = ?
     )
     ORDER BY t.name
-  `).all(req.params.id, req.params.id, req.params.id, req.params.id);
+  `).all(req.params.id, req.params.id, req.params.id, req.params.id, req.params.id);
   res.json(teams);
 });
 
 // POST /api/seasons/:id/teams – add a team to a season without needing games
+app.post('/api/seasons/:id/swap-team', requireOwner, async (req, res) => {
+  const seasonId = Number(req.params.id);
+  const sourceId = Number(req.body?.source_id);
+  const targetId = Number(req.body?.target_id);
+  if (![seasonId, sourceId, targetId].every(n => Number.isSafeInteger(n) && n > 0) || sourceId === targetId) {
+    return res.status(400).json({ error: 'Select a season and two different teams.' });
+  }
+  try {
+    await db.transaction(tx => swapSeasonTeam(tx, seasonId, sourceId, targetId));
+    _eaMatchCache.clear();
+    res.json({ ok: true });
+  } catch (err) {
+    if (err instanceof TeamSwapError) return res.status(err.status).json({ error: err.message });
+    console.error('[swap-team]', err);
+    res.status(500).json({ error: 'Team replacement failed; no changes were saved.' });
+  }
+});
+
 app.post('/api/seasons/:id/teams', requireOwner, async (req, res) => {
   const season = await db.prepare('SELECT id FROM seasons WHERE id = ?').get(req.params.id);
   if (!season) return res.status(404).json({ error: 'Season not found' });
@@ -3965,28 +4099,6 @@ async function getPlayoffBracket(playoffId) {
     WHERE pt.playoff_id = ? ORDER BY pt.seed
   `).all(playoffId);
 
-  // Auto-calculate regular season seed based on regular season standings finish
-  if (playoff.season_id) {
-    try {
-      const regStandings = await calcStandings(playoff.season_id);
-      const confMap = {};
-      for (const t of regStandings) {
-        const c = t.conference || 'Unassigned';
-        if (!confMap[c]) confMap[c] = [];
-        confMap[c].push(t);
-      }
-      for (const team of teams) {
-        if (team.conference && confMap[team.conference]) {
-          const rank = confMap[team.conference].findIndex(x => x.id === team.team_id) + 1;
-          if (rank > 0) team.seed = rank;
-        } else {
-          const rank = regStandings.findIndex(x => x.id === team.team_id) + 1;
-          if (rank > 0) team.seed = rank;
-        }
-      }
-    } catch {}
-  }
-
   const allSeries = await db.prepare(`
     SELECT ps.*,
       ht.name AS high_seed_name, ht.abbreviation AS high_seed_abbrev, ht.logo_url AS high_seed_logo,
@@ -4064,18 +4176,17 @@ const SERIES_HOME_PATTERN = [true, true, false, false, true, false, true];
  * When startDate is omitted (e.g. advance-round), games are dated from today's date
  * and can be updated later via the stats editor.
  */
-async function createSeriesSchedule(seriesId, highSeedTeamId, lowSeedTeamId, seasonId, seriesLength, startDate) {
-  const base = startDate ? new Date(startDate + 'T00:00:00Z') : new Date();
+async function createSeriesSchedule(seriesId, highSeedTeamId, lowSeedTeamId, seasonId, seriesLength, startDate, slots) {
+  const start = startDate || new Date().toISOString().slice(0, 10);
+  const gameSlots = buildSeriesGameSlots(start, seriesLength, slots);
   const insertGame = await db.prepare(
-    'INSERT INTO games (home_team_id, away_team_id, home_score, away_score, date, status, season_id, is_overtime, playoff_series_id) VALUES (?, ?, 0, 0, ?, ?, ?, 0, ?)'
+    'INSERT INTO games (home_team_id, away_team_id, home_score, away_score, date, status, season_id, is_overtime, playoff_series_id, game_time) VALUES (?, ?, 0, 0, ?, ?, ?, 0, ?, ?)'
   );
   for (let i = 0; i < seriesLength; i++) {
     const highSeedHosts = SERIES_HOME_PATTERN[i];
     const home = highSeedHosts ? highSeedTeamId : lowSeedTeamId;
     const away = highSeedHosts ? lowSeedTeamId  : highSeedTeamId;
-    const gameDate = new Date(base);
-    gameDate.setUTCDate(gameDate.getUTCDate() + i * 2);
-    await insertGame.run(home, away, gameDate.toISOString().slice(0, 10), 'scheduled', seasonId, seriesId);
+    await insertGame.run(home, away, gameSlots[i].date, 'scheduled', seasonId, seriesId, gameSlots[i].time);
   }
 }
 
@@ -4090,6 +4201,7 @@ app.post('/api/playoffs', requireOwner, async (req, res) => {
   }
   const season = await db.prepare('SELECT * FROM seasons WHERE id = ?').get(season_id);
   if (!season) return res.status(404).json({ error: 'Season not found' });
+  const seriesSlots = normalizeSlots(req.body.series_schedule, season.league_type);
   if (season.is_playoff) return res.status(400).json({ error: 'Cannot create a playoff bracket from a playoff season' });
   const n = Number(teams_qualify);
   if (n < 2 || n > 64) {
@@ -4112,14 +4224,12 @@ app.post('/api/playoffs', requireOwner, async (req, res) => {
     return res.status(400).json({ error: `Only ${eligible.length} team(s) qualify. Need at least 2.` });
   }
 
-  const playoffSeasonName = `${season.name} Playoffs`;
-  const psResult = await db.prepare('INSERT INTO seasons (name, is_active, league_type, is_playoff) VALUES (?, 0, ?, 1)')
-    .run(playoffSeasonName, season.league_type || '');
-  const playoffSeasonId = psResult.lastInsertRowid;
+  let playoffSeasonId;
+  await db.transaction(async tx => { playoffSeasonId = (await _ensureLinkedPlayoffSeason(tx, season.id)).id; });
 
   const pl = await db.prepare(
-    'INSERT INTO playoffs (season_id, teams_qualify, min_games_played, series_length, playoff_season_id, seeding_format) VALUES (?, ?, ?, ?, ?, ?)'
-  ).run(Number(season_id), n, minGP, Number(series_length) || 7, playoffSeasonId, format);
+    'INSERT INTO playoffs (season_id, teams_qualify, min_games_played, series_length, playoff_season_id, seeding_format, series_schedule) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).run(Number(season_id), n, minGP, Number(series_length) || 7, playoffSeasonId, format, JSON.stringify(seriesSlots));
   const playoffId = pl.lastInsertRowid;
   const seriesLen = Number(series_length) || 7;
 
@@ -4244,7 +4354,7 @@ app.post('/api/playoffs', requireOwner, async (req, res) => {
       const sr = await db.prepare(
         'INSERT INTO playoff_series (playoff_id, round_number, series_number, high_seed_id, low_seed_id, high_seed_num, low_seed_num) VALUES (?, 1, ?, ?, ?, ?, ?)'
       ).run(playoffId, i + 1, pair.high.id, pair.low.id, pair.highSeedNum, pair.lowSeedNum);
-      await createSeriesSchedule(sr.lastInsertRowid, pair.high.id, pair.low.id, playoffSeasonId, seriesLen, series_start_date);
+      await createSeriesSchedule(sr.lastInsertRowid, pair.high.id, pair.low.id,       playoffSeasonId, seriesLen, series_start_date, seriesSlots);
     }
 
     return res.status(201).json(await getPlayoffBracket(playoffId));
@@ -4287,7 +4397,7 @@ app.post('/api/playoffs', requireOwner, async (req, res) => {
     const sr = await db.prepare(
       'INSERT INTO playoff_series (playoff_id, round_number, series_number, high_seed_id, low_seed_id, high_seed_num, low_seed_num) VALUES (?, 1, ?, ?, ?, ?, ?)'
     ).run(playoffId, seriesNum++, hi.id, lo.id, hi.seed, lo.seed);
-    await createSeriesSchedule(sr.lastInsertRowid, hi.id, lo.id, playoffSeasonId, seriesLen, series_start_date);
+    await createSeriesSchedule(sr.lastInsertRowid, hi.id, lo.id,     playoffSeasonId, seriesLen, series_start_date, seriesSlots);
   }
 
   res.status(201).json(await getPlayoffBracket(playoffId));
@@ -4298,9 +4408,11 @@ app.post('/api/playoffs/:id/advance-round', requireOwner, async (req, res) => {
   const playoff = await db.prepare('SELECT * FROM playoffs WHERE id = ?').get(req.params.id);
   if (!playoff) return res.status(404).json({ error: 'Playoff not found' });
 
-  const curRound = await db.prepare(
+  const currentRoundRow = await db.prepare(
     'SELECT MAX(round_number) AS round FROM playoff_series WHERE playoff_id = ?'
-  ).get(req.params.id).round;
+  ).get(req.params.id);
+  const curRound = currentRoundRow && currentRoundRow.round;
+  if (!curRound) return res.status(400).json({ error: 'No playoff round exists to advance' });
 
   const series = await db.prepare(
     'SELECT * FROM playoff_series WHERE playoff_id = ? AND round_number = ? ORDER BY series_number'
@@ -4314,27 +4426,34 @@ app.post('/api/playoffs/:id/advance-round', requireOwner, async (req, res) => {
   }
 
   const nextRound = curRound + 1;
-  const numNextSeries = Math.floor(series.length / 2);
+  const seededTeams = await db.prepare('SELECT team_id, seed FROM playoff_teams WHERE playoff_id = ?').all(req.params.id);
+  let matchups;
+  try {
+    matchups = pairWinners(series.map(s => seededTeams.find(t => t.team_id === s.winner_id)));
+  } catch (err) {
+    return res.status(409).json({ error: `Cannot reseed playoff round: ${err.message}` });
+  }
+  let nextStart = /^\d{4}-\d{2}-\d{2}$/.test(req.body && req.body.series_start_date || '') ? req.body.series_start_date : null;
+  if (!nextStart) {
+    // Default: the day after the last game of the playoff so far
+    const last = await db.prepare(
+      'SELECT MAX(g.date) AS d FROM games g JOIN playoff_series ps ON g.playoff_series_id = ps.id WHERE ps.playoff_id = ?'
+    ).get(req.params.id);
+    if (last && last.d) {
+      const d = new Date(String(last.d).slice(0, 10) + 'T00:00:00Z');
+      d.setUTCDate(d.getUTCDate() + 1);
+      nextStart = d.toISOString().slice(0, 10);
+    }
+  }
+  let nextSlots = null;
+  try { nextSlots = playoff.series_schedule ? JSON.parse(playoff.series_schedule) : null; } catch { /* default slots */ }
 
-  for (let i = 0; i < numNextSeries; i++) {
-    const s1 = series[i * 2];
-    const s2 = series[i * 2 + 1];
-    if (!s1 || !s2) continue;
-
-    const pt1 = await db.prepare('SELECT seed FROM playoff_teams WHERE playoff_id = ? AND team_id = ?').get(req.params.id, s1.winner_id);
-    const pt2 = await db.prepare('SELECT seed FROM playoff_teams WHERE playoff_id = ? AND team_id = ?').get(req.params.id, s2.winner_id);
-    const seed1 = pt1 ? pt1.seed : 9999;
-    const seed2 = pt2 ? pt2.seed : 9999;
-
-    const hiId = seed1 <= seed2 ? s1.winner_id : s2.winner_id;
-    const loId = seed1 <= seed2 ? s2.winner_id : s1.winner_id;
-    const hiSeed = seed1 <= seed2 ? seed1 : seed2;
-    const loSeed = seed1 <= seed2 ? seed2 : seed1;
-
+  for (let i = 0; i < matchups.length; i++) {
+    const [high, low] = matchups[i];
     const sr = await db.prepare(
       'INSERT INTO playoff_series (playoff_id, round_number, series_number, high_seed_id, low_seed_id, high_seed_num, low_seed_num) VALUES (?, ?, ?, ?, ?, ?, ?)'
-    ).run(req.params.id, nextRound, i + 1, hiId, loId, hiSeed, loSeed);
-    await createSeriesSchedule(sr.lastInsertRowid, hiId, loId, playoff.playoff_season_id || playoff.season_id, playoff.series_length || 7);
+    ).run(req.params.id, nextRound, i + 1, high.team_id, low.team_id, high.seed, low.seed);
+    await createSeriesSchedule(sr.lastInsertRowid, high.team_id, low.team_id, playoff.playoff_season_id || playoff.season_id, playoff.series_length || 7, nextStart, nextSlots);
   }
 
   res.json(await getPlayoffBracket(req.params.id));
@@ -4373,13 +4492,14 @@ async function recomputeSeriesWins(seriesId) {
 
   // Count how many complete games each team has won in this series
   const games = await db.prepare(
-    "SELECT home_team_id, away_team_id, home_score, away_score FROM games WHERE playoff_series_id = ? AND status IN ('complete','forfeit')"
+    "SELECT home_team_id, away_team_id, home_score, away_score, status, is_forfeit, forfeit_winner FROM games WHERE playoff_series_id = ? AND status IN ('complete','forfeit')"
   ).all(seriesId);
 
   let hw = 0, lw = 0;
   for (const g of games) {
-    if (g.home_score === g.away_score) continue; // skip ties (shouldn't occur in hockey)
-    const homeWon = g.home_score > g.away_score;
+    const winner = gameWinnerSide(g);
+    if (!winner) continue;
+    const homeWon = winner === 'home';
     const homeIsHigh = g.home_team_id === s.high_seed_id;
     if (homeWon) {
       if (homeIsHigh) hw++; else lw++;
@@ -4414,7 +4534,7 @@ app.get('/api/playoff-series/:id/games', async (req, res) => {
     ORDER BY g.date, g.id
   `).all(req.params.id);
   for (const g of games) {
-    if (g.home_score != null && g.away_score != null && (g.status === 'complete' || g.status === 'forfeit')) {
+    if (g.home_score != null && g.away_score != null && g.status === 'complete' && !g.is_forfeit) {
       const capped = capScoreDifferential(g.home_score, g.away_score);
       g.home_score = capped.home_score;
       g.away_score = capped.away_score;
@@ -4493,6 +4613,7 @@ function normalizeEAPosition(pos) {
 }
 
 function mapEAPlayer(player) {
+  const penaltyShots = eaPenaltyShotStats(player);
   let position = normalizeEAPosition(readEAField(player, ['position']));
   if (position === 'D') {
     const ps = String(player.posSorted ?? '');
@@ -4541,8 +4662,8 @@ function mapEAPlayer(player) {
     hatTricks: Number(readEAField(player, ['hatTricks', 'skhattricks', 'skht'])) || 0,
     saucerPasses: Number(readEAField(player, ['saucerPasses', 'sksaucerpasses'])) || 0,
     pkClears: Number(readEAField(player, ['pkClears', 'skpkclearzone'])) || 0,
-    penaltyShotAttempts: Number(readEAField(player, ['penaltyShotAttempts', 'glpenshots'])) || 0,
-    penaltyShotGa: Number(readEAField(player, ['penaltyShotGa', 'glpensaves'])) || 0,
+    penaltyShotAttempts: penaltyShots.attempts,
+    penaltyShotGa: penaltyShots.goalsAgainst,
     breakawayShots: Number(readEAField(player, ['breakawayShots', 'glbrkshots'])) || 0,
     breakawaySaves: Number(readEAField(player, ['breakawaySaves', 'glbrksaves'])) || 0,
     desperationSaves: Number(readEAField(player, ['desperationSaves', 'gldsaves'])) || 0,
@@ -4674,7 +4795,13 @@ app.get('/api/games/:id/ea-matches', async (req, res) => {
   } catch (err) {
     return res.status(502).json({ error: 'EA Pro Clubs API is currently unreachable', details: err.message, ea_status: err.eaStatus || null, ea_body: err.eaBody || null, ea_url: eaUrl, game: _eaGameInfo(game) });
   }
-  const matches = _processEAMatches(raw, game, side);
+  let matches;
+  try {
+    matches = _processEAMatches(raw, game, side);
+  } catch (err) {
+    console.error('[ea-matches] Invalid EA match data:', err.message);
+    return res.status(502).json({ error: `Invalid EA match data: ${err.message}` });
+  }
   const result = { game: _eaGameInfo(game), matches };
   _eaMatchCache.set(cacheKey, { data: result, ts: Date.now() });
   res.json(result);
@@ -4695,7 +4822,13 @@ app.post('/api/games/:id/ea-matches', async (req, res) => {
   if (!raw || (typeof raw !== 'object' && !Array.isArray(raw))) {
     return res.status(400).json({ error: 'Request body must be the raw EA JSON response' });
   }
-  const matches = _processEAMatches(raw, game);
+  let matches;
+  try {
+    matches = _processEAMatches(raw, game);
+  } catch (err) {
+    console.error('[ea-matches] Invalid EA match data:', err.message);
+    return res.status(400).json({ error: `Invalid EA match data: ${err.message}` });
+  }
   const result = { game: _eaGameInfo(game), matches };
   _eaMatchCache.set(req.params.id, { data: result, ts: Date.now() });
   res.json(result);
@@ -5551,34 +5684,52 @@ app.post('/api/admin/import-mso-json', requireOwner, async (req, res) => {
 
 // ── shared HTML / HTTP helpers (used by the Excel import only) ────────────
 
-function _mso_fetchUrl(url, redirectCount = 0) {
+function _mso_fetchUrl(url, redirectCount = 0, request = {}) {
   return new Promise((resolve, reject) => {
     if (redirectCount > 10) return reject(new Error('Too many redirects'));
     let parsed;
     try { parsed = new URL(url); } catch (e) { return reject(e); }
+    if (parsed.protocol !== 'https:' || parsed.hostname !== 'www.mystatsonline.com' || parsed.port || parsed.username || parsed.password) {
+      return reject(new Error('Invalid MyStatsOnline redirect'));
+    }
     const lib = parsed.protocol === 'https:' ? https : http;
     const options = {
       hostname: parsed.hostname,
       path: parsed.pathname + parsed.search,
       port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
-      method: 'GET',
+      method: request.body === undefined ? 'GET' : 'POST',
       headers: {
         'User-Agent': 'Mozilla/5.0 (compatible; EHL-Importer/1.0)',
         'Accept': 'text/html,application/xhtml+xml',
+        ...(request.body === undefined ? {} : {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Content-Length': Buffer.byteLength(request.body),
+        }),
+        ...(request.cookie ? { Cookie: request.cookie } : {}),
       },
     };
     const req = lib.request(options, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        if (request.body !== undefined) {
+          res.resume();
+          return reject(new Error('Unexpected redirect while submitting schedule filters'));
+        }
         const next = new URL(res.headers.location, url).toString();
+        res.resume();
         return resolve(_mso_fetchUrl(next, redirectCount + 1));
       }
       let body = '';
       res.setEncoding('utf8');
-      res.on('data', chunk => { body += chunk; });
-      res.on('end', () => resolve({ status: res.statusCode, body }));
+      res.on('data', chunk => {
+        body += chunk;
+        if (body.length > 5 * 1024 * 1024) req.destroy(new Error('MyStatsOnline response is too large'));
+      });
+      res.on('end', () => resolve({ status: res.statusCode, body, cookies: res.headers['set-cookie'] || [] }));
+      res.on('error', reject);
     });
     req.on('error', reject);
     req.setTimeout(30000, () => { req.destroy(new Error('Request timed out')); });
+    if (request.body !== undefined) req.write(request.body);
     req.end();
   });
 }
@@ -5587,7 +5738,8 @@ function _mso_stripTags(str) {
   let t = str.replace(/<[^>]*>/g, ' ');
   t = t.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
        .replace(/&apos;/g, "'").replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&');
-  t = t.replace(/&#\d+;/g, ' ').replace(/&#x[\da-fA-F]+;/g, ' ');
+  t = t.replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
+       .replace(/&#x([\da-fA-F]+);/g, (_, n) => String.fromCodePoint(parseInt(n, 16)));
   return t.replace(/\s+/g, ' ').trim();
 }
 
@@ -5622,6 +5774,68 @@ function _mso_num(val) {
   if (val === undefined || val === null || val === '' || val === '-') return 0;
   const n = parseFloat(String(val).replace(/[^0-9.\-]/g, ''));
   return isNaN(n) ? 0 : n;
+}
+
+function _mso_flag(val) {
+  return /^(x|yes|true)$/i.test(String(val || '').trim()) ? 1 : _mso_num(val);
+}
+
+function _mso_toiSeconds(value) {
+  const text = String(value || '').trim();
+  const clock = text.match(/^(\d+):([0-5]\d)$/);
+  return clock ? Number(clock[1]) * 60 + Number(clock[2]) : Math.round(_mso_num(text) * 60);
+}
+
+function _m_parseRowsWithoutFooter(tableHtml) {
+  return _mso_parseTableHtml(tableHtml.replace(/<tfoot\b[\s\S]*?<\/tfoot>/gi, ''));
+}
+
+function _mso_gameUrl(value) {
+  let url;
+  try { url = new URL(value); } catch { throw new Error('Enter a valid MyStatsOnline game link'); }
+  if (url.protocol !== 'https:' || url.hostname !== 'www.mystatsonline.com' || url.port || url.username || url.password ||
+      url.pathname.toLowerCase() !== '/hockey/visitor/league/schedule_scores/game_score_hockey.aspx') {
+    throw new Error('Enter a valid MyStatsOnline game link');
+  }
+  const league = url.searchParams.getAll('IDLeague');
+  const game = url.searchParams.getAll('IDGame');
+  if (league.length !== 1 || game.length !== 1 || !/^\d+$/.test(league[0]) || !/^\d+$/.test(game[0])) {
+    throw new Error('The game link must include numeric IDLeague and IDGame values');
+  }
+  return `https://www.mystatsonline.com/hockey/visitor/league/schedule_scores/game_score_hockey.aspx?IDLeague=${league[0]}&IDGame=${game[0]}`;
+}
+
+function _mso_parseGameHeader(html) {
+  const content = html.split('<!-- LOGO / TEAM / TOTAL GOALS -->')[1];
+  if (!content) throw new Error('MyStatsOnline game header was not found');
+  const header = content.split('<!-- STATS HEADER -->')[0];
+  const side = sideName => {
+    const match = header.match(new RegExp(`id=["']maincontent_labTeamSide${sideName}["'][^>]*>([^<]+)<[\\s\\S]*?<span class=["']mso-big mso-bold["']>([\\s\\S]*?)<\\/span>`, 'i'));
+    if (!match) throw new Error('Could not identify MyStatsOnline teams');
+    return { side: _mso_stripTags(match[1]).toLowerCase(), name: _mso_stripTags(match[2]) };
+  };
+  const left = side('Left'), right = side('Right');
+  if (!['home', 'away'].includes(left.side) || !['home', 'away'].includes(right.side) || left.side === right.side) {
+    throw new Error('Could not identify home and away teams');
+  }
+  const score = sideName => {
+    const match = header.match(new RegExp(`id=["']maincontent_pnl${sideName}Total["'][^>]*>\\s*<strong>\\s*(\\d+)\\s*<\\/strong>`, 'i'));
+    if (!match) throw new Error('Game has no recorded score');
+    return Number(match[1]);
+  };
+  const status = header.match(/<span class=["']mso-xbig["'][^>]*>\s*([^<]+)<\/span>/i);
+  const statusText = status ? _mso_stripTags(status[1]) : '';
+  left.score = score('Left');
+  right.score = score('Right');
+  const shotsSection = content.match(/id=["']maincontent_divShots["'][\s\S]*?(?=<div id=["']maincontent_divPP["'])/i);
+  if (shotsSection) {
+    const shots = [...shotsSection[0].matchAll(/<strong>\s*(\d+)\s*<\/strong>/gi)].map(m => Number(m[1]));
+    if (shots.length === 2) { left.shots = shots[0]; right.shots = shots[1]; }
+  }
+  const date = html.match(/<i class=["']fa fa-calendar["']><\/i>\s*([^<]+)/i);
+  return { home: left.side === 'home' ? left : right, away: left.side === 'away' ? left : right,
+    status: statusText, isFinal: /^final(?:\s*\(ot\))?$/i.test(statusText),
+    isOvertime: /\(ot\)/i.test(statusText), date: date ? _mso_stripTags(date[1]) : '' };
 }
 
 function _mso_parseGameDetailHtml(html) {
@@ -5680,7 +5894,10 @@ function _mso_parseGameDetailHtml(html) {
     }
     prevEnd = start + tableHtml.length;
 
-    const rows = _mso_parseTableHtml(tableHtml);
+    const tableId = (tableHtml.match(/\bid=["']([^"']+)["']/i) || [])[1] || '';
+    const sideMatch = tableId.match(/gv(?:Skaters|Goalies)(Visitor|Home)_gvPlayers/i);
+    const tableIsAway = sideMatch ? sideMatch[1].toLowerCase() === 'visitor' : sectionIsAway;
+    const rows = _m_parseRowsWithoutFooter(tableHtml);
     if (rows.length < 2) continue;
     const headers = rows[0].map(h => h.toLowerCase());
 
@@ -5695,15 +5912,15 @@ function _mso_parseGameDetailHtml(html) {
     // Position column is not always present (e.g. 3-on-3 formats) — don't require it
     const isSkater = hasPlayerCol && hasGoalsCol && hasAssistsCol;
 
-    if (isGoalie)      goalieTables.push({ rows, isAway: sectionIsAway });
-    else if (isSkater) skaterTables.push({ rows, isAway: sectionIsAway });
+    if (isGoalie)      goalieTables.push({ rows, isAway: tableIsAway, explicitSide: !!sideMatch });
+    else if (isSkater) skaterTables.push({ rows, isAway: tableIsAway, explicitSide: !!sideMatch });
   }
 
   // No section headings found → fall back to positional assumption:
   // first stats block = away/visitor (index 0), second = home (index 1)
   if (!hasDetectedSection) {
-    skaterTables.forEach((t, i) => { t.isAway = (i === 0); });
-    goalieTables.forEach((t, i) => { t.isAway = (i === 0); });
+    skaterTables.forEach((t, i) => { if (!t.explicitSide) t.isAway = (i === 0); });
+    goalieTables.forEach((t, i) => { if (!t.explicitSide) t.isAway = (i === 0); });
   }
 
   const _parseSkaters = (rows, target) => {
@@ -5725,6 +5942,11 @@ function _mso_parseGameDetailHtml(html) {
     const gvaIdx   = _mso_colIdx(h, 'gva','giveaways');
     const tkaIdx   = _mso_colIdx(h, 'tka','takeaways');
     const toiIdx   = _mso_colIdx(h, 'toi','time on ice');
+    const intIdx   = _mso_colIdx(h, 'int', 'interceptions');
+    const paIdx    = _mso_colIdx(h, 'pa', 'pass attempts');
+    const pcIdx    = _mso_colIdx(h, 'pc', 'pass completions');
+    const pcPctIdx = _mso_colIdx(h, 'pc%', 'pass percentage');
+    const htIdx    = _mso_colIdx(h, 'ht', 'hat tricks');
 
     for (let i = 1; i < rows.length; i++) {
       const row = rows[i];
@@ -5751,8 +5973,21 @@ function _mso_parseGameDetailHtml(html) {
         faceoff_losses: foTot > foW ? foTot - foW : 0,
         giveaways:      gvaIdx >= 0 ? _mso_num(row[gvaIdx]) : 0,
         takeaways:      tkaIdx >= 0 ? _mso_num(row[tkaIdx]) : 0,
-        toi:            toiIdx >= 0 ? _mso_num(row[toiIdx]) * 60 : 0, // MSO TOI is minutes; convert to seconds
+        toi:            toiIdx >= 0 ? _mso_toiSeconds(row[toiIdx]) : 0,
+        interceptions:  intIdx >= 0 ? _mso_num(row[intIdx]) : 0,
+        pass_attempts:  paIdx >= 0 ? _mso_num(row[paIdx]) : 0,
+        pass_completions: pcIdx >= 0 ? _mso_num(row[pcIdx]) : 0,
+        pass_pct: pcPctIdx >= 0 && row[pcPctIdx] && row[pcPctIdx] !== '-' ? _mso_num(row[pcPctIdx]) : null,
+        hat_tricks:     htIdx >= 0 ? _mso_num(row[htIdx]) : 0,
       });
+      const p = target[target.length - 1];
+      for (const [field, idx] of Object.entries({
+        goals: gIdx, assists: aIdx, shots: sIdx, pim: pimIdx, plus_minus: pmIdx,
+        pp_goals: ppgIdx, sh_goals: shgIdx, gwg: gwgIdx, hits: hitsIdx,
+        blocked_shots: bsIdx, faceoff_wins: fowIdx, giveaways: gvaIdx, takeaways: tkaIdx,
+        toi: toiIdx, interceptions: intIdx, pass_attempts: paIdx, pass_completions: pcIdx, pass_pct: pcPctIdx, hat_tricks: htIdx,
+      })) if (idx < 0) delete p[field];
+      if (fowIdx < 0 || foIdx < 0 || fowIdx === foIdx) delete p.faceoff_losses;
     }
   };
 
@@ -5772,6 +6007,8 @@ function _mso_parseGameDetailHtml(html) {
     const psgaIdx  = _mso_colIdx(h, 'psga','penalty shot goals');
     const otwIdx   = _mso_colIdx(h, 'otw','ot win');
     const otlIdx   = _mso_colIdx(h, 'otl','ot loss');
+    const gIdx     = _mso_colIdx(h, 'g', 'goals');
+    const aIdx     = _mso_colIdx(h, 'a', 'assists');
 
     for (let i = 1; i < rows.length; i++) {
       const row = rows[i];
@@ -5784,21 +6021,29 @@ function _mso_parseGameDetailHtml(html) {
       target.push({
         player_name:   name.trim(),
         position:      'G',
-        goals: 0, assists: 0,
+        goals:         gIdx >= 0 ? _mso_num(row[gIdx]) : 0,
+        assists:       aIdx >= 0 ? _mso_num(row[aIdx]) : 0,
         shots_against: saIdx  >= 0 ? _mso_num(row[saIdx])  : 0,
         goals_against: gaIdx  >= 0 ? _mso_num(row[gaIdx])  : 0,
         saves:         svIdx  >= 0 ? _mso_num(row[svIdx])  : 0,
         save_pct:      (svp != null && !isNaN(svp)) ? Math.round(svp * 1000) / 1000 : null,
         gaa:           gaaIdx >= 0 && row[gaaIdx] ? parseFloat(row[gaaIdx]) || null : null,
-        shutouts:      soIdx  >= 0 ? _mso_num(row[soIdx])  : 0,
-        goalie_wins:   wIdx   >= 0 ? _mso_num(row[wIdx])   : 0,
-        goalie_losses: lIdx   >= 0 ? _mso_num(row[lIdx])   : 0,
-        goalie_otw:    otwIdx >= 0 ? _mso_num(row[otwIdx]) : 0,
-        goalie_otl:    otlIdx >= 0 ? _mso_num(row[otlIdx]) : 0,
-        toi:           toiIdx >= 0 ? _mso_num(row[toiIdx]) * 60 : 0, // MSO TOI is minutes; convert to seconds
+        shutouts:      soIdx  >= 0 ? _mso_flag(row[soIdx])  : 0,
+        goalie_wins:   wIdx   >= 0 ? _mso_flag(row[wIdx])   : 0,
+        goalie_losses: lIdx   >= 0 ? _mso_flag(row[lIdx])   : 0,
+        goalie_otw:    otwIdx >= 0 ? _mso_flag(row[otwIdx]) : 0,
+        goalie_otl:    otlIdx >= 0 ? _mso_flag(row[otlIdx]) : 0,
+        toi:           toiIdx >= 0 ? _mso_toiSeconds(row[toiIdx]) : 0,
         penalty_shot_attempts: psaIdx  >= 0 ? _mso_num(row[psaIdx])  : 0,
         penalty_shot_ga:       psgaIdx >= 0 ? _mso_num(row[psgaIdx]) : 0,
       });
+      const p = target[target.length - 1];
+      for (const [field, idx] of Object.entries({
+        goals: gIdx, assists: aIdx, shots_against: saIdx, goals_against: gaIdx,
+        saves: svIdx, save_pct: svpIdx, shutouts: soIdx, goalie_wins: wIdx,
+        goalie_losses: lIdx, goalie_otw: otwIdx, goalie_otl: otlIdx, toi: toiIdx,
+        penalty_shot_attempts: psaIdx, penalty_shot_ga: psgaIdx,
+      })) if (idx < 0) delete p[field];
     }
   };
 
@@ -5807,6 +6052,111 @@ function _mso_parseGameDetailHtml(html) {
 
   return { homePlayers, awayPlayers };
 }
+
+const MSO_SKATER_FIELDS = ['goals', 'assists', 'shots', 'pim', 'plus_minus', 'pp_goals', 'sh_goals', 'gwg', 'hits', 'blocked_shots', 'faceoff_wins', 'faceoff_losses', 'giveaways', 'takeaways', 'toi', 'interceptions', 'pass_attempts', 'pass_completions', 'pass_pct', 'hat_tricks'];
+const MSO_GOALIE_FIELDS = ['goals', 'assists', 'shots_against', 'goals_against', 'saves', 'save_pct', 'shutouts', 'goalie_wins', 'goalie_losses', 'goalie_otw', 'goalie_otl', 'toi', 'penalty_shot_attempts', 'penalty_shot_ga'];
+
+async function _mso_savePlayers(tx, gameId, teamId, players) {
+  for (const p of players) {
+    const matches = await tx.prepare("SELECT id FROM game_player_stats WHERE game_id = ? AND team_id = ? AND LOWER(TRIM(player_name)) = LOWER(?) AND (UPPER(position) = 'G') = ?")
+      .all(gameId, teamId, p.player_name, p.position === 'G');
+    if (matches.length > 1) throw new Error(`Duplicate game stats for ${p.player_name}; resolve them before importing`);
+    const fields = (p.position === 'G' ? MSO_GOALIE_FIELDS : MSO_SKATER_FIELDS).filter(f => Object.hasOwn(p, f));
+    if (matches.length) {
+      if (fields.length) {
+        await tx.prepare(`UPDATE game_player_stats SET position = ?, ${fields.map(f => `${f} = ?`).join(', ')} WHERE id = ?`)
+          .run(p.position, ...fields.map(f => p[f]), matches[0].id);
+      }
+    } else {
+      await tx.prepare(`INSERT INTO game_player_stats (game_id, team_id, player_name, position${fields.length ? ', ' + fields.join(', ') : ''}) VALUES (${Array(fields.length + 4).fill('?').join(', ')})`)
+        .run(gameId, teamId, p.player_name, p.position, ...fields.map(f => p[f]));
+    }
+    const player = await tx.prepare('SELECT id FROM players WHERE LOWER(TRIM(name)) = LOWER(?) LIMIT 1').get(p.player_name);
+    if (!player) {
+      const user = await tx.prepare('SELECT id FROM users WHERE LOWER(TRIM(username)) = LOWER(?) LIMIT 1').get(p.player_name);
+      await tx.prepare('INSERT INTO players (name, team_id, position, user_id, is_rostered) VALUES (?, NULL, ?, ?, 0)')
+        .run(p.player_name, p.position, user ? user.id : null);
+    }
+  }
+}
+
+// Preview and import one MyStatsOnline game without removing unrelated player rows.
+app.post('/api/games/:id/import-mso', requireAdmin, async (req, res) => {
+  let url;
+  try { url = _mso_gameUrl(req.body.url); }
+  catch (err) { return res.status(400).json({ error: err.message }); }
+  const game = await db.prepare(`SELECT g.*, h.name AS home_name, a.name AS away_name
+    FROM games g JOIN teams h ON h.id = g.home_team_id JOIN teams a ON a.id = g.away_team_id WHERE g.id = ?`).get(req.params.id);
+  if (!game) return res.status(404).json({ error: 'Game not found' });
+  let source, parsed;
+  try {
+    const response = await _mso_fetchUrl(url);
+    if (response.status !== 200) throw new Error(`MyStatsOnline returned HTTP ${response.status}`);
+    source = _mso_parseGameHeader(response.body);
+    parsed = _mso_parseGameDetailHtml(response.body);
+  } catch (err) {
+    return res.status(422).json({ error: `Could not read the game: ${err.message}` });
+  }
+  const norm = name => name.trim().replace(/\s+/g, ' ').toLowerCase();
+  const same = norm(source.home.name) === norm(game.home_name) && norm(source.away.name) === norm(game.away_name);
+  const reversed = norm(source.home.name) === norm(game.away_name) && norm(source.away.name) === norm(game.home_name);
+  if (!same && !reversed) return res.status(400).json({ error: `Teams do not match this game: ${source.home.name} vs ${source.away.name}` });
+  const home = same ? source.home : source.away, away = same ? source.away : source.home;
+  const homePlayers = same ? parsed.homePlayers : parsed.awayPlayers;
+  const awayPlayers = same ? parsed.awayPlayers : parsed.homePlayers;
+  const isForfeit = /forfeit/i.test(source.status);
+  let forfeitWinner = null;
+  if (isForfeit) {
+    try {
+      if (!req.body.schedule_url) throw new Error('Paste the MyStatsOnline season schedule URL to identify the forfeit winner');
+      const scheduleUrl = _mso_scheduleUrl(req.body.schedule_url);
+      if (new URL(scheduleUrl).searchParams.get('IDLeague') !== new URL(url).searchParams.get('IDLeague')) throw new Error('The schedule belongs to a different league');
+      const schedule = await _mso_schedule(scheduleUrl);
+      const entry = schedule.games.find(g => g.id === new URL(url).searchParams.get('IDGame'));
+      if (!entry || !entry.is_forfeit || !entry.forfeit_winner ||
+          norm(entry.home) !== norm(source.home.name) || norm(entry.away) !== norm(source.away.name) ||
+          entry.home_score !== source.home.score || entry.away_score !== source.away.score) {
+        throw new Error('The schedule does not identify a matching forfeit winner; check the season URL and try again');
+      }
+      forfeitWinner = same ? entry.forfeit_winner : (entry.forfeit_winner === 'home' ? 'away' : 'home');
+    } catch (err) { return res.status(422).json({ error: err.message }); }
+  }
+  if (!isForfeit && !homePlayers.length && !awayPlayers.length) return res.status(422).json({ error: 'No player statistics were found in this game' });
+  for (const players of [homePlayers, awayPlayers]) {
+    const seen = new Set();
+    for (const p of players) {
+      if (/[<>\x00-\x1f]/.test(p.player_name) || /[<>\x00-\x1f]/.test(p.position)) {
+        return res.status(422).json({ error: 'The source contains an invalid player name or position' });
+      }
+      const key = `${norm(p.player_name)}:${p.position === 'G' ? 'goalie' : 'skater'}`;
+      if (seen.has(key)) return res.status(422).json({ error: `The source contains duplicate stats for ${p.player_name}` });
+      seen.add(key);
+    }
+  }
+  const capped = isForfeit ? { home_score: home.score, away_score: away.score } : capScoreDifferential(home.score, away.score);
+  const preview = { source, homePlayers, awayPlayers, home_name: home.name, away_name: away.name, home_score: capped.home_score, away_score: capped.away_score, forfeit_winner: forfeitWinner };
+  const digest = crypto.createHash('sha256').update(JSON.stringify({ url, gameId: game.id, homeId: game.home_team_id, awayId: game.away_team_id, preview })).digest('hex');
+  if (!req.body.confirm) return res.json({ preview, digest });
+  if (req.body.digest !== digest) return res.status(409).json({ error: 'The source game or teams changed. Preview the import again.' });
+
+  try {
+    await db.transaction(async tx => {
+      const current = await tx.prepare('SELECT home_team_id, away_team_id FROM games WHERE id = ? FOR UPDATE').get(game.id);
+      if (!current || current.home_team_id !== game.home_team_id || current.away_team_id !== game.away_team_id) throw new Error('Game teams changed; preview the import again');
+      await tx.prepare('UPDATE games SET home_score = ?, away_score = ?, home_shots = COALESCE(?, home_shots), away_shots = COALESCE(?, away_shots), status = ?, is_forfeit = ?, forfeit_winner = ?, is_overtime = ? WHERE id = ?')
+        .run(capped.home_score, capped.away_score, home.shots ?? null, away.shots ?? null, isForfeit ? 'forfeit' : 'complete', isForfeit ? 1 : 0, forfeitWinner, source.isOvertime ? 1 : 0, game.id);
+      for (const [teamId, players] of [[game.home_team_id, homePlayers], [game.away_team_id, awayPlayers]]) {
+        await _mso_savePlayers(tx, game.id, teamId, players);
+      }
+      if (isForfeit) await _mso_updateGoalieResults(tx, game.id, game.home_team_id, game.away_team_id, forfeitWinner, source.isOvertime);
+    });
+    if (game.playoff_series_id) await recomputeSeriesWins(game.playoff_series_id);
+    res.json({ imported: true, home_count: homePlayers.length, away_count: awayPlayers.length });
+  } catch (err) {
+    console.error('[mso game import]', err);
+    res.status(500).json({ error: `Failed to import game: ${err.message}` });
+  }
+});
 
 // ── Schedule date & time helpers ──────────────────────────────────────────
 
@@ -5870,6 +6220,499 @@ function _parseScheduleTime(val) {
   }
   return null;
 }
+
+function _mso_scheduleUrl(value) {
+  let url;
+  try { url = new URL(value); } catch { throw new Error('Enter a valid MyStatsOnline schedule link'); }
+  if (url.protocol !== 'https:' || url.hostname !== 'www.mystatsonline.com' || url.port || url.username || url.password ||
+      url.pathname.toLowerCase() !== '/hockey/visitor/league/schedule_scores/schedule.aspx') {
+    throw new Error('Enter a valid MyStatsOnline schedule link');
+  }
+  const league = url.searchParams.getAll('IDLeague'), season = url.searchParams.getAll('IDSeason');
+  if (league.length !== 1 || season.length !== 1 || !/^\d+$/.test(league[0]) || !/^\d+$/.test(season[0])) {
+    throw new Error('The schedule link must include numeric IDLeague and IDSeason values');
+  }
+  return `https://www.mystatsonline.com/hockey/visitor/league/schedule_scores/schedule.aspx?IDLeague=${league[0]}&IDSeason=${season[0]}`;
+}
+
+function _mso_parseSchedule(html, url) {
+  const table = html.match(/<table\b[^>]*\bid=["']maincontent_gvGameList["'][^>]*>[\s\S]*?<\/table>/i);
+  if (!table) {
+    if (/id=["']maincontent_pnlNoGameFound["']/i.test(html)) return [];
+    throw new Error('MyStatsOnline schedule table was not found');
+  }
+  const league = new URL(url).searchParams.get('IDLeague');
+  const games = [], seen = new Set();
+  let date = null, round = null;
+  for (const match of table[0].matchAll(/<tr\b([^>]*)>([\s\S]*?)<\/tr>/gi)) {
+    const cls = (match[1].match(/\bclass=["']([^"']*)["']/i) || [])[1] || '';
+    if (/\bround-row\b/i.test(cls)) {
+      const number = _mso_stripTags(match[2]).match(/\bROUND\s+(\d+)\b/i);
+      round = number ? Number(number[1]) : null;
+      continue;
+    }
+    if (/\bday-row\b/i.test(cls)) { date = _parseScheduleDate(_mso_stripTags(match[2])); continue; }
+    if (!/\bdetail\b/i.test(cls) || /\bevent-row\b/i.test(cls)) continue;
+    const cells = [...match[2].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)].map(m => m[1]);
+    if (cells.length !== 8 || !date) throw new Error('Could not read a schedule game row');
+    const link = cells[0].match(/href=["']([^"']*game_score_hockey\.aspx[^"']*)["']/i);
+    if (!link) throw new Error('A schedule game is missing its game link');
+    const gameUrl = _mso_gameUrl(new URL(link[1].replace(/&amp;/g, '&'), url).toString());
+    const gameParams = new URL(gameUrl).searchParams;
+    if (gameParams.get('IDLeague') !== league) throw new Error('A schedule game belongs to a different league');
+    const id = gameParams.get('IDGame');
+    if (seen.has(id)) throw new Error(`Duplicate game ${id} in schedule`);
+    seen.add(id);
+    const values = cells.map(_mso_stripTags);
+    const isForfeit = /\bgame-forfeit\b/i.test(cls);
+    const homeMarked = /<strong\b/i.test(cells[1]) || /<strong\b/i.test(cells[2]);
+    const awayMarked = /<strong\b/i.test(cells[4]) || /<strong\b/i.test(cells[5]);
+    const forfeitWinner = isForfeit && homeMarked !== awayMarked ? (homeMarked ? 'home' : 'away') : null;
+    const markedComplete = isForfeit || /\bgame-completed\b/i.test(cls);
+    const hasScore = /^\d+$/.test(values[2]) && /^\d+$/.test(values[4]);
+    const complete = markedComplete || hasScore;
+    if (!values[1] || !values[5] || /[<>\x00-\x1f]/.test(values[1] + values[5]) ||
+        (markedComplete && !hasScore) || (/^\d+$/.test(values[2]) !== /^\d+$/.test(values[4]))) {
+      throw new Error(`Game ${id} has invalid teams or scores`);
+    }
+    games.push({
+      id, url: gameUrl, date, round, time: _parseScheduleTime(values[0].replace(/^\d+\s*-\s*/, '')), home: values[1], away: values[5],
+      home_score: complete ? Number(values[2]) : 0, away_score: complete ? Number(values[4]) : 0,
+      status: isForfeit ? 'forfeit' : complete ? 'complete' : 'scheduled',
+      non_final_score: hasScore && !markedComplete,
+      is_overtime: /\bOT\b/i.test(values[3]), is_forfeit: isForfeit, forfeit_winner: forfeitWinner,
+    });
+  }
+  return games;
+}
+
+function _mso_selectedOption(html, id) {
+  const select = html.match(new RegExp(`<select\\b[^>]*\\bid=["']${id}["'][^>]*>([\\s\\S]*?)<\\/select>`, 'i'));
+  if (!select) throw new Error(`MyStatsOnline schedule filter ${id} was not found`);
+  const options = [...select[1].matchAll(/<option\b([^>]*)>/gi)];
+  const selected = options.find(m => /\bselected(?:\s*=|\s|$)/i.test(m[1])) || options[0];
+  const value = selected && selected[1].match(/\bvalue=["']([^"']*)["']/i);
+  if (!value) throw new Error(`Could not read MyStatsOnline schedule filter ${id}`);
+  return _mso_stripTags(value[1]);
+}
+
+function _mso_selectedOptionText(html, id) {
+  const select = html.match(new RegExp(`<select\\b[^>]*\\bid=["']${id}["'][^>]*>([\\s\\S]*?)<\\/select>`, 'i'));
+  if (!select) throw new Error(`MyStatsOnline schedule filter ${id} was not found`);
+  const options = [...select[1].matchAll(/<option\b([^>]*)>([\s\S]*?)<\/option>/gi)];
+  const selected = options.find(m => /\bselected(?:\s*=|\s|$)/i.test(m[1])) || options[0];
+  if (!selected) throw new Error(`Could not read MyStatsOnline schedule filter ${id}`);
+  return _mso_stripTags(selected[2]);
+}
+
+async function _mso_schedule(url) {
+  const initial = await _mso_fetchUrl(url);
+  if (initial.status !== 200) throw new Error(`MyStatsOnline schedule returned HTTP ${initial.status}`);
+  const season = new URL(url).searchParams.get('IDSeason');
+  if (_mso_selectedOption(initial.body, 'breadendcontent_ddlSeason') !== season) throw new Error('MyStatsOnline did not select the requested season');
+  const initialSeason = _mso_selectedOptionText(initial.body, 'breadendcontent_ddlSeason');
+  if (/\bplay[\s-]*offs?\b/i.test(initialSeason) && !/id=["']maincontent_ddlMonth["']/i.test(initial.body)) {
+    if (_mso_selectedOption(initial.body, 'maincontent_ddlStatus') !== '-1' ||
+        _mso_selectedOption(initial.body, 'maincontent_ddlLocation') !== '0' ||
+        _mso_selectedOption(initial.body, 'maincontent_ddlTeam') !== '') {
+      throw new Error('MyStatsOnline did not select all playoff games');
+    }
+    const games = _mso_parseSchedule(initial.body, url);
+    return { games, source_season: initialSeason, is_playoff: true, digest: crypto.createHash('sha256').update(JSON.stringify(games)).digest('hex') };
+  }
+  const form = new URLSearchParams();
+  for (const match of initial.body.matchAll(/<input\b([^>]*)>/gi)) {
+    const attrs = match[1];
+    if (!/\btype=["']hidden["']/i.test(attrs)) continue;
+    const name = attrs.match(/\bname=["']([^"']+)["']/i);
+    const value = attrs.match(/\bvalue=["']([^"']*)["']/i);
+    if (name && value) form.set(_mso_stripTags(name[1]), _mso_stripTags(value[1]));
+  }
+  if (!form.has('__VIEWSTATE') || !form.has('__EVENTVALIDATION')) throw new Error('MyStatsOnline schedule form is missing required fields');
+  form.set('ctl00$breadendcontent$ddlSeason', season);
+  form.set('ctl00$maincontent$ddlMonth', '0');
+  form.set('ctl00$maincontent$ddlStatus', '-1');
+  form.set('ctl00$maincontent$ddlLocation', '0');
+  form.set('ctl00$maincontent$ddlTeam', '');
+  const sessionCookie = (initial.cookies || []).map(c => c.split(';')[0]).find(c => /^ASP\.NET_SessionId=[a-z0-9]+$/i.test(c));
+  const response = await _mso_fetchUrl(url, 0, { body: form.toString(), cookie: sessionCookie });
+  if (response.status !== 200) throw new Error(`MyStatsOnline schedule filter returned HTTP ${response.status}`);
+  if (_mso_selectedOption(response.body, 'breadendcontent_ddlSeason') !== season ||
+      _mso_selectedOption(response.body, 'maincontent_ddlMonth') !== '0' ||
+      _mso_selectedOption(response.body, 'maincontent_ddlStatus') !== '-1' ||
+      _mso_selectedOption(response.body, 'maincontent_ddlLocation') !== '0' ||
+      _mso_selectedOption(response.body, 'maincontent_ddlTeam') !== '') {
+    throw new Error('MyStatsOnline did not apply the all-games schedule filters');
+  }
+  const games = _mso_parseSchedule(response.body, url);
+  const source_season = _mso_selectedOptionText(response.body, 'breadendcontent_ddlSeason');
+  return { games, source_season, is_playoff: /\bplay[\s-]*offs?\b/i.test(source_season), digest: crypto.createHash('sha256').update(JSON.stringify(games)).digest('hex') };
+}
+
+async function _findLinkedPlayoffSeason(tx, parent) {
+  const linked = await tx.prepare(`SELECT s.* FROM seasons s
+    LEFT JOIN playoffs p ON p.playoff_season_id = s.id
+    WHERE s.is_playoff = 1 AND (s.parent_season_id = ? OR p.season_id = ?)`).all(parent.id, parent.id);
+  if (linked.length > 1) throw new Error('Multiple playoff seasons are linked to this season; resolve them before importing');
+  if (linked.length) {
+    if (linked[0].parent_season_id && Number(linked[0].parent_season_id) !== Number(parent.id)) throw new Error('Playoff season has a conflicting parent');
+    return linked[0];
+  }
+  const candidates = await tx.prepare(`SELECT s.* FROM seasons s
+    WHERE s.is_playoff = 1 AND s.parent_season_id IS NULL AND s.name = ?
+      AND COALESCE(s.league_type, '') = COALESCE(?, '')
+      AND NOT EXISTS (SELECT 1 FROM playoffs p WHERE p.playoff_season_id = s.id)`).all(`${parent.name} Playoffs`, parent.league_type);
+  if (!candidates.length) return null;
+  const parents = await tx.prepare("SELECT id FROM seasons WHERE is_playoff = 0 AND name = ? AND COALESCE(league_type, '') = COALESCE(?, '')").all(parent.name, parent.league_type);
+  if (candidates.length !== 1 || parents.length !== 1) throw new Error('Cannot uniquely match the existing playoff season; resolve duplicate seasons first');
+  return candidates[0];
+}
+
+async function _ensureLinkedPlayoffSeason(tx, parentId) {
+  const parent = await tx.prepare('SELECT * FROM seasons WHERE id = ? FOR UPDATE').get(parentId);
+  if (!parent || parent.is_playoff) throw new Error('The selected regular season no longer exists');
+  let playoff = await _findLinkedPlayoffSeason(tx, parent);
+  if (playoff) {
+    if (!playoff.parent_season_id) await tx.prepare('UPDATE seasons SET parent_season_id = ? WHERE id = ?').run(parent.id, playoff.id);
+    return playoff;
+  }
+  const order = await tx.prepare('SELECT COALESCE(MAX(sort_order), 0) AS m FROM seasons').get();
+  const result = await tx.prepare('INSERT INTO seasons (name, is_active, league_type, is_playoff, parent_season_id, sort_order) VALUES (?, 0, ?, 1, ?, ?)').run(`${parent.name} Playoffs`, parent.league_type || '', parent.id, Number(order.m) + 1);
+  return { id: result.lastInsertRowid, name: `${parent.name} Playoffs`, league_type: parent.league_type, is_playoff: 1, parent_season_id: parent.id };
+}
+
+function _mso_matchingExistingGame(g, peers, existingGames) {
+  const linked = existingGames.filter(row => row.ea_match_id === `mso:${g.id}`);
+  if (linked.length === 1) return linked[0];
+  if (linked.length > 1) return null;
+  const norm = s => String(s || '').trim().toLowerCase();
+  const sameMatchup = peers.filter(p => p.date === g.date && norm(p.home) === norm(g.home) && norm(p.away) === norm(g.away));
+  const candidates = existingGames.filter(row =>
+    (!row.ea_match_id || !String(row.ea_match_id).startsWith('mso:')) &&
+    String(row.date).slice(0, 10) === g.date &&
+    norm(row.home_name) === norm(g.home) && norm(row.away_name) === norm(g.away));
+  if (sameMatchup.length === 1 && candidates.length === 1 && (!g.time || !candidates[0].game_time)) return candidates[0];
+  if (!g.time || sameMatchup.filter(p => p.time === g.time).length !== 1 || sameMatchup.some(p => !p.time)) return null;
+  if ((sameMatchup.length > 1 || candidates.length > 1) && candidates.some(row => !row.game_time)) return null;
+  const matches = candidates.filter(row => String(row.game_time || '').slice(0, 5) === g.time);
+  return matches.length === 1 ? matches[0] : null;
+}
+
+async function _mso_existingSeasonGames(seasonId, connection = db) {
+  return connection.prepare(`SELECT g.id, g.home_team_id, g.away_team_id, g.home_score, g.away_score, g.status, g.is_forfeit, g.forfeit_winner, g.playoff_series_id, g.ea_match_id, g.date, g.game_time, h.name AS home_name, a.name AS away_name
+    FROM games g JOIN teams h ON h.id = g.home_team_id JOIN teams a ON a.id = g.away_team_id
+    WHERE g.season_id = ?`).all(seasonId);
+}
+
+function _mso_bracketSeries(sourceGames, existingGames, standings, seriesLength) {
+  const norm = s => String(s || '').trim().toLowerCase();
+  const needed = (seriesLength + 1) / 2;
+  const standingsById = new Map(standings.map((team, index) => [Number(team.id), { team, rank: index + 1 }]));
+  const rounds = new Map(), usedGames = new Set(), participants = new Set();
+  for (const source of sourceGames) {
+    if (!Number.isInteger(source.round) || source.round < 1 || source.status === 'scheduled') {
+      throw new Error('Bracket creation requires a round and a final result for every game');
+    }
+    const game = _mso_matchingExistingGame(source, sourceGames, existingGames);
+    if (!game || usedGames.has(game.id)) throw new Error(`Game ${source.id} cannot be uniquely matched; preview and import all games first`);
+    usedGames.add(game.id);
+    if (game.playoff_series_id || norm(game.home_name) !== norm(source.home) || norm(game.away_name) !== norm(source.away)) {
+      throw new Error(`Game ${source.id} is linked to another series or its teams have changed`);
+    }
+    if (source.is_forfeit && !source.forfeit_winner) throw new Error(`Game ${source.id} has an unidentified forfeit winner`);
+    const sourceScore = source.is_forfeit ? { home_score: source.home_score, away_score: source.away_score }
+      : capScoreDifferential(source.home_score, source.away_score);
+    const sourceWinner = gameWinnerSide({ ...source, is_forfeit: source.is_forfeit ? 1 : 0 });
+    const savedWinner = gameWinnerSide(game);
+    if (!['complete', 'forfeit'].includes(game.status) || !sourceWinner || savedWinner !== sourceWinner ||
+        Number(game.home_score) !== sourceScore.home_score || Number(game.away_score) !== sourceScore.away_score ||
+        !!(game.status === 'forfeit' || game.is_forfeit) !== !!source.is_forfeit) {
+      throw new Error(`Game ${source.id} has a different result or an unidentified winner; resolve it before building the bracket`);
+    }
+    const home = Number(game.home_team_id), away = Number(game.away_team_id);
+    if (home === away || !standingsById.has(home) || !standingsById.has(away)) {
+      throw new Error(`Game ${source.id} has teams missing from the regular-season standings`);
+    }
+    participants.add(home); participants.add(away);
+    if (!rounds.has(source.round)) rounds.set(source.round, new Map());
+    const key = [home, away].sort((a, b) => a - b).join(':');
+    const groups = rounds.get(source.round);
+    if (!groups.has(key)) {
+      const [high, low] = [home, away].sort((a, b) => standingsById.get(a).rank - standingsById.get(b).rank);
+      groups.set(key, { high, low, highWins: 0, lowWins: 0, games: [] });
+    }
+    const series = groups.get(key);
+    series.games.push(game.id);
+    const winner = sourceWinner === 'home' ? home : away;
+    if (winner === series.high) series.highWins++; else series.lowWins++;
+  }
+  const count = rounds.size;
+  if (!count || !rounds.has(count) || rounds.get(count).size !== 1) throw new Error('The schedule does not contain a complete elimination bracket');
+  for (let r = 1; r <= count; r++) {
+    const groups = rounds.get(r);
+    const expected = 2 ** (count - r);
+    if (!groups || (r === 1 ? groups.size > expected : groups.size !== expected)) {
+      throw new Error('The schedule has missing rounds or ambiguous matchups');
+    }
+    const teamsInRound = new Set();
+    for (const series of groups.values()) {
+      if (teamsInRound.has(series.high) || teamsInRound.has(series.low)) throw new Error('A team has multiple matchups in one round');
+      teamsInRound.add(series.high); teamsInRound.add(series.low);
+      if (series.games.length > seriesLength || Math.max(series.highWins, series.lowWins) !== needed ||
+          Math.min(series.highWins, series.lowWins) >= needed) {
+        throw new Error(`A round ${r} series is incomplete or inconsistent with a best-of-${seriesLength} format`);
+      }
+      series.winner = series.highWins === needed ? series.high : series.low;
+    }
+  }
+  const ordered = new Map([[count, [...rounds.get(count).values()]]]);
+  for (let r = count - 1; r >= 1; r--) {
+    const previous = [...rounds.get(r).values()], list = [];
+    for (const next of ordered.get(r + 1)) {
+      for (const teamId of [next.high, next.low]) {
+        const matches = previous.filter(series => series.winner === teamId);
+        if (matches.length === 1) {
+          list.push(matches[0]);
+        } else if (r === 1 && matches.length === 0 && !previous.some(series => series.high === teamId || series.low === teamId)) {
+          list.push({ high: teamId, low: null, highWins: 0, lowWins: 0, winner: teamId, games: [], inferredBye: true });
+        } else {
+          throw new Error('Series winners do not match the following round');
+        }
+      }
+    }
+    if (new Set(list).size !== list.length || previous.some(series => !list.includes(series)) ||
+        list.length !== 2 ** (count - r)) throw new Error('Series advancement is ambiguous');
+    ordered.set(r, list);
+  }
+  return { rounds: ordered, participants: [...participants], standingsById };
+}
+
+function _mso_needsForfeitWinnerUpdate(game, existing) {
+  const norm = name => String(name || '').trim().toLowerCase();
+  return !!(existing && game.is_forfeit && game.forfeit_winner &&
+    (existing.status === 'forfeit' || existing.is_forfeit) &&
+    norm(existing.home_name) === norm(game.home) && norm(existing.away_name) === norm(game.away) &&
+    existing.forfeit_winner !== game.forfeit_winner);
+}
+
+async function _mso_updateGoalieResults(tx, gameId, homeId, awayId, winner, overtime) {
+  const winnerId = winner === 'home' ? homeId : awayId;
+  const loserId = winner === 'home' ? awayId : homeId;
+  const ot = overtime ? 1 : 0;
+  await tx.prepare(`UPDATE game_player_stats SET
+    goalie_wins = CASE WHEN team_id = ? AND ? = 0 THEN 1 ELSE 0 END,
+    goalie_losses = CASE WHEN team_id = ? AND ? = 0 THEN 1 ELSE 0 END,
+    goalie_otw = CASE WHEN team_id = ? AND ? = 1 THEN 1 ELSE 0 END,
+    goalie_otl = CASE WHEN team_id = ? AND ? = 1 THEN 1 ELSE 0 END
+    WHERE game_id = ? AND UPPER(position) = 'G'`)
+    .run(winnerId, ot, loserId, ot, winnerId, ot, loserId, ot, gameId);
+}
+
+app.post('/api/admin/import-mso-schedule', requireOwner, async (req, res) => {
+  let url, season;
+  try {
+    url = _mso_scheduleUrl(req.body.url);
+    if (!/^\d+$/.test(String(req.body.season_id || ''))) return res.status(400).json({ error: 'Select an existing season' });
+    season = await db.prepare('SELECT id, name, league_type, is_playoff, parent_season_id FROM seasons WHERE id = ?').get(req.body.season_id);
+    if (!season) return res.status(404).json({ error: 'Season not found' });
+  } catch (err) { return res.status(400).json({ error: err.message }); }
+
+  let g, schedule;
+  if (req.body.build_bracket) {
+    const manifest = _verifyPayload(req.body.token);
+    const seriesLength = Number(req.body.series_length);
+    if (!manifest || manifest.purpose !== 'mso-schedule-bracket' || manifest.url !== url ||
+        manifest.season_id !== Number(season.id) || !Array.isArray(manifest.games) || season.is_playoff) {
+      return res.status(409).json({ error: 'Bracket preview is invalid or expired. Select the regular season and preview again.' });
+    }
+    if (!Number.isInteger(seriesLength) || seriesLength < 1 || seriesLength > 15 || seriesLength % 2 !== 1) {
+      return res.status(400).json({ error: 'Series length must be an odd number from 1 to 15' });
+    }
+    try {
+      const standings = await calcStandings(Number(season.id));
+      let bracketId;
+      await db.transaction(async tx => {
+        const parent = await tx.prepare('SELECT * FROM seasons WHERE id = ? FOR UPDATE').get(season.id);
+        if (!parent || parent.is_playoff) throw new Error('The selected regular season no longer exists');
+        const target = await _findLinkedPlayoffSeason(tx, parent);
+        if (!target) throw new Error('Import the playoff games before building the bracket');
+        const bracket = await tx.prepare('SELECT id FROM playoffs WHERE season_id = ? OR playoff_season_id = ?').get(parent.id, target.id);
+        if (bracket) throw new Error('A bracket already exists for this season; it was not changed');
+        await tx.prepare('SELECT id FROM games WHERE season_id = ? FOR UPDATE').all(target.id);
+        const existing = await _mso_existingSeasonGames(target.id, tx);
+        const plan = _mso_bracketSeries(manifest.games, existing, standings, seriesLength);
+        const created = await tx.prepare('INSERT INTO playoffs (season_id, teams_qualify, min_games_played, series_length, playoff_season_id, seeding_format) VALUES (?, ?, 0, ?, ?, ?)').run(parent.id, plan.participants.length, seriesLength, target.id, 'standard');
+        bracketId = created.lastInsertRowid;
+        for (const id of plan.participants) {
+          const entry = plan.standingsById.get(id);
+          const conference = entry.team.conference;
+          const rank = conference ? standings.filter(t => t.conference === conference).findIndex(t => Number(t.id) === id) + 1 : entry.rank;
+          await tx.prepare('INSERT INTO playoff_teams (playoff_id, team_id, seed) VALUES (?, ?, ?)').run(bracketId, id, rank);
+        }
+        for (let round = 1; round <= plan.rounds.size; round++) {
+          const series = plan.rounds.get(round);
+          for (let i = 0; i < series.length; i++) {
+            const s = series[i];
+            const inserted = await tx.prepare('INSERT INTO playoff_series (playoff_id, round_number, series_number, high_seed_id, low_seed_id, high_seed_wins, low_seed_wins, winner_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(bracketId, round, i + 1, s.high, s.low, s.highWins, s.lowWins, s.winner);
+            for (const gameId of s.games) await tx.prepare('UPDATE games SET playoff_series_id = ? WHERE id = ?').run(inserted.lastInsertRowid, gameId);
+          }
+        }
+      });
+      return res.json({ bracket_id: bracketId });
+    } catch (err) {
+      return res.status(422).json({ error: `Could not build bracket: ${err.message}` });
+    }
+  }
+  if (!req.body.game_id) {
+    try {
+      schedule = await _mso_schedule(url);
+      const playoffParent = schedule.is_playoff && !season.is_playoff ? season : null;
+      const target = playoffParent ? await _findLinkedPlayoffSeason(db, playoffParent) : season;
+      const existing = target ? await _mso_existingSeasonGames(target.id) : [];
+      const games = schedule.games.map(game => {
+        const peers = schedule.games.filter(p => p.date === game.date && p.home.toLowerCase() === game.home.toLowerCase() && p.away.toLowerCase() === game.away.toLowerCase());
+        const match = _mso_matchingExistingGame(game, peers, existing);
+        const winner_update = _mso_needsForfeitWinnerUpdate(game, match);
+        const skipped = !!match && !winner_update && !(game.is_forfeit && !game.forfeit_winner);
+        const token = skipped ? null : _signPayload({ purpose: 'mso-schedule-game', url, season_id: Number(season.id), playoff_parent_id: playoffParent ? Number(playoffParent.id) : null, game, peers, exp: Date.now() + 24 * 60 * 60 * 1000 });
+        return { ...game, skipped, winner_update, token };
+      });
+      let bracket_token = null, bracket_note = '';
+      if (schedule.is_playoff && !season.is_playoff && schedule.games.length) {
+        const bracket = await db.prepare('SELECT id FROM playoffs WHERE season_id = ?').get(season.id);
+        if (bracket) bracket_note = 'A bracket already exists and will not be changed.';
+        else if (schedule.games.every(game => game.round)) {
+          bracket_token = _signPayload({ purpose: 'mso-schedule-bracket', url, season_id: Number(season.id), games: schedule.games, exp: Date.now() + 24 * 60 * 60 * 1000 });
+          bracket_note = 'A completed elimination bracket can be built from these rounds after all games are imported.';
+        } else bracket_note = 'The schedule does not identify every round; no bracket can be built automatically.';
+      }
+      return res.json({ season: target ? target.name : `${season.name} Playoffs`, source_season: schedule.source_season, playoff_season_will_be_created: !!playoffParent && !target, bracket_token, bracket_note, games });
+    } catch (err) { return res.status(422).json({ error: `Could not read schedule: ${err.message}` }); }
+  }
+  const manifest = _verifyPayload(req.body.token);
+  if (!manifest || manifest.purpose !== 'mso-schedule-game' || manifest.url !== url ||
+      manifest.season_id !== Number(season.id) || !manifest.game || manifest.game.id !== String(req.body.game_id) ||
+      !Array.isArray(manifest.peers)) {
+    return res.status(409).json({ error: 'Import preview is invalid or expired. Preview the schedule again.' });
+  }
+  g = manifest.game;
+  schedule = { games: manifest.peers };
+  if (manifest.playoff_parent_id != null && (Number(manifest.playoff_parent_id) !== Number(season.id) || season.is_playoff)) {
+    return res.status(409).json({ error: 'Import destination changed. Preview the schedule again.' });
+  }
+
+  let detail = { homePlayers: [], awayPlayers: [] }, source = null;
+  try {
+    const target = manifest.playoff_parent_id ? await _findLinkedPlayoffSeason(db, season) : season;
+    const already = target ? _mso_matchingExistingGame(g, schedule.games, await _mso_existingSeasonGames(target.id)) : null;
+    if (g.is_forfeit && !g.forfeit_winner) throw new Error('MyStatsOnline did not clearly identify the forfeit winner');
+    if (already && !_mso_needsForfeitWinnerUpdate(g, already)) return res.json({ skipped: true, game_id: already.id });
+    if (already) {
+      let updated = false, seriesId = null;
+      await db.transaction(async tx => {
+        const current = await tx.prepare('SELECT * FROM games WHERE id = ? FOR UPDATE').get(already.id);
+        if (!current || Number(current.season_id) !== Number(target.id) ||
+            current.home_team_id !== already.home_team_id || current.away_team_id !== already.away_team_id ||
+            !(current.status === 'forfeit' || current.is_forfeit)) {
+          throw new Error('Existing game changed; preview the schedule again');
+        }
+        if (current.forfeit_winner === g.forfeit_winner) return;
+        if ((current.forfeit_winner || null) !== (already.forfeit_winner || null)) throw new Error('Forfeit winner changed; preview the schedule again');
+        await tx.prepare('UPDATE games SET forfeit_winner = ? WHERE id = ?').run(g.forfeit_winner, current.id);
+        await _mso_updateGoalieResults(tx, current.id, current.home_team_id, current.away_team_id, g.forfeit_winner, current.is_overtime);
+        updated = true;
+        seriesId = current.playoff_series_id;
+      });
+      if (seriesId) await recomputeSeriesWins(seriesId);
+      return res.json(updated ? { game_id: already.id, winner_updated: true, players: 0 } : { game_id: already.id, skipped: true });
+    }
+    if (g.status !== 'scheduled') {
+      const response = await _mso_fetchUrl(g.url);
+      if (response.status !== 200) throw new Error(`Game returned HTTP ${response.status}`);
+      detail = _mso_parseGameDetailHtml(response.body);
+      source = _mso_parseGameHeader(response.body);
+      const norm = s => s.trim().toLowerCase();
+      if (norm(source.home.name) !== norm(g.home) || norm(source.away.name) !== norm(g.away)) {
+        throw new Error('Game teams do not match the schedule');
+      }
+      if (source.home.score !== g.home_score || source.away.score !== g.away_score) {
+        throw new Error('Game score does not match the schedule; preview again later');
+      }
+      if (g.is_forfeit && !/forfeit/i.test(source.status)) {
+        throw new Error('Game forfeit status does not match the schedule; preview again later');
+      }
+      for (const players of [detail.homePlayers, detail.awayPlayers]) {
+        const seen = new Set();
+        for (const p of players) {
+          const key = `${String(p.player_name || '').trim().toLowerCase()}:${p.position === 'G' ? 'goalie' : 'skater'}`;
+          if (!String(p.player_name || '').trim() || !p.position || /[<>\x00-\x1f]/.test(p.player_name) ||
+              /[<>\x00-\x1f]/.test(p.position) || seen.has(key)) throw new Error(`Invalid or duplicate player: ${p.player_name || '(empty)'}`);
+          seen.add(key);
+        }
+      }
+    }
+    let result;
+    await db.transaction(async tx => {
+      const destination = manifest.playoff_parent_id ? await _ensureLinkedPlayoffSeason(tx, season.id) : season;
+      const lockedSeason = await tx.prepare('SELECT id FROM seasons WHERE id = ? FOR UPDATE').get(destination.id);
+      if (!lockedSeason) throw new Error('Season no longer exists');
+      const resolveTeam = async name => {
+        const teams = await tx.prepare('SELECT id, league_type FROM teams WHERE LOWER(TRIM(name)) = LOWER(?)').all(name.trim());
+        if (teams.length === 1) return teams[0].id;
+        const matching = teams.filter(t => !t.league_type || !season.league_type || t.league_type === season.league_type || t.league_type === 'both');
+        if (matching.length !== 1 && teams.length) throw new Error(`Cannot uniquely match team "${name}" to this league`);
+        if (matching.length) return matching[0].id;
+        const inserted = await tx.prepare("INSERT INTO teams (name, conference, division, league_type, color1, color2) VALUES (?, '', '', ?, '', '')").run(name, season.league_type || '');
+        return inserted.lastInsertRowid;
+      };
+      const homeId = await resolveTeam(g.home), awayId = await resolveTeam(g.away);
+      if (homeId === awayId) throw new Error('Home and away teams resolve to the same team');
+      const sourceId = `mso:${g.id}`;
+      const linked = await tx.prepare('SELECT * FROM games WHERE ea_match_id = ? FOR UPDATE').all(sourceId);
+      if (linked.length > 1) throw new Error('This source game is linked to multiple games');
+      let existing = linked[0];
+      if (existing && (Number(existing.season_id) !== Number(destination.id) || Number(existing.home_team_id) !== Number(homeId) || Number(existing.away_team_id) !== Number(awayId))) {
+        throw new Error('This source game is already linked to a different season or teams');
+      }
+      if (!existing) {
+        const candidates = await tx.prepare('SELECT * FROM games WHERE season_id = ? AND home_team_id = ? AND away_team_id = ? AND date = ? FOR UPDATE').all(destination.id, homeId, awayId, g.date);
+        const schedulePeers = schedule.games.filter(x => x.date === g.date && x.home.toLowerCase() === g.home.toLowerCase() && x.away.toLowerCase() === g.away.toLowerCase());
+        const unlinked = candidates.filter(c => (!c.ea_match_id || !String(c.ea_match_id).startsWith('mso:')) &&
+          !schedulePeers.some(x => x.id !== g.id && x.time && x.time === String(c.game_time || '').slice(0, 5)));
+        if (schedulePeers.length > 1 && (!g.time || schedulePeers.some(x => !x.time || (x.id !== g.id && x.time === g.time)))) {
+          throw new Error('Multiple source games have the same teams and date without distinct times');
+        }
+        const exact = unlinked.filter(c => g.time && String(c.game_time || '').slice(0, 5) === g.time);
+        if (exact.length > 1 || ((schedulePeers.length > 1 || unlinked.length > 1) && unlinked.some(c => !c.game_time))) throw new Error('Multiple games could match; resolve them before importing');
+        if (exact.length === 1) existing = exact[0];
+        else if (schedulePeers.length === 1 && unlinked.length === 1 && (!g.time || !unlinked[0].game_time)) existing = unlinked[0];
+        else if (unlinked.length) throw new Error('Existing games have conflicting times; resolve them before importing');
+        if (!existing) {
+          const reversed = await tx.prepare('SELECT * FROM games WHERE season_id = ? AND home_team_id = ? AND away_team_id = ? AND date = ? FOR UPDATE').all(destination.id, awayId, homeId, g.date);
+          if (reversed.some(c => !g.time || !c.game_time || String(c.game_time).slice(0, 5) === g.time)) {
+            throw new Error('A game with reversed home and away teams may match; resolve it before importing');
+          }
+        }
+      }
+      if (existing) {
+        result = { game_id: existing.id, skipped: true };
+        return;
+      }
+      const score = g.is_forfeit ? { home_score: g.home_score, away_score: g.away_score } : capScoreDifferential(g.home_score, g.away_score);
+      const inserted = await tx.prepare('INSERT INTO games (home_team_id, away_team_id, home_score, away_score, date, status, season_id, is_overtime, is_forfeit, game_time, ea_match_id, home_shots, away_shots, forfeit_winner) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(homeId, awayId, score.home_score, score.away_score, g.date, g.status, destination.id, g.is_overtime ? 1 : 0, g.is_forfeit ? 1 : 0, g.time, sourceId, source?.home.shots ?? null, source?.away.shots ?? null, g.forfeit_winner);
+      const gameId = inserted.lastInsertRowid;
+      await _mso_savePlayers(tx, gameId, homeId, detail.homePlayers);
+      await _mso_savePlayers(tx, gameId, awayId, detail.awayPlayers);
+      if (g.is_forfeit) await _mso_updateGoalieResults(tx, gameId, homeId, awayId, g.forfeit_winner, g.is_overtime);
+      result = { game_id: gameId, created: true, players: detail.homePlayers.length + detail.awayPlayers.length };
+    });
+    res.json(result);
+  } catch (err) {
+    console.error('[mso schedule import]', err);
+    res.status(422).json({ error: err.message });
+  }
+});
 
 // ── Excel / CSV schedule import endpoint ──────────────────────────────────
 
@@ -6535,20 +7378,23 @@ app.post('/api/admin/awards/season/:seasonId/auto-compute', requireOwner, async 
   // ── Art Ross: most points in regular season ──────────────────────────────
   if (toCompute.includes('art_ross')) {
     try {
-      const leader = await db.prepare(`
-        SELECT gps.player_name, SUM(gps.goals + gps.assists) AS points
+      const leaders = await db.prepare(`
+        WITH totals AS (
+        SELECT (ARRAY_AGG(BTRIM(gps.player_name) ORDER BY g.id))[1] AS player_name, SUM(COALESCE(gps.goals, 0) + COALESCE(gps.assists, 0)) AS points
         FROM game_player_stats gps
         JOIN games g ON gps.game_id = g.id
         WHERE g.season_id = ? AND g.playoff_series_id IS NULL AND g.status IN ('complete','forfeit')
           AND gps.position != 'G'
-        GROUP BY gps.player_name
-        ORDER BY points DESC, SUM(gps.goals) DESC
-        LIMIT 1
-      `).get(seasonId);
-      if (leader) {
+        GROUP BY LOWER(BTRIM(gps.player_name))
+        )
+        SELECT * FROM totals WHERE points = (SELECT MAX(points) FROM totals) ORDER BY player_name
+      `).all(seasonId);
+      for (const leader of leaders) {
+        const existing = await db.prepare("SELECT player_name FROM season_awards WHERE season_id = ? AND award_key = 'art_ross' AND LOWER(BTRIM(player_name)) = LOWER(BTRIM(?)) LIMIT 1").get(seasonId, leader.player_name);
+        const winnerName = existing ? existing.player_name : leader.player_name;
         await db.prepare(`INSERT INTO season_awards (season_id, award_key, player_name, notes) VALUES (?, 'art_ross', ?, ?) ON CONFLICT (season_id, award_key, player_name) DO UPDATE SET notes = EXCLUDED.notes`)
-          .run(seasonId, leader.player_name, `${leader.points} points`);
-        result.computed.push({ award: 'art_ross', player: leader.player_name, value: leader.points });
+          .run(seasonId, winnerName, `${leader.points} points`);
+        result.computed.push({ award: 'art_ross', player: winnerName, value: leader.points });
       }
     } catch (e) { result.errors.push({ award: 'art_ross', error: e.message }); }
   }
@@ -6556,20 +7402,23 @@ app.post('/api/admin/awards/season/:seasonId/auto-compute', requireOwner, async 
   // ── Rocket Richard: most goals in regular season ─────────────────────────
   if (toCompute.includes('rocket_richard')) {
     try {
-      const leader = await db.prepare(`
-        SELECT gps.player_name, SUM(gps.goals) AS goals
+      const leaders = await db.prepare(`
+        WITH totals AS (
+        SELECT (ARRAY_AGG(BTRIM(gps.player_name) ORDER BY g.id))[1] AS player_name, SUM(COALESCE(gps.goals, 0)) AS goals
         FROM game_player_stats gps
         JOIN games g ON gps.game_id = g.id
         WHERE g.season_id = ? AND g.playoff_series_id IS NULL AND g.status IN ('complete','forfeit')
           AND gps.position != 'G'
-        GROUP BY gps.player_name
-        ORDER BY goals DESC
-        LIMIT 1
-      `).get(seasonId);
-      if (leader) {
+        GROUP BY LOWER(BTRIM(gps.player_name))
+        )
+        SELECT * FROM totals WHERE goals = (SELECT MAX(goals) FROM totals) ORDER BY player_name
+      `).all(seasonId);
+      for (const leader of leaders) {
+        const existing = await db.prepare("SELECT player_name FROM season_awards WHERE season_id = ? AND award_key = 'rocket_richard' AND LOWER(BTRIM(player_name)) = LOWER(BTRIM(?)) LIMIT 1").get(seasonId, leader.player_name);
+        const winnerName = existing ? existing.player_name : leader.player_name;
         await db.prepare(`INSERT INTO season_awards (season_id, award_key, player_name, notes) VALUES (?, 'rocket_richard', ?, ?) ON CONFLICT (season_id, award_key, player_name) DO UPDATE SET notes = EXCLUDED.notes`)
-          .run(seasonId, leader.player_name, `${leader.goals} goals`);
-        result.computed.push({ award: 'rocket_richard', player: leader.player_name, value: leader.goals });
+          .run(seasonId, winnerName, `${leader.goals} goals`);
+        result.computed.push({ award: 'rocket_richard', player: winnerName, value: leader.goals });
       }
     } catch (e) { result.errors.push({ award: 'rocket_richard', error: e.message }); }
   }
@@ -6660,7 +7509,7 @@ app.post('/api/admin/awards/season/:seasonId/auto-compute', requireOwner, async 
     try {
       // Calculate regular season points (2pts win, 1pt OT loss, 0pt loss) per team
       const games = await db.prepare(`
-        SELECT home_team_id, away_team_id, home_score, away_score, is_overtime, is_forfeit
+        SELECT home_team_id, away_team_id, home_score, away_score, status, is_overtime, is_forfeit, forfeit_winner
         FROM games
         WHERE season_id = ? AND playoff_series_id IS NULL AND status IN ('complete','forfeit')
       `).all(seasonId);
@@ -6669,9 +7518,11 @@ app.post('/api/admin/awards/season/:seasonId/auto-compute', requireOwner, async 
       for (const g of games) {
         if (!teamPts[g.home_team_id]) teamPts[g.home_team_id] = 0;
         if (!teamPts[g.away_team_id]) teamPts[g.away_team_id] = 0;
-        if (g.home_score > g.away_score) {
+        const winner = gameWinnerSide(g);
+        if (winner === 'home') {
           teamPts[g.home_team_id] += 2;
-        } else if (g.away_score > g.home_score) {
+          if (g.is_overtime) teamPts[g.away_team_id] += 1;
+        } else if (winner === 'away') {
           teamPts[g.away_team_id] += 2;
           if (g.is_overtime) teamPts[g.home_team_id] += 1;
         }

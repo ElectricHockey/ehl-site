@@ -25,7 +25,6 @@
 
   // ── Column definitions ─────────────────────────────────────────────────
   const GS_COLS = [
-    { l:'OVR',  k:'overallRating',        w:42, mn:0 },
     { l:'G',    k:'goals',                w:38 },
     { l:'A',    k:'assists',              w:38 },
     { l:'+/-',  k:'plusMinus',            w:42, mn:-99 },
@@ -48,7 +47,7 @@
     { l:'PC',   k:'passCompletions',      w:45 },
     { l:'HT',   k:'hatTricks',            w:35 },
     { l:'POSS', k:'possessionSecs',       w:52 },
-    { l:'TOI',  k:'toi',                  w:52 },
+    { l:'TOI (min)', k:'toi',             w:65 },
     { l:'SV',   k:'saves',                w:38 },
     { l:'GA',   k:'goalsAgainst',         w:38 },
     { l:'ShAg', k:'shotsAgainst',         w:42 },
@@ -60,6 +59,8 @@
 
   let _editorGameId = null;
   let _gsRowIdx = 0;
+  let _initialPlayers = '';
+  let _initialGameTime = null;
 
   // Convert DB snake_case row → camelCase object for the editor form
   function gsDbToRow(p) {
@@ -92,7 +93,7 @@
       passCompletions:     p.pass_completions        || 0,
       hatTricks:           p.hat_tricks              || 0,
       possessionSecs:      p.possession_secs         || 0,
-      toi:                 p.toi                     || 0,
+      toi:                 Number(((Number(p.toi) || 0) / 60).toFixed(4)),
       saves:               p.saves                   || 0,
       goalsAgainst:        p.goals_against           || 0,
       shotsAgainst:        p.shots_against           || 0,
@@ -110,14 +111,16 @@
     const IS = 'background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:3px;padding:0.1rem 0;font-size:0.75rem;text-align:center;';
     const numInp = (key, val, w, mn) => {
       const minA = mn !== undefined ? `min="${mn}"` : 'min="0"';
-      return `<input type="number" data-key="${key}" value="${val !== undefined ? val : 0}" ${minA} style="${IS}width:${w || 45}px;" />`;
+      const step = key === 'toi' ? ' step="any"' : '';
+      return `<input type="number" data-key="${key}" value="${val !== undefined ? val : 0}" ${minA}${step} style="${IS}width:${w || 45}px;" />`;
     };
     const cells = GS_COLS.map(c => `<td style="padding:0.08rem 0.1rem;">${numInp(c.k, p[c.k], c.w, c.mn)}</td>`).join('');
     const posOpts = ['C','LW','RW','LD','RD','G'].map(pos => `<option${pos === (p.position || '') ? ' selected' : ''}>${pos}</option>`).join('');
     const safeName = (p.name || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;');
     return `<tr id="${rowId}">
       <td style="padding:0.08rem 0.1rem;"><button onclick="gseRemoveRow('${rowId}')" title="Remove player" style="background:#da3633;border:none;border-radius:3px;color:#fff;cursor:pointer;padding:0.1rem 0.35rem;font-size:0.75rem;">✕</button></td>
-      <td style="padding:0.08rem 0.1rem;"><input type="text" data-key="name" value="${safeName}" placeholder="Player name" style="background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:3px;padding:0.1rem 0.25rem;width:110px;font-size:0.75rem;" /></td>
+      <td style="padding:0.08rem 0.1rem;"><input type="text" data-key="name" value="${safeName}" placeholder="Player name" style="background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:3px;padding:0.1rem 0.25rem;width:110px;font-size:0.75rem;" />
+        ${['overallRating', 'offensiveRating', 'defensiveRating', 'teamPlayRating'].map(key => `<input type="hidden" data-key="${key}" value="${Number(p[key]) || 0}" />`).join('')}</td>
       <td style="padding:0.08rem 0.1rem;"><select data-key="position" style="background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:3px;padding:0.1rem;font-size:0.75rem;">${posOpts}</select></td>
       ${cells}
     </tr>`;
@@ -156,6 +159,10 @@
     overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:9999;overflow-y:auto;padding:1.5rem 0.5rem;';
 
     const g = data.game;
+    let localGameTime;
+    try { localGameTime = GameTime.toLocal(g.date, g.game_time); }
+    catch (err) { alert(`Cannot edit game time: ${err.message}`); return; }
+    _initialGameTime = { local: localGameTime, date: g.date, time: g.game_time || null };
     const IS = 'background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:5px;padding:0.3rem 0.5rem;';
 
     // Season dropdown (optional – uses window._gseAllSeasons if available)
@@ -169,7 +176,9 @@
          </div>`
       : `<input type="hidden" id="gse-season" value="${g.season_id || ''}" />`;
 
-    const capped = capScoreDifferential(g.home_score, g.away_score);
+    const capped = { home_score: g.raw_home_score ?? g.home_score, away_score: g.raw_away_score ?? g.away_score };
+    const forfeitWinner = (g.status === 'forfeit' || g.is_forfeit) && g.forfeit_winner
+      ? g.forfeit_winner : (capped.away_score > capped.home_score ? 'away' : 'home');
     overlay.innerHTML = `<div style="background:#161b22;border:1px solid #30363d;border-radius:10px;max-width:1400px;margin:0 auto;padding:1.5rem;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
         <h3 style="margin:0;">✏️ Edit Game #${g.id} – ${g.home_team.name} vs ${g.away_team.name}</h3>
@@ -178,7 +187,11 @@
       <div style="display:flex;flex-wrap:wrap;gap:1rem;margin-bottom:1.25rem;padding:1rem;background:#0d1117;border-radius:8px;align-items:flex-end;">
         <div>
           <label style="display:block;color:#8b949e;font-size:0.75rem;margin-bottom:0.25rem;">Date</label>
-          <input type="date" id="gse-date" value="${g.date || ''}" style="${IS}" />
+          <input type="date" id="gse-date" value="${localGameTime.date || ''}" style="${IS}" />
+        </div>
+        <div>
+          <label style="display:block;color:#8b949e;font-size:0.75rem;margin-bottom:0.25rem;">Time (your local time)</label>
+          <input type="time" id="gse-time" value="${localGameTime.time || ''}" style="${IS}" />
         </div>
         <div>
           <label style="display:block;color:#8b949e;font-size:0.75rem;margin-bottom:0.25rem;">${g.home_team.name} Score</label>
@@ -199,8 +212,8 @@
         <div id="gse-forfeit-wrap" style="display:${(g.status === 'forfeit' || g.is_forfeit) ? '' : 'none'};">
           <label style="display:block;color:#8b949e;font-size:0.75rem;margin-bottom:0.25rem;">Forfeit Winner</label>
           <select id="gse-forfeit-winner" style="${IS}">
-            <option value="home"${capped.home_score >= capped.away_score ? ' selected' : ''}>${g.home_team.name}</option>
-            <option value="away"${capped.away_score > capped.home_score ? ' selected' : ''}>${g.away_team.name}</option>
+            <option value="home"${forfeitWinner === 'home' ? ' selected' : ''}>${g.home_team.name}</option>
+            <option value="away"${forfeitWinner === 'away' ? ' selected' : ''}>${g.away_team.name}</option>
           </select>
         </div>
         ${seasonRow}
@@ -229,17 +242,9 @@
 
     document.body.appendChild(overlay);
     overlay.addEventListener('click', e => { if (e.target === overlay) closeGameStatsEditor(); });
+    _initialPlayers = JSON.stringify({ home_players: gseCollectPlayers('home'), away_players: gseCollectPlayers('away') });
 
     const statusSel = document.getElementById('gse-status');
-    const winnerSel = document.getElementById('gse-forfeit-winner');
-    const homeInp = document.getElementById('gse-home-score');
-    const awayInp = document.getElementById('gse-away-score');
-    let scoreTouched = false;
-    homeInp.addEventListener('input', () => { scoreTouched = true; });
-    awayInp.addEventListener('input', () => { scoreTouched = true; });
-    winnerSel.addEventListener('change', () => { scoreTouched = false; });
-    statusSel.addEventListener('change', () => { scoreTouched = false; });
-    overlay._scoreTouched = () => scoreTouched;
     statusSel.addEventListener('change', () => {
       document.getElementById('gse-forfeit-wrap').style.display = statusSel.value === 'forfeit' ? '' : 'none';
     });
@@ -275,7 +280,10 @@
       row.querySelectorAll('[data-key]').forEach(el => {
         const key = el.dataset.key;
         if (el.tagName === 'SELECT') p[key] = el.value;
-        else if (el.type === 'number') p[key] = Number(el.value) || 0;
+        else if (el.type === 'number') {
+          const value = Number(el.value) || 0;
+          p[key] = key === 'toi' ? Math.round(value * 60) : value;
+        }
         else p[key] = el.value.trim();
       });
       if (p.name) players.push(p);
@@ -293,30 +301,36 @@
     const isForfeit = statusVal === 'forfeit' ? 1 : 0;
     let homeScore = parseInt(document.getElementById('gse-home-score').value) || 0;
     let awayScore = parseInt(document.getElementById('gse-away-score').value) || 0;
-    const ovl = document.getElementById('game-stats-overlay');
-    if (statusVal === 'forfeit' && !(ovl && ovl._scoreTouched && ovl._scoreTouched())) {
-      const w = document.getElementById('gse-forfeit-winner').value;
-      homeScore = w === 'home' ? 1 : 0;
-      awayScore = w === 'away' ? 1 : 0;
-    }
     if (statusVal === 'complete') {
       const capped = capScoreDifferential(homeScore, awayScore);
       homeScore = capped.home_score;
       awayScore = capped.away_score;
     }
+    const localDate = document.getElementById('gse-date').value;
+    const localTime = document.getElementById('gse-time').value;
+    let easternTime;
+    try {
+      easternTime = localDate === _initialGameTime.local.date && localTime === _initialGameTime.local.time
+        ? { date: _initialGameTime.date, time: _initialGameTime.time }
+        : GameTime.toEastern(localDate, localTime);
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.style.display = '';
+      return;
+    }
     const body = {
-      date:        document.getElementById('gse-date').value,
+      date:        easternTime.date,
+      game_time:   easternTime.time,
       home_score:  homeScore,
       away_score:  awayScore,
       status:      statusVal,
       is_forfeit:  isForfeit,
+      forfeit_winner: isForfeit ? document.getElementById('gse-forfeit-winner').value : null,
       season_id:   seasonEl && seasonEl.value ? Number(seasonEl.value) : null,
       is_overtime: document.getElementById('gse-overtime').checked ? 1 : 0,
-      player_stats: {
-        home_players: gseCollectPlayers('home'),
-        away_players: gseCollectPlayers('away'),
-      },
     };
+    const players = { home_players: gseCollectPlayers('home'), away_players: gseCollectPlayers('away') };
+    if (JSON.stringify(players) !== _initialPlayers) body.player_stats = players;
 
     const token = typeof getAdminToken === 'function' ? getAdminToken() : '';
     const res = await fetch(`${_API()}/games/${_editorGameId}`, {

@@ -16,15 +16,17 @@ let currentPickerMatches = [];
 let currentPickerSelected = new Set();
 let scheduleTeamFilter = '';   // team id (as string) or '' for all
 let scheduleTimeFilter = 'all'; // 'all' | 'upcoming' | '15days'
+let scheduleStatusFilter = 'all';
 let _filterSeasonId = null;
 try {
   const _sf = JSON.parse(sessionStorage.getItem('scheduleFilters') || 'null');
   if (_sf && _sf.time) scheduleTimeFilter = _sf.time;
+  if (_sf && ['all', 'complete', 'incomplete', 'rescheduled', 'forfeit'].includes(_sf.status)) scheduleStatusFilter = _sf.status;
 } catch {}
 function saveScheduleFilters() {
   try {
     sessionStorage.setItem('scheduleFilters', JSON.stringify({
-      season: _filterSeasonId, team: scheduleTeamFilter, time: scheduleTimeFilter,
+      season: _filterSeasonId, team: scheduleTeamFilter, time: scheduleTimeFilter, status: scheduleStatusFilter,
     }));
   } catch {}
 }
@@ -37,6 +39,15 @@ function applyScheduleFilters(games) {
     const tid = Number(scheduleTeamFilter);
     out = out.filter(g => g.home_team_id === tid || g.away_team_id === tid);
   }
+  if (scheduleStatusFilter !== 'all') {
+    out = out.filter(g => {
+      const forfeited = g.status === 'forfeit' || (g.status === 'complete' && g.is_forfeit);
+      if (scheduleStatusFilter === 'forfeit') return !!forfeited;
+      if (scheduleStatusFilter === 'complete') return g.status === 'complete' && !forfeited;
+      if (scheduleStatusFilter === 'incomplete') return g.status === 'scheduled' || g.status === 'incomplete';
+      return g.status === 'rescheduled';
+    });
+  }
   if (scheduleTimeFilter === 'upcoming') {
     out = out.filter(g => g.status === 'scheduled');
   } else if (scheduleTimeFilter === '15days') {
@@ -45,7 +56,7 @@ function applyScheduleFilters(games) {
     const hi = new Date(today); hi.setDate(hi.getDate() + 15);
     const loStr = lo.toISOString().split('T')[0];
     const hiStr = hi.toISOString().split('T')[0];
-    out = out.filter(g => g.date >= loStr && g.date <= hiStr);
+    out = out.filter(g => displayGameDate(g) >= loStr && displayGameDate(g) <= hiStr);
   }
   return out;
 }
@@ -74,7 +85,23 @@ function renderSchedule() {
     .filter(g => g.playoff_round_number != null && g.playoff_round_number > 0)
     .map(g => g.playoff_round_number);
   const totalRoundsHint = allPlayoffNums.length ? Math.max(...allPlayoffNums) : undefined;
-  renderScheduleSection('schedule-root', applyScheduleFilters(allGames), totalRoundsHint);
+  const filtered = applyScheduleFilters(allGames);
+  if (allGames.length && !filtered.length) {
+    document.getElementById('schedule-root').innerHTML = '<p style="color:#8b949e;">No games match the current filters. <button type="button" class="btn-secondary" onclick="clearScheduleFilters()">Show all games</button></p>';
+    return;
+  }
+  renderScheduleSection('schedule-root', filtered, totalRoundsHint);
+}
+
+function clearScheduleFilters() {
+  scheduleTeamFilter = '';
+  scheduleTimeFilter = 'all';
+  scheduleStatusFilter = 'all';
+  document.getElementById('schedule-team-filter').value = '';
+  document.getElementById('schedule-time-filter').value = 'all';
+  document.getElementById('schedule-status-filter').value = 'all';
+  saveScheduleFilters();
+  renderSchedule();
 }
 
 // ── Admin helpers ──────────────────────────────────────────────────────────
@@ -128,17 +155,19 @@ function capScoreDifferential(homeScore, awayScore, maxDiff = 7) {
 
 function formatGameScore(g) {
   if (g.status !== 'complete' && g.status !== 'forfeit') return '–';
-  const capped = capScoreDifferential(g.home_score, g.away_score);
+  const capped = g.status === 'forfeit' || g.is_forfeit ? { home_score: g.home_score, away_score: g.away_score } : capScoreDifferential(g.home_score, g.away_score);
   const otBadge = g.is_overtime ? ' <span style="color:#e3b341;font-size:0.75rem;font-weight:700;letter-spacing:0.04em;">OT</span>' : '';
   const h = capped.home_score, a = capped.away_score;
-  const hs = h > a ? `<strong>${h}</strong>` : h;
-  const as = a > h ? `<strong>${a}</strong>` : a;
+  const winner = gameWinnerSide(g);
+  const hs = winner === 'home' ? `<strong>${h}</strong>` : h;
+  const as = winner === 'away' ? `<strong>${a}</strong>` : a;
   return `${hs} – ${as}${otBadge}`;
 }
 
 function statusBadge(s, isForfeit) {
   if (s === 'forfeit' || (s === 'complete' && isForfeit)) return '<span class="status-badge status-forfeit">🏳 Forfeit</span>';
   if (s === 'complete') return '<span class="status-badge status-complete">✓ Final</span>';
+  if (s === 'rescheduled') return '<span class="status-badge status-scheduled">Rescheduled</span>';
   return '<span class="status-badge status-scheduled">Scheduled</span>';
 }
 
@@ -245,35 +274,19 @@ function playoffRoundLabel(roundNum, totalRounds) {
 function formatGameTime(dateStr, timeStr) {
   if (!timeStr) return '';
   try {
-    const [h, m] = String(timeStr).split(':').map(Number);
-    if (!Number.isFinite(h) || !Number.isFinite(m)) return timeStr;
-    const [yy, mo, dd] = /^\d{4}-\d{2}-\d{2}/.test(dateStr || '')
-      ? String(dateStr).slice(0, 10).split('-').map(Number)
-      : [new Date().getFullYear(), new Date().getMonth() + 1, new Date().getDate()];
-    // Stored game times are Eastern wall-clock; convert to the viewer's timezone.
-    const wallAsUtc = Date.UTC(yy, mo - 1, dd, h, m, 0);
-    const fmt = new Intl.DateTimeFormat('en-US', {
-      timeZone: 'America/New_York', hourCycle: 'h23',
-      year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric',
-    });
-    const zoneWall = (ts) => {
-      const p = {};
-      fmt.formatToParts(new Date(ts)).forEach(x => { p[x.type] = Number(x.value); });
-      return Date.UTC(p.year, p.month - 1, p.day, p.hour % 24, p.minute, 0);
-    };
-    let ts = wallAsUtc - (zoneWall(wallAsUtc) - wallAsUtc);
-    ts = wallAsUtc - (zoneWall(ts) - ts);
-    return new Date(ts).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    const local = GameTime.toLocal(dateStr, timeStr);
+    return new Date(`${local.date}T${local.time}:00`).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
   } catch { return timeStr; }
 }
 
 function currentLocalTimeHHMM() {
-  // Game times are stored as Eastern wall-clock time.
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/New_York', hourCycle: 'h23', hour: '2-digit', minute: '2-digit',
-  }).formatToParts(new Date());
-  const get = (t) => (parts.find(p => p.type === t) || {}).value || '00';
-  return `${String(get('hour') % 24).padStart(2, '0')}:${get('minute')}`;
+  return GameTime.localParts(new Date()).time;
+}
+
+function displayGameDate(game) {
+  if (!game.game_time) return game.date;
+  try { return GameTime.toLocal(game.date, game.game_time).date; }
+  catch { return game.date; }
 }
 
 function buildGameRow(g) {
@@ -281,7 +294,7 @@ function buildGameRow(g) {
     <tr class="game-row" id="game-row-${g.id}" data-game-id="${g.id}"
       onclick="if(!event.target.closest('button')){window.location.href='game.html?id=${g.id}'}"
       style="cursor:pointer;">
-      <td>${g.date}${g.game_time ? `<br><span style="color:#8b949e;font-size:0.78rem;">${formatGameTime(g.date, g.game_time)}</span>` : ''}</td>
+      <td>${displayGameDate(g)}${g.game_time ? `<br><span style="color:#8b949e;font-size:0.78rem;">${formatGameTime(g.date, g.game_time)}</span>` : ''}</td>
       <td>${g.home_logo ? `<img src="${g.home_logo}" style="width:22px;height:22px;object-fit:contain;vertical-align:middle;margin-right:0.3rem;border-radius:3px;" />` : ''}${g.home_team_name}</td>
       <td>${formatGameScore(g)}</td>
       <td>${g.away_logo ? `<img src="${g.away_logo}" style="width:22px;height:22px;object-fit:contain;vertical-align:middle;margin-right:0.3rem;border-radius:3px;" />` : ''}${g.away_team_name}</td>
@@ -310,8 +323,9 @@ function buildGameTable(games) {
   // Group by date (API already returns in ASC order, but sort locally as a safety guard)
   const byDate = {};
   for (const g of games) {
-    if (!byDate[g.date]) byDate[g.date] = [];
-    byDate[g.date].push(g);
+    const date = displayGameDate(g);
+    if (!byDate[date]) byDate[date] = [];
+    byDate[date].push(g);
   }
   const thead = `<thead><tr>
     <th>Date</th><th>Home Team</th><th>Score</th><th>Away Team</th><th>Status</th>
@@ -321,7 +335,7 @@ function buildGameTable(games) {
   for (const date of Object.keys(byDate).sort()) {
     html += `<div class="schedule-date-header">${formatDateHeader(date)}</div>`;
     html += `<div class="table-scroll-wrap schedule-table-wrap" style="margin-bottom:0.25rem;"><table class="schedule-section-table">${thead}<tbody>`;
-    html += byDate[date].map(buildGameRow).join('');
+    html += byDate[date].slice().sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.game_time || '').localeCompare(String(b.game_time || ''))).map(buildGameRow).join('');
     html += '</tbody></table></div>';
   }
   return html;
@@ -422,7 +436,7 @@ async function openGameDetail(gameId) {
   const forfeitBtn = document.getElementById('detail-forfeit-btn');
   if (pickBtn) pickBtn.style.display = isAdmin ? '' : 'none';
   if (completeBtn) completeBtn.style.display = (isAdmin && game && game.status !== 'complete') ? '' : 'none';
-  if (forfeitBtn) forfeitBtn.style.display = (isAdmin && game && game.status !== 'complete') ? '' : 'none';
+  if (forfeitBtn) forfeitBtn.style.display = (isAdmin && game) ? '' : 'none';
   if (pickBtn) pickBtn.dataset.gameId = gameId;
   if (completeBtn) completeBtn.dataset.gameId = gameId;
   if (forfeitBtn) forfeitBtn.dataset.gameId = gameId;
@@ -449,11 +463,11 @@ function renderGameDetail(data) {
     ? `<div style="text-align:center;font-size:0.72rem;font-weight:700;letter-spacing:0.1em;color:#8b949e;text-transform:uppercase;padding-bottom:0.2rem;">${game.is_forfeit || game.status === 'forfeit' ? 'FORFEIT' : game.is_overtime ? 'FINAL · OT' : 'FINAL'}</div>`
     : '';
 
-  const capped = capScoreDifferential(game.home_score, game.away_score);
+  const capped = game.status === 'forfeit' || game.is_forfeit ? { home_score: game.home_score, away_score: game.away_score } : capScoreDifferential(game.home_score, game.away_score);
   const homeScore = isComplete ? capped.home_score : '–';
   const awayScore = isComplete ? capped.away_score : '–';
-  const homeWin = isComplete && capped.home_score > capped.away_score;
-  const awayWin = isComplete && capped.away_score > capped.home_score;
+  const homeWin = isComplete && gameWinnerSide(game) === 'home';
+  const awayWin = isComplete && gameWinnerSide(game) === 'away';
 
   const logoImg = (team) => team.logo_url
     ? `<img src="${team.logo_url}" style="width:36px;height:36px;object-fit:contain;border-radius:6px;background:#21262d;padding:3px;" alt="${team.name}" />`
@@ -551,13 +565,11 @@ async function markForfeit(gameId) {
     `Forfeit: does ${game.home_team_name} win?\n\nOK = ${game.home_team_name} wins\nCancel = ${game.away_team_name} wins`
   );
   if (!confirm(`Confirm: mark this game as a forfeit win for ${homeWins ? game.home_team_name : game.away_team_name}?`)) return;
-  const home_score = homeWins ? 1 : 0;
-  const away_score = homeWins ? 0 : 1;
   try {
     const res = await fetch(`${API}/games/${gameId}`, {
       method: 'PATCH',
       headers: adminHeaders(),
-      body: JSON.stringify({ status: 'complete', is_overtime: 0, is_forfeit: 1, home_score, away_score }),
+      body: JSON.stringify({ status: 'forfeit', is_forfeit: 1, forfeit_winner: homeWins ? 'home' : 'away' }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -627,6 +639,7 @@ function readEAField(player, keys) {
 }
 
 function mapEAPlayerFromRaw(player) {
+  const penaltyShots = eaPenaltyShotStats(player);
   const posRaw = String(readEAField(player, ['position', 'pos']) || '');
   const posSorted = String(player?.posSorted ?? '');
   let position = posRaw;
@@ -680,8 +693,8 @@ function mapEAPlayerFromRaw(player) {
     hatTricks: Number(readEAField(player, ['hatTricks', 'skhattricks', 'skht'])) || 0,
     saucerPasses: Number(readEAField(player, ['saucerPasses', 'sksaucerpasses'])) || 0,
     pkClears: Number(readEAField(player, ['pkClears', 'skpkclearzone'])) || 0,
-    penaltyShotAttempts: Number(readEAField(player, ['penaltyShotAttempts', 'glpenshots'])) || 0,
-    penaltyShotGa: Number(readEAField(player, ['penaltyShotGa', 'glpensaves'])) || 0,
+    penaltyShotAttempts: penaltyShots.attempts,
+    penaltyShotGa: penaltyShots.goalsAgainst,
     breakawayShots: Number(readEAField(player, ['breakawayShots', 'glbrkshots'])) || 0,
     breakawaySaves: Number(readEAField(player, ['breakawaySaves', 'glbrksaves'])) || 0,
     desperationSaves: Number(readEAField(player, ['desperationSaves', 'gldsaves'])) || 0,
@@ -1258,10 +1271,26 @@ async function populateAddGameTeams() {
   const awaySel = document.getElementById('sg-away');
   if (!homeSel || !awaySel) return;
   let teams = [];
+  const sid = SeasonSelector.getSelectedSeasonId();
+  const isPlayoffSeason = SeasonSelector.getSelectedSeasonIsPlayoff();
   try {
-    const res = await fetch(`${API}/teams`);
-    if (res.ok) teams = await res.json();
+    if (sid && isPlayoffSeason) {
+      const r = await fetch(`${API}/playoffs/by-playoff-season/${sid}`);
+      if (r.ok) teams = ((await r.json()).teams || []).map(t => ({ id: t.team_id, name: t.name || t.team_name }));
+    } else if (sid) {
+      const r = await fetch(`${API}/seasons/${sid}/teams`, { headers: adminHeaders() });
+      if (r.ok) teams = await r.json();
+    }
   } catch { teams = []; }
+  if (!teams.length || teams.some(t => !t.name)) {
+    try {
+      const res = await fetch(`${API}/teams`);
+      if (res.ok) {
+        const all = await res.json();
+        teams = teams.length ? all.filter(t => teams.some(x => x.id === t.id)) : all;
+      }
+    } catch { /* keep what we have */ }
+  }
   const league = SeasonSelector.getSelectedLeagueType();
   const filtered = teams
     .filter(t => !t.league_type || t.league_type === league)
@@ -1320,6 +1349,13 @@ async function deleteGame(gameId, event) {
     saveScheduleFilters();
     renderSchedule();
   });
+  const statusSel = document.getElementById('schedule-status-filter');
+  if (statusSel) statusSel.value = scheduleStatusFilter;
+  statusSel?.addEventListener('change', e => {
+    scheduleStatusFilter = e.target.value;
+    saveScheduleFilters();
+    renderSchedule();
+  });
 
   // Wire up the shared game-stats-editor so that after saving it refreshes
   // the inline game detail panel on this page instead of navigating away.
@@ -1327,6 +1363,16 @@ async function deleteGame(gameId, event) {
     await refreshGame(gameId);
     await openGameDetail(gameId);
   };
+
+  const addGameStatus = document.getElementById('sg-status');
+  const addGameWinner = document.getElementById('sg-forfeit-winner');
+  const updateForfeitWinner = () => {
+    const isForfeit = addGameStatus.value === 'forfeit';
+    document.getElementById('sg-forfeit-wrap').style.display = isForfeit ? 'flex' : 'none';
+    addGameWinner.required = isForfeit;
+  };
+  addGameStatus.addEventListener('change', updateForfeitWinner);
+  updateForfeitWinner();
 
   // Wire up admin "Add Game" form
   document.getElementById('schedule-game-form')?.addEventListener('submit', async e => {
@@ -1341,20 +1387,24 @@ async function deleteGame(gameId, event) {
     const home_score = parseInt(document.getElementById('sg-home-score').value, 10) || 0;
     const away_score = parseInt(document.getElementById('sg-away-score').value, 10) || 0;
     const status = document.getElementById('sg-status').value;
+    const forfeit_winner = status === 'forfeit' ? addGameWinner.value : null;
+    if (status === 'forfeit' && !['home', 'away'].includes(forfeit_winner)) { showAddGameStatus('Select the forfeit winner.', false); return; }
     const is_overtime = document.getElementById('sg-overtime').checked ? 1 : 0;
     const timeInput = document.getElementById('sg-time');
-    const game_time = (timeInput && timeInput.value) ? timeInput.value : currentLocalTimeHHMM();
+    const localTime = (timeInput && timeInput.value) ? timeInput.value : currentLocalTimeHHMM();
     try {
+      const eastern = GameTime.toEastern(date, localTime);
       const res = await fetch(`${API}/games`, {
         method: 'POST',
         headers: adminHeaders(),
-        body: JSON.stringify({ date, home_team_id, away_team_id, home_score, away_score, season_id, status, is_overtime, game_time }),
+        body: JSON.stringify({ date: eastern.date, home_team_id, away_team_id, home_score, away_score, season_id, status, is_overtime, game_time: eastern.time, forfeit_winner }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || `HTTP ${res.status}`);
       }
       e.target.reset();
+      updateForfeitWinner();
       if (timeInput) timeInput.value = currentLocalTimeHHMM();
       showAddGameStatus('✅ Game added.', true);
       await loadSchedule();
@@ -1364,7 +1414,7 @@ async function deleteGame(gameId, event) {
   });
 
   try {
-    await SeasonSelector.init('season-selector-container', { noAllTime: true });
+    await SeasonSelector.init('season-selector-container', { noAllTime: true, preferPlayoffActive: true });
     SeasonSelector.onSeasonChange(async () => {
       closePicker();
       closeGameDetail();

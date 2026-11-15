@@ -13,8 +13,8 @@ function buildScoreCards(games) {
   const logoHtml = (url, alt) => url ? `<img src="${url}" class="team-logo-sm" alt="${alt}" />` : '';
 
   return completed.map(g => {
-    const homeWin = g.home_score > g.away_score;
-    const awayWin = g.away_score > g.home_score;
+    const homeWin = gameWinnerSide(g) === 'home';
+    const awayWin = gameWinnerSide(g) === 'away';
     const homeCls = homeWin ? 'score-winner' : '';
     const awayCls = awayWin ? 'score-winner' : '';
     const date = g.date ? new Date(g.date + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '';

@@ -104,7 +104,7 @@ module.exports = {
 
   // ── Goalie: Penalty Shots ─────────────────────────────────────────────────
   glpenshots:             'penaltyShotAttempts', // penalty shot attempts against
-  glpensaves:             'penaltyShotGa',       // penalty shot goals against (EA field is named glpensaves)
+  glpensaves:             'penaltyShotSaves',    // saves; goals against = attempts - saves
 
   // ── Goalie: Breakaways ────────────────────────────────────────────────────
   glbrkshots:             'breakawayShots', // breakaway shots against

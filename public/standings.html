@@ -11,7 +11,9 @@
   <script src="season-selector.js" defer></script>
   <script src="league-type.js" defer></script>
   <script src="standings.js" defer></script>
-  <script src="playoffs.js" defer></script>
+  <script src="playoff-seeding.js?v=1" defer></script>
+  <script src="bracket-download.js?v=2" defer></script>
+  <script src="playoffs.js?v=bracket-6" defer></script>
   <style>
     /* ── Bracket styles ────────────────────────────────────────── */
     .bracket-outer { position:relative; overflow-x:auto; overflow-y:visible; }
@@ -70,6 +72,7 @@
     }
     /* First place — no special treatment; same as every other row */
   </style>
+  <link rel="stylesheet" href="bracket.css?v=6" />
 </head>
 <body>
   <nav>
@@ -96,7 +99,6 @@
     <div class="page-header">
       <div class="page-eyebrow">Season Race</div>
       <h1 id="page-title">League Standings</h1>
-      <p class="page-subtitle">Follow the playoff picture, compare clubs across conferences, and switch into the bracket view when the postseason begins.</p>
       <div style="margin-bottom:0;display:flex;align-items:center;gap:1.5rem;flex-wrap:wrap;">
       <div id="season-selector-container"></div>
       <div id="standings-view-container" style="display:flex;align-items:center;gap:0.5rem;"></div>

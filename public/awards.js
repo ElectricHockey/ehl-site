@@ -1,6 +1,7 @@
 const API = '/api';
 
 let _awardDefs = [];
+let _awardModalData = {};
 
 function esc(str) {
   return String(str == null ? '' : str)
@@ -29,6 +30,7 @@ function renderAwards(defs, winners, teamAwards, seasonName) {
   if (title && seasonName) title.textContent = `Awards — ${seasonName}`;
 
   const byKey = {};
+  _awardModalData = {};
   for (const w of winners || []) {
     if (!byKey[w.award_key]) byKey[w.award_key] = [];
     byKey[w.award_key].push(w);
@@ -39,18 +41,31 @@ function renderAwards(defs, winners, teamAwards, seasonName) {
   const cards = (defs || []).map(def => {
     const playerWinners = byKey[def.key] || [];
     const teamWinner = teamByKey[def.key];
-    let rows = '';
-
+    const lines = [];
     if (teamWinner) {
-      rows += `<div class="award-line">🏆 ${teamLink(teamWinner.team_id, teamWinner.team_name)}</div>`;
+      lines.push(`<div class="award-line">🏆 ${teamLink(teamWinner.team_id, teamWinner.team_name)}</div>`);
     }
     for (const w of playerWinners) {
-      rows += `<div class="award-line">${playerLink(w.player_name)}${w.notes ? ` <span style="color:#8b949e;">(${esc(w.notes)})</span>` : ''}</div>`;
+      lines.push(`<div class="award-line">${playerLink(w.player_name)}${w.notes ? ` <span style="color:#8b949e;">(${esc(w.notes)})</span>` : ''}</div>`);
     }
-    if (!rows) rows = '<div class="award-empty">No winner selected yet.</div>';
+    let rows;
+    let clickable = false;
+    if (!lines.length) {
+      rows = '<div class="award-empty">No winner selected yet.</div>';
+    } else if (lines.length === 1) {
+      rows = lines[0];
+    } else {
+      clickable = true;
+      _awardModalData[def.key] = { title: def.name || def.key, html: lines.join('') };
+      const lead = teamWinner
+        ? `<div class="award-line">🏆 ${teamLink(teamWinner.team_id, teamWinner.team_name)}</div>`
+        : '';
+      const count = playerWinners.length;
+      rows = lead + (count ? `<div class="award-more">${count} player${count === 1 ? '' : 's'} — click to view</div>` : '');
+    }
 
     return `
-      <article class="award-card">
+      <article class="award-card${clickable ? ' award-card-click' : ''}" ${clickable ? `data-award="${esc(def.key)}" tabindex="0"` : ''}>
         <div class="award-head">
           ${def.image_url ? `<img class="award-image" src="${esc(def.image_url)}" alt="${esc(def.name)}">` : '<div class="award-image"></div>'}
           <div>
@@ -64,6 +79,28 @@ function renderAwards(defs, winners, teamAwards, seasonName) {
 
   root.innerHTML = cards ? `<div class="awards-grid">${cards}</div>` : '<p class="loading">No awards configured.</p>';
 }
+
+function openAwardModal(key) {
+  const d = _awardModalData[key];
+  if (!d) return;
+  closeAwardModal();
+  const ov = document.createElement('div');
+  ov.id = 'award-modal';
+  ov.className = 'award-modal-overlay';
+  ov.innerHTML = `<div class="award-modal"><button type="button" class="award-modal-close" aria-label="Close">✕</button>
+    <h3>${esc(d.title)}</h3><div class="award-list">${d.html}</div></div>`;
+  ov.addEventListener('click', e => { if (e.target === ov || e.target.closest('.award-modal-close')) closeAwardModal(); });
+  document.body.appendChild(ov);
+}
+function closeAwardModal() {
+  const m = document.getElementById('award-modal');
+  if (m) m.remove();
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeAwardModal(); });
+document.addEventListener('click', e => {
+  const card = e.target.closest('.award-card-click');
+  if (card && !e.target.closest('a')) openAwardModal(card.dataset.award);
+});
 
 async function loadAwardsForSelectedSeason() {
   const root = document.getElementById('awards-root');

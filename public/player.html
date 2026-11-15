@@ -8,9 +8,24 @@
   <link rel="preload" href="/api/site-logo" as="image" fetchpriority="high" />
   <script src="nav.js" defer></script>
   <script src="notifications.js" defer></script>
-  <script src="stats-config.js" defer></script>
-  <script src="player.js" defer></script>
+  <script src="game-rating.js?v=1" defer></script>
+  <script src="stats-config.js?v=custom-ovr-1" defer></script>
+  <script src="player.js?v=active-team-1" defer></script>
   <style>
+    .phl-league-switch {
+      display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem;
+    }
+    .phl-league-label { color: #8b949e; font-size: 0.85rem; margin-right: 0.25rem; }
+    .phl-league-link {
+      border: 1px solid #30363d; border-radius: 6px; padding: 0.4rem 0.85rem;
+      color: #c9d1d9; background: #161b22; font-size: 0.9rem; font-weight: 700;
+      text-decoration: none;
+    }
+    .phl-league-link:hover { border-color: #58a6ff; color: #fff; }
+    .phl-league-link[aria-current="page"] {
+      color: #fff; background: #1c3e60; border-color: #58a6ff;
+    }
+    .phl-league-link:focus-visible { outline: 2px solid #58a6ff; outline-offset: 2px; }
     /* ── Hero banner ──────────────────────────────────────────────────────── */
     .phl-hero {
       position: relative; overflow: hidden;
@@ -103,9 +118,16 @@
     }
 
     /* ── Tables ───────────────────────────────────────────────────────────── */
+    .game-log-scroll { overflow: auto; max-width: 100%; }
     .last-games-table { width: 100%; border-collapse: collapse; }
-    .last-games-table th { font-size: 0.75rem; color: #8b949e; font-weight: 600; padding: 0.3rem 0.5rem; text-align: left; border-bottom: 1px solid #30363d; }
-    .last-games-table td { font-size: 0.85rem; padding: 0.4rem 0.5rem; border-bottom: 1px solid #21262d; color: #e6edf3; }
+    .last-games-table thead tr { height: 34px; }
+    .last-games-table tbody tr { height: 38px; }
+    .last-games-table th { position: sticky; top: 0; z-index: 1; background: #161b22; font-size: 0.75rem; color: #8b949e; font-weight: 600; padding: 0.3rem 0.5rem; text-align: left; border-bottom: 1px solid #30363d; white-space: nowrap; }
+    .last-games-table td { font-size: 0.85rem; padding: 0.4rem 0.5rem; border-bottom: 1px solid #21262d; color: #e6edf3; white-space: nowrap; }
+    .last-games-table .game-log-divider { height: auto; }
+    .last-games-table .game-log-divider td { padding: 0.4rem 0.5rem; border-bottom: 0; }
+    .game-log-divider-label { position: sticky; left: 0; display: flex; align-items: center; gap: 0.55rem; width: 220px; max-width: 100%; color: #f0883e; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; }
+    .game-log-divider-label::before, .game-log-divider-label::after { content: ''; height: 1px; background: #6e512b; flex: 1; }
     .last-games-table tr:last-child td { border-bottom: none; }
     .result-w { color: #3fb950; font-weight: 700; }
     .result-l { color: #f85149; font-weight: 700; }
@@ -194,6 +216,11 @@
 
   <div class="container page-shell">
     <a href="javascript:history.back()" class="back-link">← Back</a>
+    <nav id="player-league-switch" class="phl-league-switch" aria-label="Player league">
+      <span class="phl-league-label">League:</span>
+      <a class="phl-league-link" data-player-league="threes">3's</a>
+      <a class="phl-league-link" data-player-league="sixes">6's</a>
+    </nav>
     <div id="player-root"><p class="loading">Loading player…</p></div>
   </div>
 

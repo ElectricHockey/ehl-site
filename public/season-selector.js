@@ -15,6 +15,7 @@ const SeasonSelector = (() => {
   let _seasonsCache = { threes: [], sixes: [] };
   let _noAllTime = false;
   let _seasonFilter = null; // 'regular' | 'playoff' | null (show all)
+  let _preferPlayoffActive = false; // treat the active season's playoff bracket as the active season
 
   const selectStyle = 'background:#161b22;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.3rem 0.6rem;font-size:0.88rem;';
 
@@ -89,9 +90,23 @@ const SeasonSelector = (() => {
       return;
     }
     el.disabled  = false;
-    const saved   = localStorage.getItem(key);
+    let saved   = localStorage.getItem(key);
     // Default to the first active season matching the filter, or first overall
-    const activeMatch = seasons.find(s => s.is_active);
+    let activeMatch = seasons.find(s => s.is_active);
+    let activePlayoff = null;
+    if (_preferPlayoffActive && activeMatch) {
+      activePlayoff = seasons.find(p => p.is_playoff && p.parent_season_id === activeMatch.id) || null;
+      if (activePlayoff) {
+        // First visit of a browser session lands on the bracket instead of a remembered regular-season pick
+        const flag = `ehl_playoff_default_${type}`;
+        if (!sessionStorage.getItem(flag)) {
+          sessionStorage.setItem(flag, '1');
+          saved = String(activePlayoff.id);
+          localStorage.setItem(key, saved);
+        }
+        activeMatch = activePlayoff;
+      }
+    }
     let defaultId = saved ? Number(saved) : (activeMatch ? activeMatch.id : seasons[0].id);
     if (!seasons.find(s => s.id === defaultId)) defaultId = activeMatch ? activeMatch.id : seasons[0].id;
     // All-time options always at the top; real seasons follow (skip when noAllTime is set)
@@ -99,13 +114,14 @@ const SeasonSelector = (() => {
       `<option value="alltime_regular">★ All Time – Regular Season</option>` +
       `<option value="alltime_playoff">★ All Time – Playoffs</option>`;
     el.innerHTML = alltimeOpts + seasons.map(s =>
-      `<option value="${s.id}" data-is-playoff="${s.is_playoff ? '1' : '0'}" ${s.id === defaultId ? 'selected' : ''}>${s.name}${s.is_active ? ' ★' : ''}</option>`
+      `<option value="${s.id}" data-is-playoff="${s.is_playoff ? '1' : '0'}" ${s.id === defaultId ? 'selected' : ''}>${s.name}${(activePlayoff ? s.id === activePlayoff.id : s.is_active) ? ' ★' : ''}</option>`
     ).join('');
   }
 
   async function init(containerId, options) {
     _noAllTime = !!(options && options.noAllTime);
     _seasonFilter = (options && options.seasonFilter) || null;
+    _preferPlayoffActive = !!(options && options.preferPlayoffActive);
     const container = document.getElementById(containerId || 'season-selector-container');
     if (!container) return;
     try {

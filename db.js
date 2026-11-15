@@ -45,7 +45,7 @@ const pool = new Pool({
 
 // Bump this whenever initSchema or seed data changes. The marker prevents every
 // serverless cold start from replaying dozens of already-applied DDL statements.
-const SCHEMA_VERSION = '2026-10-13.1';
+const SCHEMA_VERSION = '2026-11-11.1';
 const SCHEMA_LOCK_ID = 4540492; // "EHL" as a stable PostgreSQL advisory-lock key
 
 // Critical: handle idle connection errors so they don't crash the process.
@@ -293,6 +293,7 @@ async function initSchema() {
       is_overtime       INTEGER DEFAULT 0,
       playoff_series_id INTEGER,
       is_forfeit        INTEGER DEFAULT 0,
+      forfeit_winner    TEXT DEFAULT NULL,
       home_shots        INTEGER DEFAULT NULL,
       away_shots        INTEGER DEFAULT NULL
     )`,
@@ -515,6 +516,7 @@ async function initSchema() {
   }
 
   // ── 4. Migrations ───────────────────────────────────────────────────
+  await pool.query('ALTER TABLE games ADD COLUMN IF NOT EXISTS forfeit_winner TEXT DEFAULT NULL');
   // Make password_hash nullable (Discord-only auth, no password needed)
   try {
     await pool.query('ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL');
@@ -631,6 +633,15 @@ async function initSchema() {
   } catch (err) {
     if (!err.message || !err.message.includes('already exists')) {
       console.warn('[db] Migration warning (playoffs seeding_format):', err.message);
+    }
+  }
+
+  // Weekday/time slots (JSON, Eastern) used to schedule each playoff series
+  try {
+    await pool.query('ALTER TABLE playoffs ADD COLUMN series_schedule TEXT DEFAULT NULL');
+  } catch (err) {
+    if (!err.message || !err.message.includes('already exists')) {
+      console.warn('[db] Migration warning (playoffs series_schedule):', err.message);
     }
   }
 

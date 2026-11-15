@@ -15,7 +15,8 @@ CREATE TABLE IF NOT EXISTS seasons (
   name        TEXT NOT NULL,
   is_active   INTEGER DEFAULT 0,
   league_type TEXT DEFAULT '',
-  is_playoff  INTEGER DEFAULT 0
+  is_playoff  INTEGER DEFAULT 0,
+  parent_season_id INTEGER REFERENCES seasons(id) ON DELETE SET NULL
 );
 
 CREATE TABLE IF NOT EXISTS teams (
@@ -88,6 +89,7 @@ CREATE TABLE IF NOT EXISTS games (
   is_overtime       INTEGER DEFAULT 0,
   playoff_series_id INTEGER,
   is_forfeit        INTEGER DEFAULT 0,
+  forfeit_winner    TEXT DEFAULT NULL,
   game_time         TEXT DEFAULT NULL,
   home_shots        INTEGER DEFAULT NULL,
   away_shots        INTEGER DEFAULT NULL

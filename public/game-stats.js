@@ -33,46 +33,8 @@
 
   // ── Rating colour helpers ───────────────────────────────────────────────
 
-  // Returns the overall rating for a player.  Uses the EA-stored overall_rating when
-  // available (most accurate), then falls back to position-weighted sub-ratings,
-  // then to a stat-based score when no ratings are present.
   function computeOvr(p) {
-    if (p.overall_rating && Number(p.overall_rating) > 0) return Number(p.overall_rating);
-    const isG = /goalie/i.test(p.position || '') || (p.position || '').toUpperCase() === 'G';
-    const off = Number(p.offensive_rating) || 0;
-    const def = Number(p.defensive_rating) || 0;
-    const tpl = Number(p.team_play_rating) || 0;
-    if (off > 0 || def > 0 || tpl > 0) {
-      return Math.round((off + def + tpl) / 3);
-    }
-    // Stat-based fallback
-    if (isG) {
-      const sa = Number(p.shots_against) || 0;
-      if (sa > 0) {
-        const ga = Number(p.goals_against) || 0;
-        const sv = Number(p.saves) !== 0 ? Number(p.saves) : (sa - ga);
-        const svp = sv / sa;
-        const isWin = Number(p.goalie_wins) === 1 || Number(p.goalie_otw) === 1 || Number(p.wins) === 1;
-        const isShutout = (Number(p.shutouts) || 0) > 0 || (ga === 0 && sa > 0);
-        let ovr = 50.0 + (svp * 40.0) - Math.min(ga * 1.0, 10.0);
-        if (isShutout) ovr += 5.0;
-        if (isWin) ovr += 3.0;
-        return Math.max(50, Math.min(99, Math.round(ovr)));
-      }
-      return 75;
-    }
-    return Math.round(Math.max(0, Math.min(99,
-      60 +
-      Math.min((Number(p.goals)         || 0) * 7,   21) +
-      Math.min((Number(p.assists)        || 0) * 4,   14) +
-      Math.max(Math.min((Number(p.plus_minus) || 0) * 3, 12), -12) +
-      Math.min((Number(p.shots)          || 0) * 0.5,  5) +
-      Math.min((Number(p.hits)           || 0) * 0.5,  5) +
-      Math.min((Number(p.blocked_shots)  || 0) * 1.5,  6) +
-      Math.min((Number(p.takeaways)      || 0) * 1.5,  6) -
-      Math.min((Number(p.giveaways)      || 0) * 2,    8) -
-      Math.min((Number(p.pim)            || 0) * 0.5,  5)
-    )));
+    return global.GameRating.calculate(p);
   }
 
   function ratingStyle(v) {
@@ -424,20 +386,6 @@
     </div>`;
   }
 
-  // ── Rating bars (offensive / defensive / team play) ─────────────────────
-
-  function renderRatingBars(p) {
-    const off = Math.min(100, Math.max(0, Number(p.offensive_rating) || 0));
-    const def = Math.min(100, Math.max(0, Number(p.defensive_rating) || 0));
-    const tpl = Math.min(100, Math.max(0, Number(p.team_play_rating) || 0));
-    if (!off && !def && !tpl) return '<div class="gs-rating-bars"></div>';
-    return `<div class="gs-rating-bars">
-      <div class="gs-rbar"><div class="gs-rbar-fill gs-rbar-off" style="width:${off}%;"></div></div>
-      <div class="gs-rbar"><div class="gs-rbar-fill gs-rbar-def" style="width:${def}%;"></div></div>
-      <div class="gs-rbar"><div class="gs-rbar-fill gs-rbar-tpl" style="width:${tpl}%;"></div></div>
-    </div>`;
-  }
-
   // ── Top player cards ─────────────────────────────────────────────────────
 
   function renderPlayerCards(game, homeNorm, awayNorm) {
@@ -471,7 +419,7 @@
         : '';
       return `<div class="gs-player-card">
         <div class="gs-card-content">
-          <div class="gs-card-badge" style="${ovrBadgeStyle(ovr)}">${ovr || '–'}</div>
+          <div class="gs-card-badge" style="${ovrBadgeStyle(ovr)}">${ovr ?? '–'}</div>
           <div class="gs-card-info">
             <div class="gs-card-name">${p.name}</div>
             <div class="gs-card-pos">${p.position || ''}</div>
@@ -495,8 +443,7 @@
     function playerCell(p) {
       const ovr = computeOvr(p);
       return `<div class="gs-player-cell">
-        <div class="gs-ovr-badge" style="${ovrBadgeStyle(ovr)}">${ovr || '–'}</div>
-        ${renderRatingBars(p)}
+        <div class="gs-ovr-badge" style="${ovrBadgeStyle(ovr)}">${ovr ?? '–'}</div>
         <div class="gs-player-name-wrap">
           <a href="player.html?name=${encodeURIComponent(p.name)}" class="player-link gs-pname">${p.name}</a>
           <span class="gs-pos-tag">${p.position || ''}</span>

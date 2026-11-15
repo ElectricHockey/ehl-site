@@ -8,9 +8,12 @@
   <link rel="preload" href="/api/site-logo" as="image" fetchpriority="high" />
   <script src="nav.js" defer></script>
   <script src="notifications.js" defer></script>
-  <script src="game-stats.js" defer></script>
-  <script src="game-stats-editor.js" defer></script>
-  <script src="game.js" defer></script>
+  <script src="game-rating.js?v=1" defer></script>
+  <script src="game-stats.js?v=custom-ovr-1" defer></script>
+  <script src="game-time.js?v=1" defer></script>
+  <script src="game-stats-editor.js?v=local-time-1" defer></script>
+  <script src="game-outcome.js?v=1" defer></script>
+  <script src="game.js?v=series-1" defer></script>
   <style>
     .game-header {
       background: #161b22;
@@ -41,6 +44,15 @@
     }
     .back-link { color: #58a6ff; font-size: 0.88rem; text-decoration: none; display: inline-block; margin-bottom: 1rem; }
     .back-link:hover { text-decoration: underline; }
+    .game-import-panel { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:0.85rem; margin-bottom:1rem; }
+    .game-import-panel label { display:block; font-weight:700; margin-bottom:0.5rem; }
+    .game-import-controls { display:flex; flex-wrap:wrap; gap:0.5rem; }
+    .game-import-controls input { flex:1 1 260px; min-width:0; background:#0d1117; color:#e6edf3; border:1px solid #30363d; border-radius:6px; padding:0.5rem; }
+    #mso-schedule-url { width:100%; min-width:0; background:#0d1117; color:#e6edf3; border:1px solid #30363d; border-radius:6px; padding:0.5rem; }
+    .game-import-panel label[for="mso-schedule-url"] { margin-top:0.75rem; }
+    .game-import-controls button { background:#238636; color:#fff; border:0; border-radius:6px; padding:0.5rem 0.9rem; cursor:pointer; }
+    .game-import-controls button:disabled { opacity:0.6; cursor:wait; }
+    #mso-game-message { margin:0.4rem 0 0; color:#c9d1d9; font-size:0.85rem; }
   </style>
 </head>
 <body>

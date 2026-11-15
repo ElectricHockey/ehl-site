@@ -1,0 +1,168 @@
+.bracket-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: .75rem;
+  margin-bottom: .75rem;
+}
+#bracket-download-status { color: #b7c9d8; font-size: .8rem; }
+.bracket-download {
+  padding: .5rem .8rem;
+  border: 1px solid #536a81;
+  border-radius: 6px;
+  background: #152233;
+  color: #e7f4ff;
+  font: inherit;
+  font-size: .8rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.bracket-download:hover, .bracket-download:focus-visible { border-color: #54d6ff; }
+.bracket-download:disabled { opacity: .6; cursor: wait; }
+.bracket-advanced {
+  margin: 0 0 .75rem;
+  color: #d9e8f4;
+  font-size: .82rem;
+  font-weight: 700;
+}
+.bracket-advanced span { color: #9eafbf; font-weight: 400; }
+.bracket-outer {
+  position: relative;
+  overflow: auto;
+  border: 1px solid #25334b;
+  border-radius: 14px;
+  background:
+    radial-gradient(ellipse at 2% 0%, rgba(0, 172, 245, .12), transparent 34%),
+    radial-gradient(ellipse at 100% 100%, rgba(197, 0, 238, .12), transparent 34%),
+    #080e19;
+}
+.bracket-grid {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 28px;
+  min-width: max-content;
+  padding: 22px 24px 30px;
+}
+.bracket-svg {
+  position: absolute;
+  inset: 0 auto auto 0;
+  pointer-events: none;
+  overflow: visible;
+}
+.bracket-svg path {
+  fill: none;
+  stroke: #8cabc5;
+  stroke-width: 1.5;
+  opacity: .7;
+}
+.b-round {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 180px;
+  flex: 0 0 180px;
+}
+.b-round-title {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  height: 32px;
+  margin: 0 0 10px;
+  color: #a7bdd3;
+  font-size: .7rem;
+  font-weight: 800;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+.b-round-matches { display: flex; flex-direction: column; }
+.b-series {
+  box-sizing: border-box;
+  height: 88px;
+  flex: 0 0 88px;
+  overflow: hidden;
+  border: 1px solid #64768b;
+  border-radius: 7px;
+  background: #101927;
+  box-shadow: 0 5px 16px rgba(0, 0, 0, .35), 0 1px 5px rgba(34, 178, 255, .16);
+  transition: border-color .15s, box-shadow .15s;
+}
+.b-series[role="button"] { cursor: pointer; }
+.b-series[role="button"]:hover, .b-series[role="button"]:focus-visible {
+  border-color: #54d6ff;
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(65, 198, 255, .3), 0 5px 16px rgba(0, 0, 0, .35);
+}
+.b-series.b-series-complete { border-color: #64768b; }
+.b-series-projected { cursor: default; }
+.b-team {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 43px;
+  min-height: 0;
+  padding: 0 10px;
+  border-bottom: 1px solid rgba(200, 220, 240, .22);
+  color: #fff;
+  background: #121b29;
+  text-shadow: 0 1px 3px #000, 0 0 8px #000;
+}
+.b-team:last-child { border-bottom: 0; }
+.b-team.b-team-colored, .b-champ-box.b-team-colored {
+  background: linear-gradient(90deg, rgba(4, 10, 20, .58), rgba(4, 10, 20, .68)),
+    linear-gradient(120deg, var(--team-color-1), var(--team-color-2));
+}
+.b-team.b-winner { box-shadow: inset 3px 0 #72e3ff; }
+.b-team.b-loser { opacity: .65; }
+.b-seed {
+  min-width: 20px;
+  color: #d7e3ef;
+  font-size: .7rem;
+  font-weight: 800;
+  text-align: center;
+}
+.b-logo, .b-logo-placeholder {
+  width: 25px;
+  height: 25px;
+  flex: 0 0 25px;
+  object-fit: contain;
+  background: transparent;
+}
+.b-team-name { flex: 1; overflow: hidden; font-size: .85rem; font-weight: 800; letter-spacing: .04em; text-overflow: ellipsis; white-space: nowrap; }
+.b-wins {
+  min-width: 28px;
+  padding: 5px 0;
+  border-left: 1px solid rgba(255, 255, 255, .22);
+  font-size: .86rem;
+  font-weight: 800;
+  text-align: center;
+}
+.b-tbd { color: #96a5b7; font-size: .77rem; font-style: normal; font-weight: 700; letter-spacing: .06em; }
+.b-champion-col {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-start;
+  width: 180px;
+  flex: 0 0 180px;
+}
+.b-champion-wrap { width: 100%; }
+.b-champ-box {
+  box-sizing: border-box;
+  display: flex;
+  height: 88px;
+  min-width: 0;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  padding: 12px 16px;
+  border: 1px solid #a87ee0;
+  border-radius: 7px;
+  background: #121b29;
+  box-shadow: 0 0 16px rgba(180, 51, 238, .16);
+  text-align: left;
+  text-shadow: 0 1px 4px #000;
+}
+.b-champ-label { margin: 0; color: #d8c6f4; font-size: .7rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+.b-champ-name { color: #fff; font-size: .85rem; font-weight: 800; }

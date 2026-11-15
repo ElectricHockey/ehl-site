@@ -21,6 +21,20 @@ function getPreferredLeagueType() {
   return (saved === LT_THREES || saved === LT_SIXES) ? saved : LT_THREES;
 }
 
+function setupPlayerLeagueSwitch(preferredLt) {
+  const switcher = document.getElementById('player-league-switch');
+  if (!switcher) return;
+  switcher.querySelectorAll('[data-player-league]').forEach(link => {
+    const url = new URL(window.location.href);
+    const league = link.dataset.playerLeague;
+    url.searchParams.set('league', league);
+    if (league !== preferredLt) url.searchParams.delete('season_id');
+    link.href = url.href;
+    if (league === preferredLt) link.setAttribute('aria-current', 'page');
+    else link.removeAttribute('aria-current');
+  });
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function formatClock(s) {
@@ -41,55 +55,8 @@ function pct3(v) {
   return frac.toFixed(3).replace(/^0(?=\.)/, '');
 }
 function computeOvr(p) {
-  if (p.overall_rating && Number(p.overall_rating) > 0) return Number(p.overall_rating);
-  const isG = /goalie/i.test(p.position || '') || (p.position || '').toUpperCase() === 'G';
-  const off = Number(p.offensive_rating) || 0;
-  const def = Number(p.defensive_rating) || 0;
-  const tpl = Number(p.team_play_rating) || 0;
-  if (off > 0 || def > 0 || tpl > 0) {
-    const isD = /defense/i.test(p.position || '') || /^[lr]d$/i.test(p.position || '');
-    if (isG || isD) return Math.round((def * 2 + off + tpl * 1.5) / 4.5);
-    return Math.round((off * 2 + def + tpl * 1.5) / 4.5);
-  }
-  // Per-game stats-based fallback (mirrors the SQL formula in SKATER_SELECT / GOALIE_SELECT)
-  if (isG) {
-    const sa = Number(p.shots_against) || 0;
-    if (sa > 0) {
-      const ga = Number(p.goals_against) || 0;
-      const sv = Number(p.saves) !== 0 ? Number(p.saves) : (sa - ga);
-      const svp = sv / sa;
-      const isWin = Number(p.goalie_wins) === 1 || Number(p.goalie_otw) === 1 || Number(p.wins) === 1;
-      const isShutout = (Number(p.shutouts) || 0) > 0 || (ga === 0 && sa > 0);
-      let ovr = 50.0 + (svp * 40.0) - Math.min(ga * 1.0, 10.0);
-      if (isShutout) ovr += 5.0;
-      if (isWin) ovr += 3.0;
-      return Math.max(50, Math.min(99, Math.round(ovr)));
-    }
-    return 75;
-  }
-  const goals = Number(p.goals) || 0;
-  const assists = Number(p.assists) || 0;
-  const pm = Number(p.plus_minus) || 0;
-  const shots = Number(p.shots) || 0;
-  const hits = Number(p.hits) || 0;
-  const bs = Number(p.blocked_shots) || 0;
-  const tka = Number(p.takeaways) || 0;
-  const gva = Number(p.giveaways) || 0;
-  const pim = Number(p.pim) || 0;
-  if (goals || assists || pm || shots || hits || bs || tka || gva || pim) {
-    const raw = 60
-      + Math.min(goals * 7, 21)
-      + Math.min(assists * 4, 14)
-      + Math.max(Math.min(pm * 3, 12), -12)
-      + Math.min(shots * 0.5, 5)
-      + Math.min(hits * 0.5, 5)
-      + Math.min(bs * 1.5, 6)
-      + Math.min(tka * 1.5, 6)
-      - Math.min(gva * 2, 8)
-      - Math.min(pim * 0.5, 5);
-    return Math.max(0, Math.min(99, Math.round(raw)));
-  }
-  return null;
+  return p.overall_rating !== null && p.overall_rating !== undefined && Number(p.overall_rating_count) > 0
+    ? Number(p.overall_rating) : null;
 }
 function ratingStyle(v) {
   if (!v || v <= 0) return 'color:#484f58;';
@@ -152,13 +119,14 @@ function sumSkaterRows(rows) {
     tot._gs_sum += (Number(r.goal_support) || 0) * (Number(r.gp) || 0);
     if (r.apt) { tot._apt_sum += Number(r.apt) * (Number(r.gp) || 1); tot._apt_gp += Number(r.gp) || 1; }
     tot.toi += Number(r.toi) || 0;
-    if (Number(r.overall_rating) > 0)    { tot._or_sum   += Number(r.overall_rating);   tot._r_count++; }
+    if (Number(r.overall_rating_count) > 0) { tot._or_sum += Number(r.overall_rating_sum); tot._r_count += Number(r.overall_rating_count); }
     if (Number(r.offensive_rating) > 0)    tot._offr_sum += Number(r.offensive_rating);
     if (Number(r.defensive_rating) > 0)    tot._dr_sum   += Number(r.defensive_rating);
     if (Number(r.team_play_rating) > 0)    tot._tpr_sum  += Number(r.team_play_rating);
   }
   const n = tot._r_count || 1;
   tot.overall_rating    = tot._r_count ? Math.round(tot._or_sum   / n) : 0;
+  tot.overall_rating_count = tot._r_count;
   tot.offensive_rating  = tot._r_count ? Math.round(tot._offr_sum / n) : 0;
   tot.defensive_rating  = tot._r_count ? Math.round(tot._dr_sum   / n) : 0;
   tot.team_play_rating  = tot._r_count ? Math.round(tot._tpr_sum  / n) : 0;
@@ -202,13 +170,14 @@ function sumGoalieRows(rows) {
     tot.goalie_otw += Number(r.goalie_otw) || 0;
     tot.goalie_otl += Number(r.goalie_otl) || 0;
     tot._gs_sum += (Number(r.goal_support) || 0) * (Number(r.gp) || 0);
-    if (Number(r.overall_rating) > 0)  { tot._or_sum   += Number(r.overall_rating);   tot._r_count++; }
+    if (Number(r.overall_rating_count) > 0) { tot._or_sum += Number(r.overall_rating_sum); tot._r_count += Number(r.overall_rating_count); }
     if (Number(r.offensive_rating) > 0)  tot._offr_sum += Number(r.offensive_rating);
     if (Number(r.defensive_rating) > 0)  tot._dr_sum   += Number(r.defensive_rating);
     if (Number(r.team_play_rating) > 0)  tot._tpr_sum  += Number(r.team_play_rating);
   }
   const n = tot._r_count || 1;
   tot.overall_rating    = tot._r_count ? Math.round(tot._or_sum   / n) : 0;
+  tot.overall_rating_count = tot._r_count;
   tot.offensive_rating  = tot._r_count ? Math.round(tot._offr_sum / n) : 0;
   tot.defensive_rating  = tot._r_count ? Math.round(tot._dr_sum   / n) : 0;
   tot.team_play_rating  = tot._r_count ? Math.round(tot._tpr_sum  / n) : 0;
@@ -217,6 +186,23 @@ function sumGoalieRows(rows) {
   tot.shots_per_game = tot.gp > 0 ? Math.round((tot.shots_against / tot.gp) * 10) / 10 : null;
   tot.goal_support = tot.gp > 0 ? Math.round(tot._gs_sum / tot.gp * 100) / 100 : 0;
   return tot;
+}
+
+function playerHeroBoxes(rows, isGoalie, league) {
+  const leagueRows = rows.filter(r => r.league_type === league);
+  const career = isGoalie ? sumGoalieRows(leagueRows) : sumSkaterRows(leagueRows);
+  const boxes = [
+    { label: 'GP', value: career.gp },
+    { label: 'Overall', value: computeOvr(career), title: 'Career average of rated games, including playoffs' },
+  ];
+  if (isGoalie) {
+    const sv = career.shots_against > 0 ? (career.saves / career.shots_against).toFixed(3).replace(/^0(?=\.)/, '') : '–';
+    boxes.push({ label: 'W', value: career.goalie_wins }, { label: 'SV%', value: sv });
+  } else {
+    const pm = career.plus_minus;
+    boxes.push({ label: 'PTS', value: career.points }, { label: '+/–', value: pm >= 0 ? `+${pm}` : String(pm) });
+  }
+  return boxes;
 }
 
 // ── Skater stats row ───────────────────────────────────────────────────────
@@ -373,12 +359,46 @@ function renderCareerTable(seasonTeamStats, isGoalie) {
   return html;
 }
 
-// ── Last 5 games ───────────────────────────────────────────────────────────
+// ── Game log ───────────────────────────────────────────────────────────────
+
+function gameLogSeasonKey(game) {
+  return game.season_id == null ? '' : String(game.season_id);
+}
+
+function gameLogSeasons(games) {
+  const seasons = new Map();
+  for (const game of games) {
+    const key = gameLogSeasonKey(game);
+    if (!seasons.has(key)) {
+      seasons.set(key, { key, name: game.season_name || 'No Season', active: false, latest: '' });
+    }
+    const season = seasons.get(key);
+    season.active ||= Number(game.season_is_active) === 1;
+    if ((game.date || '') > season.latest) season.latest = game.date;
+  }
+  return [...seasons.values()].sort((a, b) => b.latest.localeCompare(a.latest));
+}
+
+function escapePlayerHtml(value) {
+  return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function renderSeasonGameLog(games, isGoalie) {
+  if (!games.length) return renderLastGames([], '', isGoalie);
+  const seasons = gameLogSeasons(games);
+  const selected = seasons.find(s => s.active) || seasons[0];
+  return `<div class="player-game-log">
+    <label>Season: <select class="game-log-season" aria-label="Game log season">
+      ${seasons.map(s => `<option value="${escapePlayerHtml(s.key)}"${s.key === selected.key ? ' selected' : ''}>${escapePlayerHtml(s.name)}</option>`).join('')}
+    </select></label>
+    <div class="game-log-content">${renderLastGames(games.filter(g => gameLogSeasonKey(g) === selected.key), '', isGoalie)}</div>
+  </div>`;
+}
 
 function renderLastGames(lastGames, name, isGoalie) {
   if (!lastGames.length) return '<p style="color:#8b949e;">No recent games.</p>';
 
-  const rows = lastGames.map(g => {
+  const renderGame = g => {
     const onHomeTeam = g.player_team_id === g.home_team_id;
     const opponent = onHomeTeam
       ? `<a href="team.html?id=${g.away_team_id}" class="player-link">${logoImg(g.away_logo, g.away_team_name)}${g.away_team_name}</a>`
@@ -390,7 +410,7 @@ function renderLastGames(lastGames, name, isGoalie) {
     const posCell = `<td style="text-align:center;font-size:0.8rem;color:#8b949e;">${g.position || '–'}</td>`;
     const score = `${myScore}–${oppScore}${g.is_overtime ? ' OT' : ''}`;
     const date = g.date ? new Date(g.date + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';
-    const ovr = computeOvr(g);
+    const ovr = GameRating.calculate(g);
     const ovrCell = `<td style="text-align:center;${ovrStyle(ovr)}">${ovr ?? '–'}</td>`;
     const gameLink = `<a href="game.html?id=${g.game_id}" class="player-link">${score}</a>`;
 
@@ -439,7 +459,7 @@ function renderLastGames(lastGames, name, isGoalie) {
         <td>${g.goal_support ?? 0}</td>
       </tr>`;
     }
-  }).join('');
+  };
 
   const skaterHead = `
     <th data-tip="Goals">G</th><th data-tip="Assists">A</th><th data-tip="Points">PTS</th>
@@ -469,7 +489,13 @@ function renderLastGames(lastGames, name, isGoalie) {
     <th data-tip="Time on Ice">TOI</th>
     <th data-tip="Goal Support – team goals scored while playing">GS</th>`;
 
-  return `<div style="overflow-x:auto;max-width:100%;"><table class="last-games-table">
+  const playoffGames = lastGames.filter(g => Number(g.is_playoff) === 1);
+  const regularGames = lastGames.filter(g => Number(g.is_playoff) !== 1);
+  const divider = label => `<tr class="game-log-divider"><td colspan="${isGoalie ? 21 : 35}"><div class="game-log-divider-label">${label}</div></td></tr>`;
+  const rows = (playoffGames.length ? divider('Playoffs') + playoffGames.map(renderGame).join('') : '') +
+    (playoffGames.length && regularGames.length ? divider('Regular Season') : '') + regularGames.map(renderGame).join('');
+
+  return `<div class="game-log-scroll" role="region" aria-label="Player game log" tabindex="0"><table class="last-games-table">
     <thead><tr>
       <th>Date</th><th></th><th>Score</th><th>Opponent</th>
       <th data-tip="Position played">POS</th>
@@ -480,9 +506,20 @@ function renderLastGames(lastGames, name, isGoalie) {
   </table></div>`;
 }
 
+function sizeGameLogs(root) {
+  root.querySelectorAll('.game-log-scroll').forEach(container => {
+    const table = container.querySelector('table');
+    const rows = table.querySelectorAll('tbody tr:not(.game-log-divider)');
+    if (rows.length <= 5 || !table.getBoundingClientRect().height) return;
+    const scrollbarHeight = container.offsetHeight - container.clientHeight;
+    const height = rows[4].getBoundingClientRect().bottom - container.getBoundingClientRect().top + container.scrollTop;
+    container.style.maxHeight = `${Math.ceil(height + scrollbarHeight)}px`;
+  });
+}
+
 // ── Player record holdings renderer ───────────────────────────────────────
 
-function renderPlayerRecords(holdings, leagueType) {
+function renderPlayerRecords(holdings) {
   if (!holdings || holdings.length === 0) {
     return '<p style="color:#8b949e;padding:1.5rem 0;">This player does not currently hold any records.</p>';
   }
@@ -530,8 +567,6 @@ function renderPlayerRecords(holdings, leagueType) {
     </table></div>`;
   }
 
-  const filtered = holdings.filter(h => h.league_type === leagueType);
-
   function groupRows(arr) {
     const alltime    = arr.filter(h => h.category === 'alltime');
     const seasonal   = arr.filter(h => h.category === 'seasonal');
@@ -539,7 +574,7 @@ function renderPlayerRecords(holdings, leagueType) {
     return { alltime, seasonal, singlegame };
   }
 
-  const grouped = groupRows(filtered);
+  const grouped = groupRows(holdings);
   const html =
     buildSection('All-Time Records', grouped.alltime) +
     buildSection('Single-Season Records', grouped.seasonal) +
@@ -556,8 +591,8 @@ function renderLeagueSections(seasonTeamStats, lastGames, isGoalie, holdings, pr
   const filteredGames = lastGames.filter(g => (g.league_type || '') === selectedLt && ((g.position === 'G') === !!isGoalie));
   const statsContent = filteredStats.length || filteredGames.length
     ? `
-      <h2 class="section-heading" style="margin-top:0.75rem;">🕐 Last 5 Games</h2>
-      ${renderLastGames(filteredGames, '', isGoalie)}
+      <h2 class="section-heading" style="margin-top:0.75rem;">🕐 Game Log</h2>
+      ${renderSeasonGameLog(filteredGames, isGoalie)}
       <h2 class="section-heading">📊 Career Stats</h2>
       ${renderCareerTable(filteredStats, isGoalie)}
     `
@@ -570,17 +605,16 @@ function renderLeagueSections(seasonTeamStats, lastGames, isGoalie, holdings, pr
     `<button class="lt-tab" data-lt="awards">Awards</button>`,
   ].join('');
 
-  const filteredAwards = (playerAwards || []).filter(a => (a.league_type || '') === selectedLt);
-  const awardsContent = filteredAwards.length > 0
-    ? renderPlayerAwards(filteredAwards)
-    : '<p style="color:#8b949e;padding:1.5rem 0;">No awards on file for this league.</p>';
+  const awardsContent = playerAwards === null
+    ? '<p style="color:#8b949e;padding:1.5rem 0;">Loading awards…</p>'
+    : renderPlayerAwards(playerAwards || []);
 
   return `<div class="lt-tabs">${tabButtons}</div>
     <div class="lt-panel" id="lt-panel-stats">
       ${statsContent}
     </div>
     <div class="lt-panel" id="lt-panel-records" style="display:none;">
-      ${renderPlayerRecords(holdings || [], selectedLt)}
+      ${holdings === null ? '<p style="color:#8b949e;padding:1.5rem 0;">Loading records…</p>' : renderPlayerRecords(holdings || [])}
     </div>
     <div class="lt-panel" id="lt-panel-awards" style="display:none;">
       ${awardsContent}
@@ -594,12 +628,12 @@ function renderPlayerAwards(awards) {
   const bySeason = {};
   for (const a of awards) {
     const key = a.season_id;
-    if (!bySeason[key]) bySeason[key] = { season_name: a.season_name, awards: [] };
+    if (!bySeason[key]) bySeason[key] = { season_name: a.season_name, league_type: a.league_type, awards: [] };
     bySeason[key].awards.push(a);
   }
 
   return Object.values(bySeason).map(s => `
-    <h3 style="font-size:0.88rem;text-transform:uppercase;letter-spacing:0.08em;color:#8b949e;margin:1.25rem 0 0.6rem;">${s.season_name}</h3>
+    <h3 style="font-size:0.88rem;text-transform:uppercase;letter-spacing:0.08em;color:#8b949e;margin:1.25rem 0 0.6rem;">${s.season_name}${s.league_type === LT_THREES ? " · 3's" : s.league_type === LT_SIXES ? " · 6's" : ''}</h3>
     <div style="display:flex;flex-wrap:wrap;gap:0.75rem;">
       ${s.awards.map(a => `
         <div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:0.6rem 0.8rem;display:flex;align-items:center;gap:0.6rem;min-width:160px;max-width:220px;">
@@ -619,7 +653,6 @@ function renderPlayerAwards(awards) {
 // ── Skater / Goalie tab switcher ───────────────────────────────────────────
 
 function renderPlayerModeTabs(skaterStats, goalieStats, lastGames, defaultIsGoalie, holdings, preferredLt, playerAwards) {
-  const hasSkater = skaterStats.length > 0;
   const hasGoalie = goalieStats.length > 0;
 
   const skaterActive = !defaultIsGoalie || !hasGoalie;
@@ -628,13 +661,8 @@ function renderPlayerModeTabs(skaterStats, goalieStats, lastGames, defaultIsGoal
   const skaterBtnClass = `sg-tab${skaterActive ? ' sg-tab-active' : ''}`;
   const goalieBtnClass = `sg-tab${goalieActive ? ' sg-tab-active' : ''}`;
 
-  const skaterContent = hasSkater
-    ? renderLeagueSections(skaterStats, lastGames, false, holdings, preferredLt, playerAwards)
-    : '<p style="color:#8b949e;padding:1rem 0;">No skater stats on file.</p>';
-
-  const goalieContent = hasGoalie
-    ? renderLeagueSections(goalieStats, lastGames, true, holdings, preferredLt, playerAwards)
-    : '<p style="color:#8b949e;padding:1rem 0;">No goalie stats on file.</p>';
+  const skaterContent = renderLeagueSections(skaterStats, lastGames, false, holdings, preferredLt, playerAwards);
+  const goalieContent = renderLeagueSections(goalieStats, lastGames, true, holdings, preferredLt, playerAwards);
 
   return `
     <div class="sg-tabs">
@@ -653,6 +681,7 @@ async function loadPlayer() {
   const params = new URLSearchParams(window.location.search);
   const name = params.get('name');
   const preferredLt = getPreferredLeagueType();
+  setupPlayerLeagueSwitch(preferredLt);
   if (!name) {
     root.innerHTML = '<p class="error">No player name specified.</p>';
     return;
@@ -665,21 +694,29 @@ async function loadPlayer() {
     if (selectedSeasonId) profileQs.set('season_id', selectedSeasonId);
     if (preferredLt) profileQs.set('league_type', preferredLt);
     const profileUrl = `${API}/players/profile/${encodedName}${profileQs.toString() ? `?${profileQs.toString()}` : ''}`;
-    const [res, recordsRes, awardsRes] = await Promise.all([
-      fetch(profileUrl),
-      fetch(`${API}/players/records/${encodedName}`).catch(() => null),
-      fetch(`${API}/players/awards/${encodedName}`).catch(() => null),
-    ]);
+    const fetchExtra = async url => {
+      try {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return { data: await response.json() };
+      } catch (error) {
+        return { error };
+      }
+    };
+    const recordsPromise = fetchExtra(`${API}/players/records/${encodedName}`);
+    const awardsPromise = fetchExtra(`${API}/players/awards/${encodedName}`);
+    const res = await fetch(profileUrl);
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       root.innerHTML = `<p class="error">${err.error || 'Player not found.'}</p>`;
       return;
     }
-    const { player, seasonProfileTeam, isGoalie, skaterStats, goalieStats, seasonTeamStats, lastGames } = await res.json();
-
-    const recordsData = recordsRes && recordsRes.ok ? await recordsRes.json().catch(() => null) : null;
-    const holdings = recordsData ? recordsData.holdings : [];
-    const playerAwards = awardsRes && awardsRes.ok ? await awardsRes.json().catch(() => []) : [];
+    const { player, activeProfileTeam, isGoalie: defaultIsGoalie, skaterStats, goalieStats, lastGames } = await res.json();
+    const hasLeagueSkater = skaterStats.some(r => r.league_type === preferredLt);
+    const hasLeagueGoalie = goalieStats.some(r => r.league_type === preferredLt);
+    const isGoalie = hasLeagueGoalie && !hasLeagueSkater ? true
+      : hasLeagueSkater && !hasLeagueGoalie ? false : defaultIsGoalie;
+    const seasonTeamStats = isGoalie ? goalieStats : skaterStats;
 
     document.title = `${name} – EHL`;
 
@@ -702,48 +739,27 @@ async function loadPlayer() {
       : null;
     const pmStr = totalPM === null ? null : (totalPM >= 0 ? `+${totalPM}` : String(totalPM));
 
-    const ltRows = rows => (rows || []).filter(r => (r.league_type || '') === preferredLt);
-    const sumBoxes = (goalie) => {
-      const rows = ltRows(goalie ? goalieStats : skaterStats);
-      if (!rows.length) {
-        return goalie
-          ? [{ label: 'GP', value: 0 }, { label: 'W', value: 0 }, { label: 'SV%', value: '–' }]
-          : [{ label: 'GP', value: 0 }, { label: 'PTS', value: 0 }, { label: '+/–', value: '+0' }];
-      }
-      if (goalie) {
-        const c = sumGoalieRows(rows);
-        const sv = c.shots_against > 0 ? (c.saves / c.shots_against).toFixed(3).replace(/^0(?=\.)/, '') : '–';
-        return [{ label: 'GP', value: c.gp ?? 0 }, { label: 'W', value: c.goalie_wins ?? 0 }, { label: 'SV%', value: sv }];
-      }
-      const c = sumSkaterRows(rows);
-      const pm = c.plus_minus ?? 0;
-      return [{ label: 'GP', value: c.gp ?? 0 }, { label: 'PTS', value: c.points ?? 0 }, { label: '+/–', value: pm >= 0 ? `+${pm}` : String(pm) }];
+    const heroBoxes = {
+      skater: playerHeroBoxes(skaterStats, false, preferredLt),
+      goalie: playerHeroBoxes(goalieStats, true, preferredLt),
     };
-    const heroBoxes = { skater: sumBoxes(false), goalie: sumBoxes(true) };
     const heroBoxesHtml = goalie => heroBoxes[goalie ? 'goalie' : 'skater']
-      .map(s => `<div class="phl-stat-box"><div class="phl-stat-label">${s.label}</div><div class="phl-stat-val">${s.value ?? '–'}</div></div>`).join('');
+      .map(s => `<div class="phl-stat-box"${s.title ? ` title="${s.title}"` : ''}><div class="phl-stat-label">${s.label}</div><div class="phl-stat-val">${s.value ?? '–'}</div></div>`).join('');
     const heroGoalieDefault = isGoalie && (goalieStats || []).length > 0;
 
     // Hero colors from team
-    const c1 = player?.color1 || '#1c2128';
-    const c2 = player?.color2 || '#0d1117';
+    const c1 = activeProfileTeam?.color1 || '#1c2128';
+    const c2 = activeProfileTeam?.color2 || '#0d1117';
 
-    const displayTeam = (seasonProfileTeam && seasonProfileTeam.team_id)
+    const displayTeam = (activeProfileTeam && activeProfileTeam.team_id)
       ? {
-          team_id: seasonProfileTeam.team_id,
-          team_name: seasonProfileTeam.team_name,
-          team_logo: seasonProfileTeam.team_logo,
+          team_id: activeProfileTeam.team_id,
+          team_name: activeProfileTeam.team_name,
+          team_logo: activeProfileTeam.team_logo,
           is_rostered: 1,
-          season_id: seasonProfileTeam.season_id,
+          season_id: activeProfileTeam.season_id,
         }
-      : (player?.team_id && player?.is_rostered)
-        ? {
-            team_id: player.team_id,
-            team_name: player.team_name,
-            team_logo: player.team_logo,
-            is_rostered: player.is_rostered,
-          }
-        : null;
+      : null;
 
     // Hero team logo or placeholder
     const heroLogo = (displayTeam?.team_logo)
@@ -759,7 +775,9 @@ async function loadPlayer() {
       : `<p class="phl-fa">Free Agent</p>`;
 
     // Sidebar career info rows
-    const uniqueSeasons = new Set(ltSeasonStats.map(r => r.season_id)).size;
+    const regularLeagueStats = [...skaterStats, ...goalieStats]
+      .filter(r => r.league_type === preferredLt && !r.is_playoff && !/playoffs?$/i.test(r.season_name || ''));
+    const uniqueSeasons = new Set(regularLeagueStats.map(r => r.season_id != null ? `id:${r.season_id}` : `name:${cleanSeasonName(r.season_name).toLowerCase()}`)).size;
     const infoRows = [];
     infoRows.push({ label: 'Seasons', value: uniqueSeasons || 0 });
     infoRows.push({ label: 'Position', value: isGoalie ? 'Goalie' : (pos !== '–' ? pos : '–') });
@@ -772,15 +790,6 @@ async function loadPlayer() {
       .join('');
 
     // Sidebar record holdings summary (for Career Info card)
-    const recordsInfoHtml = holdings.length > 0
-      ? `<div class="phl-info-row"><span class="phl-info-label">Records</span><span class="phl-info-value" style="color:#e3b341;">🏆 ${holdings.length} held</span></div>`
-      : '';
-
-    // Sidebar awards summary
-    const awardsInfoHtml = playerAwards.length > 0
-      ? `<div class="phl-info-row"><span class="phl-info-label">Awards</span><span class="phl-info-value" style="color:#e3b341;">🥇 ${playerAwards.length} won</span></div>`
-      : '';
-
     const html = `
       <div class="phl-hero" style="--c1:${c1};--c2:${c2};">
         ${heroLogo}
@@ -803,17 +812,51 @@ async function loadPlayer() {
           <div class="phl-card">
             <h3 class="phl-card-heading">Career Info</h3>
             ${infoHtml}
-            ${recordsInfoHtml}
-            ${awardsInfoHtml}
+            <div data-player-extra-summary="records"></div>
+            <div data-player-extra-summary="awards"></div>
           </div>
         </aside>
         <div class="phl-main">
-          ${renderPlayerModeTabs(skaterStats || [], goalieStats || [], lastGames, isGoalie, holdings, preferredLt, playerAwards)}
+          ${renderPlayerModeTabs(skaterStats || [], goalieStats || [], lastGames, isGoalie, null, preferredLt, null)}
         </div>
       </div>
     `;
 
     root.innerHTML = html;
+    sizeGameLogs(root);
+    window.addEventListener('resize', () => sizeGameLogs(root));
+
+    root.querySelectorAll('.game-log-season').forEach(select => {
+      select.addEventListener('change', () => {
+        const isGoalieLog = !!select.closest('#sg-panel-goalie');
+        const games = lastGames.filter(g => g.league_type === preferredLt &&
+          (g.position === 'G') === isGoalieLog && gameLogSeasonKey(g) === select.value);
+        select.closest('.player-game-log').querySelector('.game-log-content').innerHTML = renderLastGames(games, '', isGoalieLog);
+        sizeGameLogs(root);
+      });
+    });
+
+    recordsPromise.then(({ data, error }) => {
+      const holdings = data?.holdings || [];
+      root.querySelectorAll('[id="lt-panel-records"]').forEach(panel => {
+        panel.innerHTML = error ? '<p class="error">Could not load player records.</p>' : renderPlayerRecords(holdings);
+      });
+      const summary = root.querySelector('[data-player-extra-summary="records"]');
+      if (summary) summary.innerHTML = error ? '<div class="phl-info-row">Records unavailable</div>'
+        : holdings.length ? `<div class="phl-info-row"><span class="phl-info-label">Records</span><span class="phl-info-value" style="color:#e3b341;">🏆 ${holdings.length} held</span></div>` : '';
+      if (error) console.error('[player] records failed:', error);
+    });
+    awardsPromise.then(({ data, error }) => {
+      const awards = data || [];
+      root.querySelectorAll('[id="lt-panel-awards"]').forEach(panel => {
+        panel.innerHTML = error ? '<p class="error">Could not load player awards.</p>'
+          : renderPlayerAwards(awards);
+      });
+      const summary = root.querySelector('[data-player-extra-summary="awards"]');
+      if (summary) summary.innerHTML = error ? '<div class="phl-info-row">Awards unavailable</div>'
+        : awards.length ? `<div class="phl-info-row"><span class="phl-info-label">Awards</span><span class="phl-info-value" style="color:#e3b341;">🥇 ${awards.length} won</span></div>` : '';
+      if (error) console.error('[player] awards failed:', error);
+    });
 
     // Wire up Skater / Goalie top-level tabs
     root.querySelectorAll('.sg-tab').forEach(btn => {
@@ -825,6 +868,7 @@ async function loadPlayer() {
         root.querySelectorAll('[id^="sg-panel-"]').forEach(p => { p.style.display = 'none'; });
         const panel = root.querySelector(`#sg-panel-${sg}`);
         if (panel) panel.style.display = '';
+        sizeGameLogs(root);
         const heroEl = root.querySelector('.phl-hero-stats');
         if (heroEl) heroEl.innerHTML = heroBoxesHtml(sg === 'goalie');
       });
@@ -841,6 +885,7 @@ async function loadPlayer() {
           sgPanel.querySelectorAll('.lt-panel').forEach(p => { p.style.display = 'none'; });
           const panel = sgPanel.querySelector(`#lt-panel-${lt}`);
           if (panel) panel.style.display = '';
+          sizeGameLogs(root);
         });
       });
     });
