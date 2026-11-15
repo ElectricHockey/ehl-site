@@ -63,6 +63,9 @@ const STORAGE_BUCKET = 'uploads';
  * Falls back to local disk if Supabase is not configured.
  */
 async function uploadToStorage(buffer, filename, contentType) {
+  if (!/^[a-zA-Z0-9_-]+(?:\.[a-zA-Z0-9]+)?$/.test(filename)) {
+    throw new Error('Invalid upload filename');
+  }
   const storageClient = getSupabaseClient();
   if (storageClient) {
     const { error } = await storageClient.storage

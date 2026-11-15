@@ -204,7 +204,7 @@ async function downloadBracket() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `EHL-${league.replace("'", '')}-${season.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '')}-bracket.png`;
+    link.download = `EHL-${league.replace(/'/g, '')}-${season.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '')}-bracket.png`;
     document.body.appendChild(link);
     link.click();
     link.remove();
