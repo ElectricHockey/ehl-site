@@ -58,6 +58,22 @@
       font-weight: 600;
     }
     .award-player:hover { text-decoration: underline; }
+    .award-card-click { cursor: pointer; transition: border-color .15s; }
+    .award-card-click:hover { border-color: #58a6ff; }
+    .award-more { color: #8b949e; font-size: 0.82rem; }
+    .award-modal-overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.65); z-index: 1000;
+      display: flex; align-items: center; justify-content: center; padding: 1rem;
+    }
+    .award-modal {
+      position: relative; background: #161b22; border: 1px solid #30363d; border-radius: 12px;
+      padding: 1.1rem; width: 100%; max-width: 380px; max-height: 80vh; overflow-y: auto;
+    }
+    .award-modal h3 { margin: 0 2rem 0.75rem 0; color: #e6edf3; }
+    .award-modal-close {
+      position: absolute; top: 0.6rem; right: 0.6rem; background: none; border: none;
+      color: #8b949e; font-size: 1.1rem; cursor: pointer;
+    }
   </style>
 </head>
 <body>
@@ -84,7 +100,6 @@
     <div class="page-header">
       <div class="page-eyebrow">League Honors</div>
       <h1 id="awards-page-title">Awards</h1>
-      <p class="page-subtitle">View award winners for each season.</p>
     </div>
     <div id="season-selector-container"></div>
     <div id="awards-root" style="margin-top:0.8rem;">

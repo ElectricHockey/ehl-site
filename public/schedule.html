@@ -10,9 +10,13 @@
   <script src="notifications.js" defer></script>
   <script src="season-selector.js" defer></script>
   <script src="league-type.js" defer></script>
-  <script src="game-stats.js" defer></script>
-  <script src="game-stats-editor.js" defer></script>
-  <script src="schedule.js" defer></script>
+  <script src="game-rating.js?v=1" defer></script>
+  <script src="game-stats.js?v=custom-ovr-1" defer></script>
+  <script src="ea-penalty-shot.js" defer></script>
+  <script src="game-time.js?v=1" defer></script>
+  <script src="game-stats-editor.js?v=local-time-1" defer></script>
+  <script src="game-outcome.js?v=1" defer></script>
+  <script src="schedule.js?v=season-teams-1" defer></script>
   <style>
     .game-row { cursor: pointer; }
     .game-row:hover td { background: #21262d; }
@@ -233,7 +237,6 @@
     <div class="page-header">
       <div class="page-eyebrow">League Calendar</div>
       <h1 id="page-title">Schedule</h1>
-      <p class="page-subtitle">Browse every matchup, filter by club, and open complete game detail panels with linked EA match data.</p>
       <div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:0.5rem;">
       <div id="season-selector-container"></div>
       </div>
@@ -245,6 +248,13 @@
         <option value="all">All Games</option>
         <option value="upcoming">Upcoming Only</option>
         <option value="15days">±15 Days</option>
+      </select>
+      <select id="schedule-status-filter" aria-label="Game status" style="background:#161b22;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.3rem 0.6rem;font-size:0.88rem;">
+        <option value="all">All Status</option>
+        <option value="complete">Complete</option>
+        <option value="incomplete">Incomplete</option>
+        <option value="rescheduled">Rescheduled</option>
+        <option value="forfeit">Forfeit</option>
       </select>
       </div>
     </div>
@@ -286,6 +296,15 @@
           <select id="sg-status" style="background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.35rem 0.6rem;">
             <option value="scheduled">Scheduled</option>
             <option value="complete">Complete</option>
+            <option value="forfeit">Forfeit</option>
+          </select>
+        </div>
+        <div id="sg-forfeit-wrap" class="form-group" style="display:none;flex-direction:column;gap:0.2rem;">
+          <label for="sg-forfeit-winner" style="font-size:0.8rem;color:#8b949e;">Forfeit Winner</label>
+          <select id="sg-forfeit-winner" style="background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:0.35rem 0.6rem;">
+            <option value="">Select winner</option>
+            <option value="home">Home Team</option>
+            <option value="away">Away Team</option>
           </select>
         </div>
         <label style="display:flex;align-items:center;gap:0.4rem;cursor:pointer;font-size:0.85rem;padding-bottom:0.4rem;">

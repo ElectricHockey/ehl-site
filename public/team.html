@@ -9,8 +9,9 @@
   <script src="nav.js" defer></script>
   <script src="notifications.js" defer></script>
   <script src="season-selector.js" defer></script>
-  <script src="stats-config.js" defer></script>
-  <script src="team.js" defer></script>
+  <script src="stats-config.js?v=custom-ovr-1" defer></script>
+  <script src="game-outcome.js?v=1" defer></script>
+  <script src="team.js?v=forfeit-winner-1" defer></script>
   <style>
     .season-stats-table { font-size: 0.85rem; }
     .season-stats-table thead th { font-size: 0.72rem; }
@@ -19,6 +20,27 @@
     .sortable-th.sort-asc::after  { content: ' ▲'; color: #58a6ff; }
     .sortable-th.sort-desc::after { content: ' ▼'; color: #58a6ff; }
     .no-stats { color: #8b949e; padding: 1rem 0; }
+    .league-tabs-row .team-league-tab,
+    .league-tabs-row .team-view-tab,
+    #stats-tab-btns .lt-tab {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 7px;
+      color: #c9d1d9;
+      padding: 0.45rem 0.75rem;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+    }
+    .league-tabs-row .lt-tab-active,
+    #stats-tab-btns .lt-tab-active {
+      background: rgba(var(--team-tab-rgb), 0.4);
+      border-color: rgb(var(--team-tab-rgb));
+      box-shadow: 0 0 0 1px rgba(255,255,255,0.22), 0 0 14px rgba(var(--team-tab-rgb), 0.75);
+      color: #fff;
+      font-weight: 700;
+    }
+    .league-tabs-row button:focus-visible,
+    #stats-tab-btns button:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
     /* Records tabs */
     .rec-tab { transition: background 0.15s, color 0.15s; }
     .rec-tab-active { background: #388bfd !important; color: #fff !important; }

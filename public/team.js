@@ -11,6 +11,8 @@ let _teamId = null;
 let _teamSeasons = null;          // seasons this team has played in (fetched once)
 let _teamSelectedSeasonId = null; // currently selected season (null = all-time)
 let _teamFilterType = null;       // null | 'regular' | 'playoff' (for all-time splits)
+let _teamLeagueType = null;
+let _teamLoadVersion = 0;
 const teamSort = {
   skater: { key: 'points', dir: 'desc' },
   goalie: { key: 'save_pct', dir: 'desc' },
@@ -51,54 +53,8 @@ function resultBadge(r) {
   return `<span class="badge badge-tie">${r}</span>`;
 }
 function computeOvr(p) {
-  if (p.overall_rating && Number(p.overall_rating) > 0) return Number(p.overall_rating);
-  const isG = /goalie/i.test(p.position || '') || (p.position || '').toUpperCase() === 'G';
-  const off = Number(p.offensive_rating) || 0;
-  const def = Number(p.defensive_rating) || 0;
-  const tpl = Number(p.team_play_rating) || 0;
-  if (off > 0 || def > 0 || tpl > 0) {
-    const isD = /defense/i.test(p.position || '') || /^[lr]d$/i.test(p.position || '');
-    if (isG || isD) return Math.round((def * 2 + off + tpl * 1.5) / 4.5);
-    return Math.round((off * 2 + def + tpl * 1.5) / 4.5);
-  }
-  if (isG) {
-    const sa = Number(p.shots_against) || 0;
-    if (sa > 0) {
-      const ga = Number(p.goals_against) || 0;
-      const sv = Number(p.saves) !== 0 ? Number(p.saves) : (sa - ga);
-      const svp = sv / sa;
-      const isWin = Number(p.goalie_wins) === 1 || Number(p.goalie_otw) === 1 || Number(p.wins) === 1;
-      const isShutout = (Number(p.shutouts) || 0) > 0 || (ga === 0 && sa > 0);
-      let ovr = 50.0 + (svp * 40.0) - Math.min(ga * 1.0, 10.0);
-      if (isShutout) ovr += 5.0;
-      if (isWin) ovr += 3.0;
-      return Math.max(50, Math.min(99, Math.round(ovr)));
-    }
-    return 75;
-  }
-  const goals = Number(p.goals) || 0;
-  const assists = Number(p.assists) || 0;
-  const pm = Number(p.plus_minus) || 0;
-  const shots = Number(p.shots) || 0;
-  const hits = Number(p.hits) || 0;
-  const bs = Number(p.blocked_shots) || 0;
-  const tka = Number(p.takeaways) || 0;
-  const gva = Number(p.giveaways) || 0;
-  const pim = Number(p.pim) || 0;
-  if (goals || assists || pm || shots || hits || bs || tka || gva || pim) {
-    const raw = 60
-      + Math.min(goals * 7, 21)
-      + Math.min(assists * 4, 14)
-      + Math.max(Math.min(pm * 3, 12), -12)
-      + Math.min(shots * 0.5, 5)
-      + Math.min(hits * 0.5, 5)
-      + Math.min(bs * 1.5, 6)
-      + Math.min(tka * 1.5, 6)
-      - Math.min(gva * 2, 8)
-      - Math.min(pim * 0.5, 5);
-    return Math.max(0, Math.min(99, Math.round(raw)));
-  }
-  return null;
+  return p.overall_rating !== null && p.overall_rating !== undefined && Number(p.overall_rating_count) > 0
+    ? Number(p.overall_rating) : null;
 }
 function ovrBadge(v) {
   if (!v || v <= 0) return '';
@@ -162,7 +118,7 @@ function renderSkaterTable(players) {
     </tr></thead>
     <tbody>${sorted.map(p => `<tr${attrs}>
       <td>${p.position || '–'}</td>
-      <td><a href="player.html?name=${encodeURIComponent(p.name)}" class="player-link">${p.name}</a></td>
+      <td><a href="${teamPlayerHref(p.name)}" class="player-link">${p.name}</a></td>
       ${SKATER_COLS.map(c => `<td style="${c.style ? c.style(p) : ''}">${c.fmt(p)}</td>`).join('')}
     </tr>`).join('')}</tbody>
   </table></div>`;
@@ -180,7 +136,7 @@ function renderGoalieTable(players) {
       ${GOALIE_COLS.map(c => `<th data-tip="${c.tip}" class="${s(c.key)}" onclick="sortTeamGoalies('${c.key}')">${c.label}</th>`).join('')}
     </tr></thead>
     <tbody>${sorted.map(p => `<tr${attrs}>
-      <td><a href="player.html?name=${encodeURIComponent(p.name)}" class="player-link">${p.name}</a></td>
+      <td><a href="${teamPlayerHref(p.name)}" class="player-link">${p.name}</a></td>
       ${GOALIE_COLS.map(c => `<td style="${c.style ? c.style(p) : ''}">${c.fmt(p)}</td>`).join('')}
     </tr>`).join('')}</tbody>
   </table></div>`;
@@ -195,9 +151,10 @@ function renderScheduleRow(g, team) {
   const oppLogo  = isHome ? g.away_logo : g.home_logo;
   const oppId    = isHome ? g.away_team_id : g.home_team_id;
 
-  const isComplete = myScore !== null && myScore !== undefined && g.status === 'complete';
-  const won  = isComplete && myScore > oppScore;
-  const lost = isComplete && myScore < oppScore;
+  const isComplete = myScore !== null && myScore !== undefined && (g.status === 'complete' || g.status === 'forfeit');
+  const winner = gameWinnerSide(g);
+  const won  = isComplete && winner === (isHome ? 'home' : 'away');
+  const lost = isComplete && winner === (isHome ? 'away' : 'home');
 
   const scoreColor = won ? '#3fb950' : lost ? '#f85149' : '#e6edf3';
   const resultBadge = won
@@ -224,7 +181,7 @@ function renderScheduleRow(g, team) {
     <td style="color:#8b949e;white-space:nowrap;font-size:0.78rem;">${g.date || ''}</td>
     <td style="font-size:0.78rem;color:#8b949e;text-align:center;">${haStr}</td>
     <td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
-      <a href="team.html?id=${oppId}" style="display:flex;align-items:center;text-decoration:none;color:#c9d1d9;font-size:0.85rem;" onclick="event.stopPropagation()">
+      <a href="team.html?id=${oppId}${_teamLeagueType ? `&league=${encodeURIComponent(_teamLeagueType)}` : ''}" style="display:flex;align-items:center;text-decoration:none;color:#c9d1d9;font-size:0.85rem;" onclick="event.stopPropagation()">
         ${logoHtml}${oppName}
       </a>
     </td>
@@ -253,7 +210,7 @@ function renderRecordsTable(recs, mode) {
     const season = mode === 'single' && rec.season_name
       ? `<span style="color:#8b949e;font-size:0.8rem;"> | Season: ${rec.season_name}</span>` : '';
     const nameLink = rec.name
-      ? `<a href="player.html?name=${encodeURIComponent(rec.name)}" class="player-link">${rec.name}</a>`
+      ? `<a href="${teamPlayerHref(rec.name)}" class="player-link">${rec.name}</a>`
       : '–';
     return `<tr>
       <td style="color:#8b949e;padding:0.4rem 0.5rem;">${r.label}</td>
@@ -288,6 +245,7 @@ function switchRecordsTab(mode) {
 
 // ── Main ───────────────────────────────────────────────────────────────────
 async function loadTeamPage() {
+  const loadVersion = ++_teamLoadVersion;
   const root = document.getElementById('team-root');
   const params = new URLSearchParams(window.location.search);
   const id = params.get('id');
@@ -304,8 +262,10 @@ async function loadTeamPage() {
     } else {
       url = `${API}/teams/${id}/stats`;
     }
+    if (_teamLeagueType) url += `${url.includes('?') ? '&' : '?'}league_type=${encodeURIComponent(_teamLeagueType)}`;
     if (!_recordsPromise) {
-      _recordsPromise = fetch(`${API}/teams/${id}/records`)
+      const recordsLeague = _teamLeagueType ? `?league_type=${encodeURIComponent(_teamLeagueType)}` : '';
+      _recordsPromise = fetch(`${API}/teams/${id}/records${recordsLeague}`)
         .then(response => {
           if (!response.ok) throw new Error(`Records request failed (${response.status})`);
           return response.json();
@@ -325,6 +285,7 @@ async function loadTeamPage() {
       _recordsPromise,
       _teamAwardsPromise,
     ]);
+    if (loadVersion !== _teamLoadVersion) return;
 
     if (!statsRes.ok) {
       root.innerHTML = `<p class="error">${(await statsRes.json().catch(()=>({}))).error || 'Team not found.'}</p>`;
@@ -332,6 +293,7 @@ async function loadTeamPage() {
     }
 
     const { team, roster, skaterStats, goalieStats, recentGames, staff, record, transactions, upcoming } = await statsRes.json();
+    if (loadVersion !== _teamLoadVersion) return;
     _recordsData = recordsData;
     document.title = `${team.name} – EHL`;
 
@@ -351,7 +313,8 @@ async function loadTeamPage() {
       : 'background:#161b22;';
     const rec = record || { wins: 0, losses: 0, otl: 0 };
     const recStr = `${rec.wins || 0}-${rec.losses || 0}-${rec.otl || 0}`;
-    const leagueTag = team.league_type === 'threes' ? '3v3' : team.league_type === 'sixes' ? '6v6' : (team.league_type || '');
+    const displayedLeague = _teamLeagueType || team.league_type;
+    const leagueTag = displayedLeague === 'threes' ? '3v3' : displayedLeague === 'sixes' ? '6v6' : (displayedLeague || '');
 
     let html = `
       <div class="team-banner" style="${bannerBg}border-radius:10px;padding:1.25rem 1.5rem;margin-bottom:1.25rem;position:relative;overflow:hidden;">
@@ -382,7 +345,7 @@ async function loadTeamPage() {
       const pa = posOrder[a.position] ?? 6, pb = posOrder[b.position] ?? 6;
       return pa !== pb ? pa - pb : (a.name || '').localeCompare(b.name || '');
     });
-    const rosterLimit = team.league_type === 'threes' ? 12 : team.league_type === 'sixes' ? 20 : null;
+    const rosterLimit = displayedLeague === 'threes' ? 12 : displayedLeague === 'sixes' ? 20 : null;
 
     // Build a map of player name → stats
     const statsMap = {};
@@ -444,7 +407,7 @@ async function loadTeamPage() {
       for (const p of rosterForDisplay) {
         const st = statsMap[p.name];
         const isGoalie = (p.position || '').toUpperCase() === 'G' || /goalie/i.test(p.position || '');
-        const ovr = st ? computeOvr(st) : (p.overall_rating ? Number(p.overall_rating) : null);
+        const ovr = st ? computeOvr(st) : null;
         const roles = staffRoles[p.name] || (p.role ? [p.role] : []);
         const badges = roles.map(roleBadge).filter(Boolean).join(' ');
         let pRec = '';
@@ -457,7 +420,7 @@ async function loadTeamPage() {
 
         html += `<div style="display:flex;align-items:center;gap:0.6rem;padding:0.35rem 0.5rem;border-radius:6px;border:1px solid #21262d;margin-bottom:4px;background:#0d1117;">
           <span style="font-size:0.72rem;color:#8b949e;min-width:22px;text-align:right;">${p.number != null && p.number !== '' ? '#' + p.number : ''}</span>
-          <a href="player.html?name=${encodeURIComponent(p.name)}" class="player-link" style="font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${p.name}</a>
+          <a href="${teamPlayerHref(p.name)}" class="player-link" style="font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${p.name}</a>
           ${p.position ? `<span style="font-size:0.68rem;background:#1f2d3d;color:#58a6ff;border-radius:4px;padding:0.1rem 0.35rem;border:1px solid rgba(56,139,253,0.2);">${p.position}</span>` : ''}
           ${badges}
           ${ovr ? ovrBadge(ovr) : ''}
@@ -471,9 +434,9 @@ async function loadTeamPage() {
     html += `
       <div style="margin-top:1.25rem;">
         <h2 style="color:#58a6ff;margin-bottom:0.5rem;">Season Stats</h2>
-        <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem;" id="stats-tab-btns">
-          <button class="lt-tab lt-tab-active" onclick="switchStatsTab('skaters')">Skaters</button>
-          <button class="lt-tab" onclick="switchStatsTab('goalies')">Goalies</button>
+        <div style="--team-tab-rgb:${teamTabColor()};display:flex;gap:0.5rem;margin-bottom:0.75rem;" id="stats-tab-btns">
+          <button type="button" class="lt-tab lt-tab-active" aria-pressed="true" onclick="switchStatsTab('skaters')">Skaters</button>
+          <button type="button" class="lt-tab" aria-pressed="false" onclick="switchStatsTab('goalies')">Goalies</button>
         </div>
         <div id="team-skaters-root"></div>
         <div id="team-goalies-root" style="display:none;"></div>
@@ -526,12 +489,12 @@ async function loadTeamPage() {
           <tbody>${scheduleRows}</tbody>
         </table>
       </div>
-      <a href="schedule.html" style="display:block;margin-top:0.75rem;font-size:0.82rem;color:#8b949e;text-align:center;">Full Schedule</a>
+      <a href="schedule.html${_teamLeagueType ? `?league=${encodeURIComponent(_teamLeagueType)}` : ''}" style="display:block;margin-top:0.75rem;font-size:0.82rem;color:#8b949e;text-align:center;">Full Schedule</a>
     </div>`;
 
     // ── Latest News (transactions) ──
     html += `<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:1rem;">
-      <h3 style="color:#58a6ff;margin:0 0 0.75rem;font-size:1rem;">Latest News</h3>`;
+      <h3 style="color:#58a6ff;margin:0 0 0.75rem;font-size:1rem;">Latest News (all leagues)</h3>`;
 
     if (!transactions || transactions.length === 0) {
       html += '<p style="color:#8b949e;font-size:0.85rem;padding:0.5rem 0;">No transactions on record.</p>';
@@ -545,7 +508,7 @@ async function loadTeamPage() {
           <div style="flex:1;min-width:0;">
             <div style="font-size:0.82rem;color:#c9d1d9;line-height:1.4;">
               The <img src="${team.logo_url || ''}" style="width:14px;height:14px;object-fit:contain;vertical-align:middle;border-radius:2px;" /> ${team.name} have signed
-              <a href="player.html?name=${encodeURIComponent(tx.player_name)}" class="player-link" style="color:#3fb950;">${tx.player_name}</a>
+              <a href="${teamPlayerHref(tx.player_name)}" class="player-link" style="color:#3fb950;">${tx.player_name}</a>
             </div>
             <div style="font-size:0.72rem;color:#8b949e;margin-top:2px;">${dt}</div>
           </div>
@@ -564,9 +527,16 @@ async function loadTeamPage() {
 
     renderTeamSeasonSelector();
   } catch (err) {
+    if (loadVersion !== _teamLoadVersion) return;
     console.error(err);
     root.innerHTML = '<p class="error">Failed to load team data. Is the server running?</p>';
   }
+}
+
+function teamTabColor() {
+  return _teamColors && /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(_teamColors.color1 || '')
+    ? hexToRgbStr(_teamColors.color1)
+    : '88,166,255';
 }
 
 // ── Team season selector (styled to match standings dropdown) ─────────────
@@ -589,15 +559,20 @@ function renderTeamSeasonSelector() {
   const allTimeOpts =
     `<option value="alltime_regular" ${sel('alltime_regular')}>★ All Time – Regular Season</option>` +
     `<option value="alltime_playoff" ${sel('alltime_playoff')}>★ All Time – Playoffs</option>`;
-  const opts = _teamSeasons.map(s => {
+  const opts = _teamSeasons.filter(s => !_teamLeagueType || s.league_type === _teamLeagueType).map(s => {
     const v = String(s.id);
     return `<option value="${v}" ${sel(v)}>${s.name}${s.is_active ? ' ★' : ''}</option>`;
   }).join('');
 
-  container.innerHTML = `<div class="league-tabs-row" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;"><div class="league-tab-season">
+  const leagues = ['threes', 'sixes'].filter(type => _teamSeasons.some(s => s.league_type === type));
+  const leagueTabs = leagues.length > 1
+    ? `<div style="display:flex;gap:0.5rem;">${leagues.map(type => `<button type="button" class="team-league-tab lt-tab${_teamLeagueType === type ? ' lt-tab-active' : ''}" aria-pressed="${_teamLeagueType === type}" onclick="switchTeamLeague('${type}')">${type === 'threes' ? "3's" : "6's"}</button>`).join('')}</div>`
+    : '';
+  const teamColor = teamTabColor();
+  container.innerHTML = `<div class="league-tabs-row" style="--team-tab-rgb:${teamColor};display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;">${leagueTabs}<div class="league-tab-season">
     <label for="team-season-select" style="color:#8b949e;font-size:0.85rem;white-space:nowrap;">Season:</label>
     <select id="team-season-select">${allTimeOpts}${opts}</select>
-  </div><div style="display:flex;gap:0.5rem;align-items:center;"><button class="lt-tab${_teamActiveTab === 'stats' ? ' lt-tab-active' : ''}" onclick="switchTeamTab('stats')">Stats</button><button class="lt-tab${_teamActiveTab === 'awards' ? ' lt-tab-active' : ''}" onclick="switchTeamTab('awards')">🏆 Awards</button></div></div>`;
+  </div><div style="display:flex;gap:0.5rem;align-items:center;"><button type="button" class="lt-tab team-view-tab${_teamActiveTab === 'stats' ? ' lt-tab-active' : ''}" aria-pressed="${_teamActiveTab === 'stats'}" onclick="switchTeamTab('stats')">Stats</button><button type="button" class="lt-tab team-view-tab${_teamActiveTab === 'awards' ? ' lt-tab-active' : ''}" aria-pressed="${_teamActiveTab === 'awards'}" onclick="switchTeamTab('awards')">🏆 Awards</button></div></div>`;
 
   document.getElementById('team-season-select').addEventListener('change', function() {
     const val = this.value;
@@ -618,7 +593,8 @@ function renderTeamSeasonSelector() {
 // ── Team awards renderer ───────────────────────────────────────────
 function renderTeamAwards() {
   if (!_teamAwards) return '<p style="color:#8b949e;padding:1rem 0;">Loading awards…</p>';
-  const { playerAwards = [], teamAwards = [] } = _teamAwards;
+  const playerAwards = (_teamAwards.playerAwards || []).filter(a => !_teamLeagueType || a.league_type === _teamLeagueType);
+  const teamAwards = (_teamAwards.teamAwards || []).filter(a => !_teamLeagueType || a.league_type === _teamLeagueType);
   if (playerAwards.length === 0 && teamAwards.length === 0)
     return '<p style="color:#8b949e;padding:1.5rem 0;">No awards on file for this team.</p>';
 
@@ -643,7 +619,7 @@ function renderTeamAwards() {
         ? `<img src="${a.award_image_url}" style="width:36px;height:36px;object-fit:contain;border-radius:4px;background:#21262d;flex-shrink:0;" alt="" />`
         : `<div style="width:36px;height:36px;flex-shrink:0;background:#21262d;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:1.2rem;">${a.type === 'team' ? '🏆' : '🥇'}</div>`;
       const playerLink = a.type === 'player' && a.player_name
-        ? `<div style="font-size:0.74rem;"><a href="player.html?name=${encodeURIComponent(a.player_name)}" style="color:#58a6ff;text-decoration:none;">${a.player_name}</a></div>`
+        ? `<div style="font-size:0.74rem;"><a href="${teamPlayerHref(a.player_name, a.season_id)}" style="color:#58a6ff;text-decoration:none;">${a.player_name}</a></div>`
         : '';
       const notes = a.notes ? `<div style="font-size:0.74rem;color:#8b949e;">${a.notes}</div>` : '';
       return `<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:0.6rem 0.8rem;display:flex;align-items:center;gap:0.6rem;min-width:160px;max-width:240px;">
@@ -669,10 +645,12 @@ function switchTeamTab(tab) {
   if (awardsPanel) awardsPanel.style.display = tab === 'awards' ? 'block' : 'none';
   if (statsSection) statsSection.style.display = tab === 'stats' ? '' : 'none';
   // Update tab button active states
-  document.querySelectorAll('.lt-tab').forEach(b => {
+  document.querySelectorAll('#season-selector-container .team-view-tab').forEach(b => {
     const isStats = b.textContent.trim() === 'Stats';
     const isAwards = b.textContent.includes('Awards');
-    b.classList.toggle('lt-tab-active', (tab === 'stats' && isStats) || (tab === 'awards' && isAwards));
+    const active = (tab === 'stats' && isStats) || (tab === 'awards' && isAwards);
+    b.classList.toggle('lt-tab-active', active);
+    b.setAttribute('aria-pressed', String(active));
   });
   if (tab === 'awards' && awardsRoot) awardsRoot.innerHTML = renderTeamAwards();
 }
@@ -684,6 +662,7 @@ function switchStatsTab(tab) {
   document.querySelectorAll('#stats-tab-btns .lt-tab').forEach((b, i) => {
     const isActive = (tab === 'skaters' && i === 0) || (tab === 'goalies' && i === 1);
     b.classList.toggle('lt-tab-active', isActive);
+    b.setAttribute('aria-pressed', String(isActive));
   });
   if (skatersRoot) skatersRoot.style.display = tab === 'skaters' ? '' : 'none';
   if (goaliesRoot) goaliesRoot.style.display = tab === 'goalies' ? '' : 'none';
@@ -692,6 +671,7 @@ function switchStatsTab(tab) {
 // ── Entry point ───────────────────────────────────────────────────────────
 async function initTeamPage() {
   const params = new URLSearchParams(window.location.search);
+  if (params.get('tab') === 'awards') _teamActiveTab = 'awards';
   const id = params.get('id');
   if (!id) return loadTeamPage(); // let loadTeamPage handle the error
 
@@ -701,22 +681,39 @@ async function initTeamPage() {
     _teamSeasons = res.ok ? await res.json() : [];
   } catch { _teamSeasons = []; }
 
-  // Default to the active regular season (if team played there), else first season
-  if (_teamSeasons.length > 0) {
-    const activeRegular = _teamSeasons.find(s => s.is_active && !s.is_playoff);
-    if (activeRegular) {
-      _teamSelectedSeasonId = activeRegular.id;
-      _teamFilterType = null;
-    } else {
-      _teamSelectedSeasonId = _teamSeasons[0].id;
-      _teamFilterType = null;
-    }
-  } else {
-    _teamSelectedSeasonId = null;
-    _teamFilterType = 'regular';
-  }
-
+  const requestedSeason = _teamSeasons.find(s => s.id === Number(params.get('season_id')));
+  const requestedLeague = params.get('league');
+  const leagues = _teamSeasons.map(s => s.league_type).filter(type => type === 'threes' || type === 'sixes');
+  _teamLeagueType = requestedSeason?.league_type ||
+    (leagues.includes(requestedLeague) ? requestedLeague : null) ||
+    (leagues.includes(localStorage.getItem('ehl_league_type')) ? localStorage.getItem('ehl_league_type') : null) ||
+    leagues[0] || null;
+  selectDefaultTeamSeason(requestedSeason);
   loadTeamPage();
+}
+
+function selectDefaultTeamSeason(requestedSeason) {
+  const seasons = _teamSeasons.filter(s => !_teamLeagueType || s.league_type === _teamLeagueType);
+  const selected = requestedSeason || seasons.find(s => s.is_active && !s.is_playoff) || seasons[0];
+  _teamSelectedSeasonId = selected ? selected.id : null;
+  _teamFilterType = selected ? null : 'regular';
+}
+
+function switchTeamLeague(type) {
+  if (type === _teamLeagueType || !_teamSeasons.some(s => s.league_type === type)) return;
+  const url = new URL(window.location.href);
+  url.searchParams.set('league', type);
+  url.searchParams.delete('season_id');
+  if (_teamActiveTab === 'awards') url.searchParams.set('tab', 'awards');
+  else url.searchParams.delete('tab');
+  window.location.href = url.href;
+}
+
+function teamPlayerHref(name, seasonId = _teamSelectedSeasonId) {
+  const params = new URLSearchParams({ name });
+  if (_teamLeagueType) params.set('league', _teamLeagueType);
+  if (seasonId) params.set('season_id', seasonId);
+  return `player.html?${params}`;
 }
 
 initTeamPage();

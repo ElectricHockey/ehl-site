@@ -8,8 +8,9 @@
   <link rel="preload" href="/api/site-logo" as="image" fetchpriority="high" />
   <script src="nav.js" defer></script>
   <script src="notifications.js" defer></script>
-  <script src="game-stats-editor.js" defer></script>
-  <script src="admin.js" defer></script>
+  <script src="game-time.js?v=1" defer></script>
+  <script src="game-stats-editor.js?v=local-time-1" defer></script>
+  <script src="admin.js?v=players-pagination-1" defer></script>
   <style>
     #login-section { max-width:380px;margin:3rem auto;background:#161b22;border:1px solid #30363d;border-radius:10px;padding:2rem 2.5rem; }
     #login-section h2 { margin-bottom:1rem; }
@@ -20,6 +21,11 @@
     .team-logo-sm { width:28px;height:28px;object-fit:contain;border-radius:4px;vertical-align:middle;margin-right:0.4rem; }
     .season-item { display:flex;align-items:center;gap:0.6rem;padding:0.5rem 0;border-bottom:1px solid #21262d; }
     .season-item:last-child { border-bottom:none; }
+    .season-drag-handle { cursor:grab;touch-action:none;user-select:none;color:#8b949e;font-size:1.15rem;line-height:1;padding:0.25rem; }
+    .season-drag-handle:active { cursor:grabbing; }
+    .season-item.season-dragging { opacity:0.45; }
+    .season-item.season-drop-before { box-shadow:inset 0 3px #58a6ff; }
+    .season-item.season-drop-after { box-shadow:inset 0 -3px #58a6ff; }
     .season-active-badge { background:#1f4b2f;color:#3fb950;font-size:0.75rem;padding:0.1rem 0.5rem;border-radius:10px;font-weight:600; }
     /* Admin tabs */
     .admin-tab-bar { display:flex;gap:0.4rem;flex-wrap:wrap;margin-bottom:1.5rem;border-bottom:1px solid #30363d;padding-bottom:0.75rem; }
@@ -89,7 +95,6 @@
       <div class="page-header">
         <div class="page-eyebrow">Control Center</div>
         <h1 style="margin-bottom:0.55rem;">Admin Panel</h1>
-        <p class="page-subtitle">Manage seasons, teams, rosters, schedule data, playoff structure, historical imports, and site settings.</p>
       </div>
 
       <div class="admin-global-search" style="display:flex;flex-direction:column;gap:0.4rem;">
@@ -176,6 +181,7 @@
             <button type="submit">Create Season</button>
           </form>
         </div>
+        <p style="color:#8b949e;font-size:0.85rem;margin:0.75rem 0 0;">Drag the handle to reorder seasons, or use the arrow buttons. Playoffs move with their season.</p>
         <div id="seasons-list" style="margin-top:0.75rem;"></div>
       </div>
 
@@ -229,6 +235,21 @@
             </div>
             <button type="submit">Add Team</button>
           </form>
+        </div>
+        <div id="season-team-swap-controls" class="form-section" style="display:none;">
+          <h3>Replace Team in Selected Season</h3>
+          <p style="color:#8b949e;font-size:0.85rem;">Transfers this season's games, stats, season roster, awards and linked playoffs to the replacement. Scores and player stats stay unchanged. Other seasons and global rosters are not changed.</p>
+          <div style="display:flex;gap:0.6rem;align-items:flex-end;flex-wrap:wrap;">
+            <div class="form-group">
+              <label for="season-team-swap-source">Team to replace</label>
+              <select id="season-team-swap-source"></select>
+            </div>
+            <div class="form-group">
+              <label for="season-team-swap-target">Replacement team</label>
+              <select id="season-team-swap-target"></select>
+            </div>
+            <button type="button" class="btn-secondary" id="season-team-swap-button" onclick="swapSelectedSeasonTeam()">Replace Team</button>
+          </div>
         </div>
         <div class="admin-table-wrap">
           <div id="season-team-add-controls" style="display:none;align-items:flex-end;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.6rem;">
@@ -329,10 +350,22 @@
             <div class="form-group"><label for="player-discord-id">Discord ID</label><input type="text" id="player-discord-id" placeholder="e.g. 123456789012345678" /></div>
             <button type="submit">Add Player</button>
           </form>
+          <div id="player-form-message" role="status" style="margin-top:0.5rem;"></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;margin:0.75rem 0;">
+          <label for="admin-player-search">Search players:</label>
+          <input id="admin-player-search" type="search" placeholder="Player name" oninput="filterAdminPlayers()" />
+          <label for="admin-player-limit">Show:</label>
+          <select id="admin-player-limit" onchange="filterAdminPlayers()">
+            <option value="10" selected>10</option><option value="25">25</option><option value="50">50</option><option value="0">All</option>
+          </select>
+          <button type="button" class="btn-secondary" id="admin-player-prev" onclick="changeAdminPlayerPage(-1)">Previous</button>
+          <span id="admin-player-page" aria-live="polite"></span>
+          <button type="button" class="btn-secondary" id="admin-player-next" onclick="changeAdminPlayerPage(1)">Next</button>
         </div>
         <div class="admin-table-wrap">
           <table id="players-table">
-            <thead><tr><th>ID</th><th>#</th><th>Name</th><th>Position</th><th>Team</th><th>Discord</th><th>Actions</th></tr></thead>
+            <thead><tr><th>ID</th><th>#</th><th>Name</th><th>Position</th><th>Discord</th><th>Actions</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -387,6 +420,18 @@
             <div class="form-group">
               <label for="po-start-date">Round 1 start date *</label>
               <input type="date" id="po-start-date" required style="width:160px;" />
+            </div>
+            <div class="form-group" style="flex-basis:100%;">
+              <label>Game days &amp; times (Eastern) – game 1, 2, 3… in order; the pattern repeats weekly for longer series</label>
+              <div id="po-slots" style="display:flex;flex-wrap:wrap;gap:0.5rem;">
+                <div class="po-slot"><span>G1</span> <select class="po-slot-day"></select> <input type="time" class="po-slot-time" value="21:00" /></div>
+                <div class="po-slot"><span>G2</span> <select class="po-slot-day"></select> <input type="time" class="po-slot-time" value="21:35" /></div>
+                <div class="po-slot"><span>G3</span> <select class="po-slot-day"></select> <input type="time" class="po-slot-time" value="22:10" /></div>
+                <div class="po-slot"><span>G4</span> <select class="po-slot-day"></select> <input type="time"                 class="po-slot-time" value="21:00" /></div>
+                                <div class="po-slot"><span>G5</span> <select class="po-slot-day"></select> <input type="time" class="po-slot-time" value="21:35" /></div>
+                                <div class="po-slot"><span>G6</span> <select class="po-slot-day"></select> <input type="time" class="po-slot-time" value="22:10" /></div>
+                                <div class="po-slot"><span>G7</span> <select class="po-slot-day"></select> <input type="time" class="po-slot-time" value="22:45" /></div>
+              </div>
             </div>
             <button type="submit">🏒 Generate Bracket</button>
           </form>
@@ -499,6 +544,28 @@
 
       <!-- ── Import tab ────────────────────────────────────── -->
       <div id="admin-tab-import" class="admin-section">
+        <h2 style="margin-bottom:0.5rem;">Import MyStatsOnline Schedule</h2>
+        <p style="color:#8b949e;font-size:0.9rem;max-width:680px;">Preview a season schedule, then import its games and available player stats into an existing season. Games already in the season are skipped without changing their scores or stats.</p>
+        <div class="form-section" style="max-width:680px;margin-bottom:1.5rem;">
+          <div class="form-group" style="flex-direction:column;margin-bottom:0.75rem;">
+            <label for="mso-schedule-season">Import into season</label>
+            <select id="mso-schedule-season"><option value="">– Select a season –</option></select>
+          </div>
+          <div class="form-group" style="flex-direction:column;margin-bottom:0.75rem;">
+            <label for="mso-schedule-url">MyStatsOnline schedule URL</label>
+            <input id="mso-schedule-url" type="url" placeholder="https://www.mystatsonline.com/hockey/visitor/league/schedule_scores/schedule.aspx?IDLeague=...&amp;IDSeason=..." />
+            <small>A playoff schedule automatically imports into the selected regular season's linked playoff season.</small>
+          </div>
+          <div class="form-group" id="mso-bracket-options" style="flex-direction:column;margin-bottom:0.75rem;" hidden>
+            <label for="mso-bracket-length">Playoff series length (best of)</label>
+            <input id="mso-bracket-length" type="number" min="1" max="15" step="2" value="7" />
+            <small>A bracket is built only when every round and series is complete and unambiguous. Teams entering in round 2 are treated as first-round byes. Existing brackets are never replaced.</small>
+          </div>
+          <button class="btn btn-primary" id="mso-schedule-preview-btn" onclick="previewMsoSchedule()">Preview schedule</button>
+          <button class="btn btn-primary" id="mso-schedule-import-btn" onclick="importMsoSchedule()" hidden>Import previewed games</button>
+          <pre id="mso-schedule-status" role="status" style="white-space:pre-wrap;max-height:300px;overflow:auto;color:#8b949e;"></pre>
+        </div>
+        <hr style="border:0;border-top:1px solid #30363d;margin:2rem 0;">
         <!-- ── Schedule Spreadsheet Import ─────────────────────── -->
         <h2 style="margin-bottom:0.5rem;">📅 Import Schedule (.xlsx / .csv)</h2>
         <p style="color:#8b949e;font-size:0.9rem;max-width:680px;margin-bottom:1.25rem;">

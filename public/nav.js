@@ -109,7 +109,7 @@ document.addEventListener('click', e => {
       if (!active) return;
 
       const [rRes, uRes] = await Promise.all([
-        fetch(`/api/games?status=complete&season_id=${active.id}&limit=8&order=desc`),
+        fetch(`/api/games?status=final&season_id=${active.id}&limit=8&order=desc`),
         fetch(`/api/games?status=scheduled&season_id=${active.id}&limit=5&order=asc`),
       ]);
       const completed = rRes.ok ? await rRes.json() : [];
@@ -171,7 +171,13 @@ document.addEventListener('click', e => {
         { href: 'playoffs.html', label: '🏆 Playoffs' },
       ],
     },
-    { href: 'stats.html', label: 'Stats' },
+    {
+      href: 'stats.html', label: 'Stats',
+      children: [
+        { href: 'stats.html', label: '📊 Stats' },
+        { href: 'stats.html?view=rookies', label: '🌟 Rookie Watch' },
+      ],
+    },
     {
       href: 'awards.html', label: 'Awards',
       children: [
@@ -183,10 +189,16 @@ document.addEventListener('click', e => {
   ];
 
   function buildSubnavItem(l) {
-    const isActive = currentPath === l.href || (l.children && l.children.some(c => c.href === currentPath));
+    const isRookieView = new URLSearchParams(window.location.search).get('view') === 'rookies';
+    const childActive = c => {
+      const [p, q] = c.href.split('?');
+      if (currentPath !== p) return false;
+      return (q === 'view=rookies') === isRookieView;
+    };
+    const isActive = currentPath === l.href || (l.children && l.children.some(c => c.href.split('?')[0] === currentPath));
     if (l.children && l.children.length) {
       const childLinks = l.children.map(c =>
-        `<a class="league-subnav-link league-subnav-child-link${currentPath === c.href ? ' active' : ''}" data-base-href="${c.href}" href="${c.href}">${c.label}</a>`
+        `<a class="league-subnav-link league-subnav-child-link${childActive(c) ? ' active' : ''}" data-base-href="${c.href}" href="${c.href}">${c.label}</a>`
       ).join('');
       return `<div class="league-subnav-dropdown">` +
         `<a class="league-subnav-link${isActive ? ' active' : ''}" data-base-href="${l.href}" href="${l.href}">${l.label} ▾</a>` +

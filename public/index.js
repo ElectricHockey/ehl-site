@@ -237,6 +237,17 @@ function buildCarouselCard(g, type) {
       <div class="carousel-date">${g.date || ''}</div>
     </a>`;
   }
+  let gameDate = g.date || '', gameTime = '';
+  if (g.game_time) {
+    try {
+      const local = GameTime.toLocal(g.date, g.game_time);
+      gameDate = local.date;
+      gameTime = new Date(`${local.date}T${local.time}:00`).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    } catch (err) {
+      console.error('[home] Could not convert game time:', err);
+      gameTime = g.game_time;
+    }
+  }
   return `<a href="game.html?id=${g.id}" class="carousel-card carousel-card-upcoming">
     <span class="carousel-badge carousel-badge-upcoming">UPCOMING</span>
     <div class="carousel-teams">
@@ -244,7 +255,7 @@ function buildCarouselCard(g, type) {
       <div class="carousel-vs">VS</div>
       <div class="carousel-team carousel-team-away">${awayLogo}<span>${g.away_team_name}</span></div>
     </div>
-    <div class="carousel-date">${g.date || ''}${g.game_time ? ' · ' + g.game_time : ''}</div>
+    <div class="carousel-date">${gameDate}${gameTime ? ' · ' + gameTime : ''}</div>
   </a>`;
 }
 

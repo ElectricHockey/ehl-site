@@ -61,6 +61,18 @@ npm start
 
 Then open **http://localhost:3000**. Tables are created automatically on startup.
 
+## Forfeits
+
+Admins can add a forfeit in the schedule or mark an existing game as a forfeit from its schedule details or game editor, choosing either team as the winner. The existing score and player statistics are preserved; standings and playoff results use the selected winner. Older forfeits without a selected winner continue to use their score.
+
+Schedule and game-editor dates and times are entered and shown in the viewer's local time zone. Game times are stored as Eastern wall-clock time; imports retain their source times. Previously entered times are not automatically corrected.
+
+## Custom game overalls
+
+Overalls are calculated from each game's statistics, independently of EA ratings. Skaters are rated on scoring, plus/minus, shots, hits, blocks and takeaways, with deductions for giveaways and penalties. Goalies are rated on saves, save percentage, goals against and shutouts; a goalie with no recorded shots against has no rating. Scores are capped at 99, reserved for exceptional performances.
+
+Season, team and career overalls average the available individual game ratings. Historical season totals without individual game records do not have an overall. Editing a game's stats recalculates its rating automatically.
+
 ## Adding your teams to the code (seed data)
 
 Instead of re-entering your teams through the Admin panel every time you reset the database, you can define them once in **`db.js`**.
@@ -92,6 +104,12 @@ Teams are upserted on every startup using `INSERT … ON CONFLICT`, so adding en
 ## Importing historical stats from mystatsonline.com
 
 Use the included scraper to pull past seasons (schedule, scores, and player stats) out of mystatsonline.com and import them via the Admin → Import tab.
+
+For an individual game with a recorded score and player stats, an admin can paste its MyStatsOnline game-score URL at the top of the game page, preview the teams, date, score and player counts, then confirm the import. If the source is not marked final, the preview warns that confirming will mark the local game complete. The teams must match. Matching players and the score are updated; players or stat fields absent from the source, including missing goalies, remain unchanged. Scores follow the league's seven-goal differential cap.
+
+An owner can also choose an existing season in **Admin → Import**, paste a MyStatsOnline schedule URL containing `IDLeague` and `IDSeason`, and preview the games before importing. The importer selects all months rather than MyStatsOnline's default 30-day window, and excludes non-game schedule events. It reads forfeit winners from the source schedule, not the score; existing matching forfeits with a different winner are identified in the preview and their winner is updated on import, without changing scores or player stats (except goalie win/loss results). Other existing games are skipped; matching uses the source game ID or an unambiguous teams/date/time match (including a unique matchup when a time is missing). Preview again to resume an interrupted import. Other completed games, forfeits, and scheduled games are processed individually; scored games not yet marked final on the source are identified in the preview and imported as complete. Missing teams are created, and ambiguous team or game matches are reported rather than overwritten. Failures and games without player stats are listed. An empty source schedule imports nothing. For an individual forfeit, also provide its season schedule URL because the game detail page does not identify the winner.
+
+When the MyStatsOnline season is labeled as playoffs, select its regular season as the destination. The import preview identifies the linked playoff season; if needed, it is created when the first game is imported. An existing linked playoff season is reused. For schedules containing round labels, the preview offers to build a bracket using the selected best-of series length. All games and series must be complete, match their saved results, and form an unambiguous elimination bracket. Teams entering in round 2 without a round 1 game are treated as first-round byes; later-round byes are not supported. Existing brackets are never replaced. Re-previewing an already imported playoff schedule can build its missing bracket without changing the existing games or player stats. Find the schedule under the playoff season on Schedule and the bracket under Standings → Playoffs.
 
 ### Basic usage
 
@@ -169,3 +187,8 @@ Each EHL team can be linked to an EA Sports NHL Pro Clubs club by assigning its 
 | GET | `/api/standings` | Standings calculated from recorded games |
 | GET | `/api/ea-matches` | List mocked EA match data (filter by `?club=` query param) |
 | POST | `/api/ea-matches/assign` | Assign an EA match to a league game (`ea_match_id`, `game_id`) |
+## Playoff scheduling
+
+When generating a bracket in the admin Playoffs tab, set the weekday and time (Eastern) for each game. Defaults: 3's Mon games 1-3 and Thu games 4-7; 6's Tue games 1-3 and Wed games 4-7. Times are 9:00 / 9:35 / 10:10 PM, then 9:00 / 9:35 / 10:10 / 10:45 PM. Remaining games are removed once a series is won. The schedule page defaults to the active season's playoff bracket when one exists.
+
+When an admin advances a completed round, remaining teams are reseeded using their saved playoff seeds: the highest faces the lowest, the second highest faces the second lowest, and so on. Tied seeds are ordered by team ID. The bracket shows upcoming matchups once all winners in the preceding round are known.
